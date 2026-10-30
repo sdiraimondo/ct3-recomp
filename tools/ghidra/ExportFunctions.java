@@ -52,6 +52,8 @@ public class ExportFunctions extends GhidraScript {
                 throw new IllegalArgumentException("pcode requiert un fichier d'adresses et une sortie");
             }
             exportPcode(program, args[1], args[2]);
+        } else if (args[0].equals("pcode-all")) {
+            exportPcodeAll(program, args[1]);
         } else {
             throw new IllegalArgumentException("mode inconnu : " + args[0]);
         }
@@ -94,19 +96,35 @@ public class ExportFunctions extends GhidraScript {
         }
     }
 
+    private void exportPcodeAll(Program program, String out) throws Exception {
+        List<String> addrs = new java.util.ArrayList<>();
+        for (Function f : program.getFunctionManager().getFunctions(true)) {
+            if (!f.isExternal()) {
+                addrs.add(f.getEntryPoint().toString());
+            }
+        }
+        exportPcodeList(program, addrs, out);
+    }
+
     private void exportPcode(Program program, String addrFile, String out) throws Exception {
-        List<String> lines = Files.readAllLines(Paths.get(addrFile));
+        List<String> addrs = new java.util.ArrayList<>();
+        for (String line : Files.readAllLines(Paths.get(addrFile))) {
+            String trimmed = line.trim();
+            if (trimmed.isEmpty() || trimmed.startsWith("#")) {
+                continue;
+            }
+            addrs.add(trimmed.split("\\s+")[0]);
+        }
+        exportPcodeList(program, addrs, out);
+    }
+
+    private void exportPcodeList(Program program, List<String> addrs, String out) throws Exception {
         FunctionManager fm = program.getFunctionManager();
         Listing listing = program.getListing();
         try (PrintWriter w = new PrintWriter(new FileWriter(out))) {
             w.println("[");
             boolean firstFn = true;
-            for (String line : lines) {
-                String trimmed = line.trim();
-                if (trimmed.isEmpty() || trimmed.startsWith("#")) {
-                    continue;
-                }
-                String a = trimmed.split("\\s+")[0];
+            for (String a : addrs) {
                 Address entry = program.getAddressFactory().getAddress(a);
                 Function f = fm.getFunctionAt(entry);
                 if (f == null) {

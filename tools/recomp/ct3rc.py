@@ -40,6 +40,8 @@ class FunctionTranslator:
         self.ram_labels = set()
         self.op_labels = set()
         self.lines = []
+        self.callees = set()
+        self.indirect = 0
 
     def cname(self):
         return "sub_%08x" % self.entry
@@ -62,6 +64,8 @@ class FunctionTranslator:
 
     def assign(self, out, expr):
         s, o, z = out["s"], out["o"], out["z"]
+        if z > 8:
+            raise Unsupported("sortie de taille %d" % z)
         if s == "register":
             return "cpu_wr(c, %d, %d, (%s));" % (o, z, expr)
         if s == "unique":
@@ -84,7 +88,6 @@ class FunctionTranslator:
         ins = op["in"]
         out = op["out"]
         osz = out["z"] if out else 0
-        M = "0x%xULL" % mask(osz) if osz else "0"
 
         def a(i):
             return self.val(ins[i])
@@ -95,6 +98,8 @@ class FunctionTranslator:
         if m == "COPY":
             return self.assign(out, a(0))
         if m == "LOAD":
+            if osz > 8:
+                raise Unsupported("LOAD de taille %d" % osz)
             return self.assign(out, "guest_ld(c, (uint32_t)%s, %d)" % (a(1), osz))
         if m == "STORE":
             return "guest_st(c, (uint32_t)%s, %d, %s);" % (a(1), asz(2), a(2))
@@ -181,11 +186,16 @@ class FunctionTranslator:
             return self.assign(out, "((%s << %d) | %s)" % (a(0), 8 * lo_sz, a(1)))
         if m == "CALL":
             tgt = int(ins[0]["o"])
+            self.callees.add(tgt)
             return "dispatch(c, 0x%x);" % tgt
         if m == "CALLIND":
+            self.indirect += 1
             return "dispatch(c, (uint32_t)%s);" % a(0)
         if m == "RETURN":
             return "return;"
+        if m == "BRANCHIND":
+            self.indirect += 1
+            raise Unsupported(m)
         if m == "BRANCH":
             tgt = ins[0]
             if tgt["s"] == "const":
@@ -195,6 +205,7 @@ class FunctionTranslator:
             if t in self.insn_addrs:
                 self.ram_labels.add(t)
                 return "goto A_%08x;" % t
+            self.callees.add(t)
             return "dispatch(c, 0x%x); return;" % t
         if m == "CBRANCH":
             tgt = ins[0]
@@ -206,6 +217,7 @@ class FunctionTranslator:
             if t in self.insn_addrs:
                 self.ram_labels.add(t)
                 return "if (%s) goto A_%08x;" % (cond, t)
+            self.callees.add(t)
             return "if (%s) { dispatch(c, 0x%x); return; }" % (cond, t)
         raise Unsupported(m)
 
@@ -220,7 +232,9 @@ class FunctionTranslator:
                     code = self.emit_op(idx, op)
                 except Unsupported as e:
                     self.stats["unsupported"][str(e)] += 1
-                    self.stats["unsupported_sites"].append((self.name, ins["addr"], str(e)))
+                    mnem = ins["text"].split(" ")[0]
+                    self.stats["unsupported_sites"].append((self.name, ins["addr"], mnem))
+                    self.stats["unsupported_fn_entries"].add(self.entry)
                     code = 'rt_unsupported("%s", 0x%x);' % (e, self.cur_addr)
                 ops.append((idx, code))
             body.append((self.cur_addr, ins, ops))
@@ -243,32 +257,104 @@ class FunctionTranslator:
         return "\n".join(out)
 
 
+def reachable_from(entry, graph):
+    seen = {entry}
+    todo = [entry]
+    while todo:
+        f = todo.pop()
+        for g in graph.get(f, ()):
+            if g not in seen:
+                seen.add(g)
+                todo.append(g)
+    return seen
+
+
+def write_report(path, entries, stats, nins, nops, reach=None):
+    by_mnem = Counter(m for _, _, m in stats["unsupported_sites"])
+    lines = []
+    lines.append("# Rapport de traduction (ct3rc.py)")
+    lines.append("")
+    lines.append("- fonctions traduites : %d" % len(entries))
+    lines.append("- instructions : %d" % nins)
+    lines.append("- opérations p-code : %d" % nops)
+    lines.append("- sites non pris en charge : %d" % len(stats["unsupported_sites"]))
+    lines.append("")
+    lines.append("## Opérations non prises en charge (par opération p-code)")
+    lines.append("")
+    for k, v in stats["unsupported"].most_common():
+        lines.append("- %s : %d" % (k, v))
+    lines.append("")
+    lines.append("## Mnémoniques x86 concernés")
+    lines.append("")
+    for k, v in by_mnem.most_common(60):
+        lines.append("- %s : %d" % (k, v))
+    lines.append("")
+    lines.append("## Fonctions contenant au moins un site non pris en charge")
+    lines.append("")
+    fns = Counter(name for name, _, _ in stats["unsupported_sites"])
+    lines.append("- %d fonctions sur %d" % (len(fns), len(entries)))
+    if reach is not None:
+        lines.append("")
+        lines.append("## Couverture depuis le point d'entrée (graphe d'appels statique)")
+        lines.append("")
+        lines.append("- fonctions atteignables par appels directs : %d" % reach["count"])
+        lines.append("- dont avec au moins un site non pris en charge : %d" % reach["unsupported"])
+        lines.append("- sites d'appels/sauts indirects dans ces fonctions : %d (non résolus)" % reach["indirect"])
+        lines.append("- cibles d'appels absentes de la traduction : %d" % reach["missing"])
+    with open(path, "w") as f:
+        f.write("\n".join(lines) + "\n")
+
+
 def main():
+    import os
+
     ap = argparse.ArgumentParser()
     ap.add_argument("pcode_json")
     ap.add_argument("outdir")
+    ap.add_argument("--chunk", type=int, default=300, help="fonctions par fichier C")
+    ap.add_argument("--entry", default=None, help="adresse du point d'entrée (hex)")
     args = ap.parse_args()
 
     with open(args.pcode_json) as f:
         functions = json.load(f)
 
-    stats = {"unsupported": Counter(), "unsupported_sites": []}
-    chunks = [
-        "/* Généré par tools/recomp/ct3rc.py : ne pas modifier. */",
-        '#include "rt.h"',
-        "",
-    ]
-    entries = []
-    for fn in functions:
-        t = FunctionTranslator(fn, stats)
-        chunks.append(t.translate())
-        entries.append((t.entry, t.cname()))
-
-    import os
-
     os.makedirs(args.outdir, exist_ok=True)
-    with open(os.path.join(args.outdir, "gen_funcs.c"), "w") as f:
-        f.write("\n".join(chunks))
+    stats = {"unsupported": Counter(), "unsupported_sites": [], "unsupported_fn_entries": set()}
+    entries = []
+    nins = nops = 0
+    translated = []
+    graph = {}
+    indirect = {}
+    for fn in functions:
+        nins += len(fn["insns"])
+        nops += sum(len(i["pcode"]) for i in fn["insns"])
+        t = FunctionTranslator(fn, stats)
+        translated.append(t.translate())
+        entries.append((t.entry, t.cname()))
+        graph[t.entry] = t.callees
+        indirect[t.entry] = t.indirect
+    reach = None
+    if args.entry:
+        known = set(graph)
+        r = reachable_from(int(args.entry, 16), graph) & known
+        bad = r & stats["unsupported_fn_entries"]
+        reach = {
+            "count": len(r),
+            "unsupported": len(bad),
+            "indirect": sum(indirect.get(e, 0) for e in r),
+            "missing": len({g for e in r for g in graph[e]
+                            if g not in known and not (0x7F000000 <= g < 0x7F100000)}),
+        }
+
+    chunk_files = []
+    for start in range(0, len(translated), args.chunk):
+        name = "gen_funcs_%03d.c" % (start // args.chunk)
+        chunk_files.append(name)
+        body = ["/* Généré par tools/recomp/ct3rc.py : ne pas modifier. */", '#include "rt.h"', ""]
+        body.extend(translated[start:start + args.chunk])
+        with open(os.path.join(args.outdir, name), "w") as f:
+            f.write("\n".join(body))
+
     with open(os.path.join(args.outdir, "gen_funcs.h"), "w") as f:
         f.write("/* Généré par tools/recomp/ct3rc.py */\n#pragma once\n#include \"rt.h\"\n")
         for _, cname in entries:
@@ -283,11 +369,14 @@ def main():
         for entry, cname in sorted(entries):
             f.write("    case 0x%08x: %s(c); return;\n" % (entry, cname))
         f.write("    default: rt_unresolved(c, addr);\n    }\n}\n")
+    with open(os.path.join(args.outdir, "chunks.txt"), "w") as f:
+        f.write("\n".join(chunk_files) + "\n")
 
-    total = len(stats["unsupported_sites"])
-    print("fonctions traduites : %d" % len(entries))
-    print("sites non pris en charge : %d" % total)
-    for k, v in stats["unsupported"].most_common():
+    write_report(os.path.join(args.outdir, "rapport.md"), entries, stats, nins, nops, reach)
+    print("fonctions traduites : %d (%d fichiers C)" % (len(entries), len(chunk_files)))
+    print("instructions : %d, opérations p-code : %d" % (nins, nops))
+    print("sites non pris en charge : %d" % len(stats["unsupported_sites"]))
+    for k, v in stats["unsupported"].most_common(12):
         print("  %-20s %d" % (k, v))
     return 0
 

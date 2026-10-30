@@ -1,24 +1,38 @@
 #!/usr/bin/env python3
 """Générateur p-code -> C pour la recompilation statique de CT3.exe (x86).
 
-Entrée : JSON produit par tools/ghidra/ExportFunctions.java (mode pcode).
-Sortie : gen_funcs.c (une fonction C par routine guest) et gen_dispatch.c
-(répartition des appels par adresse guest). Le code généré dépend de
-rt.h ; il ne contient aucun octet du jeu.
+Entrée : JSON produit par tools/ghidra/ExportFunctions.java (modes pcode, pcode-all).
+Sortie : gen_funcs_NNN.c (une fonction C par routine guest), gen_funcs.h,
+gen_dispatch.c, rapport.md. Le code généré dépend de rt.h et rt_fp.h.
 
 Conventions du code généré :
-- Registres et drapeaux : tableau d'octets cpu_t.reg indexé par l'offset
-  p-code du registre (rd/wr little-endian, sous-registres inclus).
-- Temporaires unique : variables locales uint64_t uN (valeurs masquées).
+- Registres et drapeaux : tableau d'octets cpu_t.reg indexé par l'offset p-code.
+- Entiers (<= 8 octets) : variables locales uint64_t, valeurs masquées.
+- Flottants x87 (10 octets) et autres valeurs > 8 octets : accès par pointeur
+  (registre, temporaire, mémoire guest), opérations via rt_fp.h.
 - Appels et sauts hors fonction : dispatch(c, adresse_guest).
 """
 
 import argparse
 import json
+import os
 import sys
 from collections import Counter
 
 MASK_BITS = {1: 0xFF, 2: 0xFFFF, 4: 0xFFFFFFFF, 8: 0xFFFFFFFFFFFFFFFF}
+
+# Userops CALLOTHER observés dans CT3.exe (index p-code -> expression sur les entrées).
+# a = premier opérande flottant après l'index, b = second. Vérifié sur les instructions
+# FSIN/FCOS/F2XM1/FPATAN/FYL2X/FSINCOS du binaire.
+X87_USEROPS = {
+    105: ("F2XM1", 1, "exp2l({a}) - 1.0L"),
+    108: ("FCOS", 1, "cosl({a})"),
+    114: ("FSIN", 1, "sinl({a})"),
+    111: ("FPATAN", 2, "atan2l({a}, {b})"),
+    119: ("FYL2X", 1, "log2l({a})"),
+    112: ("FPTAN", 1, "tanl({a})"),
+    113: ("FSCALE", 2, "{a} * exp2l(truncl({b}))"),
+}
 
 
 def mask(size):
@@ -35,42 +49,64 @@ class FunctionTranslator:
         self.name = fn["name"]
         self.entry = int(fn["entry"], 16)
         self.stats = stats
-        self.uniques = set()
+        self.ints = set()
+        self.wides = set()
         self.insn_addrs = {int(i["addr"], 16) for i in fn["insns"]}
         self.ram_labels = set()
         self.op_labels = set()
-        self.lines = []
         self.callees = set()
         self.indirect = 0
+        self.cur_addr = 0
 
     def cname(self):
         return "sub_%08x" % self.entry
 
-    # ---- expressions -------------------------------------------------
-    def val(self, v):
+    # ---- varnodes ----------------------------------------------------
+    def uvar(self, o, z):
+        if z > 8:
+            self.wides.add((o, z))
+            return "w%d_%d" % (o, z)
+        self.ints.add((o, z))
+        return "u%d_%d" % (o, z)
+
+    def int_val(self, v):
         s, o, z = v["s"], v["o"], v["z"]
         if z > 8:
-            raise Unsupported("varnode de taille %d" % z)
+            raise Unsupported("valeur de %d octets en contexte entier" % z)
         if s == "const":
             return "0x%xULL" % (o & mask(z))
         if s == "register":
             return "cpu_rd(c, %d, %d)" % (o, z)
         if s == "unique":
-            self.uniques.add(o)
-            return "(u%d & 0x%xULL)" % (o, mask(z))
+            return "(%s & 0x%xULL)" % (self.uvar(o, z), mask(z))
         if s == "ram":
             return "guest_ld(c, 0x%xU, %d)" % (o & 0xFFFFFFFF, z)
         raise Unsupported("espace %s en entrée" % s)
 
-    def assign(self, out, expr):
+    def ptr(self, v):
+        """Pointeur vers les octets d'une valeur (utilisé pour x87 et les valeurs > 8 octets)."""
+        s, o, z = v["s"], v["o"], v["z"]
+        if s == "register":
+            return "(c->reg + %d)" % o
+        if s == "unique":
+            return "((uint8_t *)&%s)" % self.uvar(o, z) if z <= 8 else "(%s.b)" % self.uvar(o, z)
+        if s == "ram":
+            return "(rt_mem_base + 0x%xU)" % (o & 0xFFFFFFFF)
+        if s == "const":
+            if z > 8:
+                raise Unsupported("constante de %d octets" % z)
+            byts = ", ".join("0x%x" % ((o >> (8 * i)) & 0xFF) for i in range(z))
+            return "((const uint8_t[]){%s})" % byts
+        raise Unsupported("espace %s en pointeur" % s)
+
+    def int_assign(self, out, expr):
         s, o, z = out["s"], out["o"], out["z"]
         if z > 8:
-            raise Unsupported("sortie de taille %d" % z)
+            raise Unsupported("sortie entière de %d octets" % z)
         if s == "register":
             return "cpu_wr(c, %d, %d, (%s));" % (o, z, expr)
         if s == "unique":
-            self.uniques.add(o)
-            return "u%d = (%s) & 0x%xULL;" % (o, expr, mask(z))
+            return "%s = (%s) & 0x%xULL;" % (self.uvar(o, z), expr, mask(z))
         if s == "ram":
             return "guest_st(c, 0x%xU, %d, (%s));" % (o & 0xFFFFFFFF, z, expr)
         raise Unsupported("espace %s en sortie" % s)
@@ -82,108 +118,123 @@ class FunctionTranslator:
         sh = 64 - 8 * size
         return "((int64_t)((%s) << %d) >> %d)" % (expr, sh, sh)
 
-    # ---- operations ------------------------------------------------
-    def emit_op(self, idx, op):
+    def is_wide(self, v):
+        return v is not None and v["z"] > 8
+
+    # ---- opérations ---------------------------------------------------
+    def emit_op(self, op):
         m = op["op"]
         ins = op["in"]
         out = op["out"]
         osz = out["z"] if out else 0
 
         def a(i):
-            return self.val(ins[i])
+            return self.int_val(ins[i])
 
         def asz(i):
             return ins[i]["z"]
 
-        if m == "COPY":
-            return self.assign(out, a(0))
-        if m == "LOAD":
+        # Opérations flottantes et valeurs > 8 octets.
+        if m.startswith("FLOAT") or m in ("ROUND", "TRUNC", "INT2FLOAT"):
+            return self.emit_float(m, out, ins)
+        if m == "CALLOTHER":
+            return self.emit_callother(out, ins)
+        if m == "COPY" and (self.is_wide(out) or self.is_wide(ins[0])):
+            if osz <= 8 or asz(0) <= 8:
+                raise Unsupported("COPY entre tailles %d et %d" % (osz, asz(0)))
+            return "memcpy(%s, %s, %d);" % (self.ptr(out), self.ptr(ins[0]), min(osz, asz(0)))
+        if m == "LOAD" and osz > 8:
+            return "memcpy(%s, rt_mem_base + (uint32_t)%s, %d);" % (self.ptr(out), self.int_val(ins[1]), osz)
+        if m == "STORE" and asz(2) > 8:
+            return "memcpy(rt_mem_base + (uint32_t)%s, %s, %d);" % (self.int_val(ins[1]), self.ptr(ins[2]), asz(2))
+        if m == "SUBPIECE" and asz(0) > 8:
+            k = ins[1]["o"]
             if osz > 8:
-                raise Unsupported("LOAD de taille %d" % osz)
-            return self.assign(out, "guest_ld(c, (uint32_t)%s, %d)" % (a(1), osz))
+                return "memcpy(%s, %s + %d, %d);" % (self.ptr(out), self.ptr(ins[0]), k, osz)
+            return self.int_assign(out, "rt_load_bytes(%s + %d, %d)" % (self.ptr(ins[0]), k, osz))
+
+        if m == "COPY":
+            return self.int_assign(out, a(0))
+        if m == "LOAD":
+            return self.int_assign(out, "guest_ld(c, (uint32_t)%s, %d)" % (a(1), osz))
         if m == "STORE":
             return "guest_st(c, (uint32_t)%s, %d, %s);" % (a(1), asz(2), a(2))
         if m == "INT_ADD":
-            return self.assign(out, "%s + %s" % (a(0), a(1)))
+            return self.int_assign(out, "%s + %s" % (a(0), a(1)))
         if m == "INT_SUB":
-            return self.assign(out, "%s - %s" % (a(0), a(1)))
+            return self.int_assign(out, "%s - %s" % (a(0), a(1)))
         if m == "INT_MULT":
-            return self.assign(out, "%s * %s" % (a(0), a(1)))
+            return self.int_assign(out, "%s * %s" % (a(0), a(1)))
         if m == "INT_AND":
-            return self.assign(out, "%s & %s" % (a(0), a(1)))
+            return self.int_assign(out, "%s & %s" % (a(0), a(1)))
         if m == "INT_OR":
-            return self.assign(out, "%s | %s" % (a(0), a(1)))
+            return self.int_assign(out, "%s | %s" % (a(0), a(1)))
         if m == "INT_XOR":
-            return self.assign(out, "%s ^ %s" % (a(0), a(1)))
+            return self.int_assign(out, "%s ^ %s" % (a(0), a(1)))
         if m == "INT_2COMP":
-            return self.assign(out, "0 - %s" % a(0))
+            return self.int_assign(out, "0 - %s" % a(0))
         if m == "INT_NEGATE":
-            return self.assign(out, "~%s" % a(0))
+            return self.int_assign(out, "~%s" % a(0))
         if m == "INT_LEFT":
-            return self.assign(out, "(%s >= 64) ? 0 : (%s << %s)" % (a(1), a(0), a(1)))
+            return self.int_assign(out, "(%s >= 64) ? 0 : (%s << %s)" % (a(1), a(0), a(1)))
         if m == "INT_RIGHT":
-            return self.assign(out, "(%s >= 64) ? 0 : (%s >> %s)" % (a(1), a(0), a(1)))
+            return self.int_assign(out, "(%s >= 64) ? 0 : (%s >> %s)" % (a(1), a(0), a(1)))
         if m == "INT_SRIGHT":
             sa = asz(0)
-            return self.assign(
+            return self.int_assign(
                 out,
                 "(%s >= 64) ? (uint64_t)(%s < 0 ? -1LL : 0) : (uint64_t)(%s >> %s)"
                 % (a(1), self.sx(a(0), sa), self.sx(a(0), sa), a(1)),
             )
         if m == "INT_DIV":
-            return self.assign(out, "rt_div_u(%s, %s)" % (a(0), a(1)))
+            return self.int_assign(out, "rt_div_u(%s, %s)" % (a(0), a(1)))
         if m == "INT_REM":
-            return self.assign(out, "rt_rem_u(%s, %s)" % (a(0), a(1)))
+            return self.int_assign(out, "rt_rem_u(%s, %s)" % (a(0), a(1)))
         if m == "INT_SDIV":
             sz = asz(0)
-            return self.assign(out, "(uint64_t)rt_div_s(%s, %s)" % (self.sx(a(0), sz), self.sx(a(1), sz)))
+            return self.int_assign(out, "(uint64_t)rt_div_s(%s, %s)" % (self.sx(a(0), sz), self.sx(a(1), sz)))
         if m == "INT_SREM":
             sz = asz(0)
-            return self.assign(out, "(uint64_t)rt_rem_s(%s, %s)" % (self.sx(a(0), sz), self.sx(a(1), sz)))
+            return self.int_assign(out, "(uint64_t)rt_rem_s(%s, %s)" % (self.sx(a(0), sz), self.sx(a(1), sz)))
         if m == "INT_EQUAL":
-            return self.assign(out, "(%s == %s)" % (a(0), a(1)))
+            return self.int_assign(out, "(%s == %s)" % (a(0), a(1)))
         if m == "INT_NOTEQUAL":
-            return self.assign(out, "(%s != %s)" % (a(0), a(1)))
+            return self.int_assign(out, "(%s != %s)" % (a(0), a(1)))
         if m == "INT_LESS":
-            return self.assign(out, "(%s < %s)" % (a(0), a(1)))
+            return self.int_assign(out, "(%s < %s)" % (a(0), a(1)))
         if m == "INT_LESSEQUAL":
-            return self.assign(out, "(%s <= %s)" % (a(0), a(1)))
+            return self.int_assign(out, "(%s <= %s)" % (a(0), a(1)))
         if m == "INT_SLESS":
             sz = asz(0)
-            return self.assign(out, "(%s < %s)" % (self.sx(a(0), sz), self.sx(a(1), sz)))
+            return self.int_assign(out, "(%s < %s)" % (self.sx(a(0), sz), self.sx(a(1), sz)))
         if m == "INT_SLESSEQUAL":
             sz = asz(0)
-            return self.assign(out, "(%s <= %s)" % (self.sx(a(0), sz), self.sx(a(1), sz)))
+            return self.int_assign(out, "(%s <= %s)" % (self.sx(a(0), sz), self.sx(a(1), sz)))
         if m == "INT_CARRY":
-            sz = asz(0)
-            return self.assign(out, "rt_carry_add(%s, %s, %d)" % (a(0), a(1), sz))
+            return self.int_assign(out, "rt_carry_add(%s, %s, %d)" % (a(0), a(1), asz(0)))
         if m == "INT_SCARRY":
-            sz = asz(0)
-            return self.assign(out, "rt_scarry_add(%s, %s, %d)" % (a(0), a(1), sz))
+            return self.int_assign(out, "rt_scarry_add(%s, %s, %d)" % (a(0), a(1), asz(0)))
         if m == "INT_SBORROW":
-            sz = asz(0)
-            return self.assign(out, "rt_sborrow_sub(%s, %s, %d)" % (a(0), a(1), sz))
+            return self.int_assign(out, "rt_sborrow_sub(%s, %s, %d)" % (a(0), a(1), asz(0)))
         if m == "INT_ZEXT":
-            return self.assign(out, a(0))
+            return self.int_assign(out, a(0))
         if m == "INT_SEXT":
-            sz = asz(0)
-            return self.assign(out, "(uint64_t)%s" % self.sx(a(0), sz))
+            return self.int_assign(out, "(uint64_t)%s" % self.sx(a(0), asz(0)))
         if m == "POPCOUNT":
-            return self.assign(out, "(uint64_t)__builtin_popcountll(%s)" % a(0))
+            return self.int_assign(out, "(uint64_t)__builtin_popcountll(%s)" % a(0))
         if m == "BOOL_NEGATE":
-            return self.assign(out, "(%s == 0)" % a(0))
+            return self.int_assign(out, "(%s == 0)" % a(0))
         if m == "BOOL_AND":
-            return self.assign(out, "(%s & %s)" % (a(0), a(1)))
+            return self.int_assign(out, "(%s & %s)" % (a(0), a(1)))
         if m == "BOOL_OR":
-            return self.assign(out, "(%s | %s)" % (a(0), a(1)))
+            return self.int_assign(out, "(%s | %s)" % (a(0), a(1)))
         if m == "BOOL_XOR":
-            return self.assign(out, "(%s ^ %s)" % (a(0), a(1)))
+            return self.int_assign(out, "(%s ^ %s)" % (a(0), a(1)))
         if m == "SUBPIECE":
             k = ins[1]["o"]
-            return self.assign(out, "(%s >> %d)" % (a(0), 8 * k))
+            return self.int_assign(out, "(%s >> %d)" % (a(0), 8 * k))
         if m == "PIECE":
-            lo_sz = asz(1)
-            return self.assign(out, "((%s << %d) | %s)" % (a(0), 8 * lo_sz, a(1)))
+            return self.int_assign(out, "((%s << %d) | %s)" % (a(0), 8 * asz(1), a(1)))
         if m == "CALL":
             tgt = int(ins[0]["o"])
             self.callees.add(tgt)
@@ -221,6 +272,60 @@ class FunctionTranslator:
             return "if (%s) { dispatch(c, 0x%x); return; }" % (cond, t)
         raise Unsupported(m)
 
+    def emit_float(self, m, out, ins):
+        osz = out["z"] if out else 0
+        if m in ("FLOAT_ADD", "FLOAT_SUB", "FLOAT_MULT", "FLOAT_DIV"):
+            op = {"FLOAT_ADD": "+", "FLOAT_SUB": "-", "FLOAT_MULT": "*", "FLOAT_DIV": "/"}[m]
+            a = "rt_fget(%s, %d)" % (self.ptr(ins[0]), ins[0]["z"])
+            b = "rt_fget(%s, %d)" % (self.ptr(ins[1]), ins[1]["z"])
+            return "rt_fput(%s, %d, %s %s %s);" % (self.ptr(out), osz, a, op, b)
+        if m == "FLOAT_NEG":
+            return "rt_fput(%s, %d, -rt_fget(%s, %d));" % (self.ptr(out), osz, self.ptr(ins[0]), ins[0]["z"])
+        if m == "FLOAT_ABS":
+            return "rt_fput(%s, %d, fabsl(rt_fget(%s, %d)));" % (self.ptr(out), osz, self.ptr(ins[0]), ins[0]["z"])
+        if m == "FLOAT_SQRT":
+            return "rt_fput(%s, %d, sqrtl(rt_fget(%s, %d)));" % (self.ptr(out), osz, self.ptr(ins[0]), ins[0]["z"])
+        if m in ("FLOAT_LESS", "FLOAT_LESSEQUAL", "FLOAT_EQUAL", "FLOAT_NOTEQUAL"):
+            fn = {"FLOAT_LESS": "rt_fcmp_lt", "FLOAT_LESSEQUAL": "rt_fcmp_le",
+                  "FLOAT_EQUAL": "rt_fcmp_eq", "FLOAT_NOTEQUAL": "rt_fcmp_ne"}[m]
+            a = "rt_fget(%s, %d)" % (self.ptr(ins[0]), ins[0]["z"])
+            b = "rt_fget(%s, %d)" % (self.ptr(ins[1]), ins[1]["z"])
+            return self.int_assign(out, "%s(%s, %s)" % (fn, a, b))
+        if m == "FLOAT_NAN":
+            return self.int_assign(out, "rt_fcmp_nan(rt_fget(%s, %d))" % (self.ptr(ins[0]), ins[0]["z"]))
+        if m == "FLOAT2FLOAT":
+            return "rt_fput(%s, %d, rt_fget(%s, %d));" % (self.ptr(out), osz, self.ptr(ins[0]), ins[0]["z"])
+        if m == "INT2FLOAT":
+            src = self.sx(self.int_val(ins[0]), ins[0]["z"])
+            return "rt_fput(%s, %d, (long double)%s);" % (self.ptr(out), osz, src)
+        if m == "TRUNC":
+            return self.int_assign(out, "rt_ftrunc(%s, %d, %d)" % (self.ptr(ins[0]), ins[0]["z"], osz))
+        if m == "ROUND":
+            return "rt_fput(%s, %d, rt_fround(c, rt_fget(%s, %d)));" % (
+                self.ptr(out), osz, self.ptr(ins[0]), ins[0]["z"])
+        raise Unsupported(m)
+
+    def emit_callother(self, out, ins):
+        idx = ins[0]["o"]
+        if idx == 16:
+            return "rt_int3(0x%x);" % self.cur_addr
+        if idx == 76:
+            return self.int_assign(out, "rt_rdtsc()")
+        if idx == 109:
+            i = (ins[1]["o"] - 4352) // 16
+            return self.int_assign(out, "cpu_rd(c, %d, %d) | (3ULL << %d)" % (out["o"], out["z"], 2 * i))
+        spec = X87_USEROPS.get(idx)
+        if spec is None:
+            raise Unsupported("CALLOTHER %d" % idx)
+        name, arity, expr = spec
+        args = ins[1:]
+        if len(args) != arity:
+            raise Unsupported("CALLOTHER %s : %d entrées" % (name, len(args)))
+        vals = {}
+        for key, v in zip(("a", "b"), args):
+            vals[key] = "rt_fget(%s, %d)" % (self.ptr(v), v["z"])
+        return "rt_fput(%s, %d, %s);" % (self.ptr(out), out["z"], expr.format(**vals))
+
     # ---- fonction -----------------------------------------------------
     def translate(self):
         body = []
@@ -229,7 +334,7 @@ class FunctionTranslator:
             ops = []
             for idx, op in enumerate(ins["pcode"]):
                 try:
-                    code = self.emit_op(idx, op)
+                    code = self.emit_op(op)
                 except Unsupported as e:
                     self.stats["unsupported"][str(e)] += 1
                     mnem = ins["text"].split(" ")[0]
@@ -238,12 +343,12 @@ class FunctionTranslator:
                     code = 'rt_unsupported("%s", 0x%x);' % (e, self.cur_addr)
                 ops.append((idx, code))
             body.append((self.cur_addr, ins, ops))
-        out = []
-        out.append("void %s(cpu_t *c)" % self.cname())
-        out.append("{")
-        decl = sorted(self.uniques)
-        if decl:
-            out.append("    uint64_t " + ", ".join("u%d = 0" % o for o in decl) + ";")
+        out = ["void %s(cpu_t *c)" % self.cname(), "{"]
+        for (o, z) in sorted(self.ints):
+            out.append("    uint64_t u%d_%d = 0;" % (o, z))
+        for (o, z) in sorted(self.wides):
+            out.append("    rt_wide w%d_%d;" % (o, z))
+            out.append("    memset(&w%d_%d, 0, sizeof w%d_%d);" % (o, z, o, z))
         for addr, ins, ops in body:
             if addr in self.ram_labels:
                 out.append("A_%08x:;" % addr)
@@ -291,8 +396,7 @@ def write_report(path, entries, stats, nins, nops, reach=None):
     lines.append("")
     lines.append("## Fonctions contenant au moins un site non pris en charge")
     lines.append("")
-    fns = Counter(name for name, _, _ in stats["unsupported_sites"])
-    lines.append("- %d fonctions sur %d" % (len(fns), len(entries)))
+    lines.append("- %d fonctions sur %d" % (len(stats["unsupported_fn_entries"]), len(entries)))
     if reach is not None:
         lines.append("")
         lines.append("## Couverture depuis le point d'entrée (graphe d'appels statique)")
@@ -306,8 +410,6 @@ def write_report(path, entries, stats, nins, nops, reach=None):
 
 
 def main():
-    import os
-
     ap = argparse.ArgumentParser()
     ap.add_argument("pcode_json")
     ap.add_argument("outdir")
@@ -333,6 +435,7 @@ def main():
         entries.append((t.entry, t.cname()))
         graph[t.entry] = t.callees
         indirect[t.entry] = t.indirect
+
     reach = None
     if args.entry:
         known = set(graph)
@@ -350,7 +453,7 @@ def main():
     for start in range(0, len(translated), args.chunk):
         name = "gen_funcs_%03d.c" % (start // args.chunk)
         chunk_files.append(name)
-        body = ["/* Généré par tools/recomp/ct3rc.py : ne pas modifier. */", '#include "rt.h"', ""]
+        body = ["/* Généré par tools/recomp/ct3rc.py : ne pas modifier. */", '#include "rt_fp.h"', ""]
         body.extend(translated[start:start + args.chunk])
         with open(os.path.join(args.outdir, name), "w") as f:
             f.write("\n".join(body))

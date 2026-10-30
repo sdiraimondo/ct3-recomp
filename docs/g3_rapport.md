@@ -65,3 +65,22 @@ Deux des fonctions atteignables contiennent des `INT3` (`_abort` et `___security
 3. **`BRANCHIND`** : tables de `switch`, par analyse de la table ou énumération des cibles.
 4. **SSE et 3DNow!** : à évaluer. Le jeu peut choisir un chemin x87 si `CPUID` ne signale pas ces extensions. C'est un choix de fidélité à décider.
 5. Puis `FUN_004079E0` comme test d'intégration du rendu.
+
+## Mise à jour : x87 (30 oct. 2026, même jour)
+
+Après implémentation de l'x87 (`runtime/include/rt_fp.h`, `tools/recomp/ct3rc.py`) :
+
+| Élément | Avant | Après |
+|---|---|---|
+| Sites non pris en charge | 240 310 | 1 773 |
+| Opérations x87 (varnodes 10 octets, `FLOAT_*`, `ROUND`, `TRUNC`, transcendantes) | 187 869 + environ 40 000 | 0 (sauf `FPREM`, 4 sites) |
+| Objets compilés | 16, 0 erreur | 16, 0 erreur |
+
+Restants (1 773 sites) :
+
+- `BRANCHIND` : 296 sauts indirects (tables de `switch`). Non résolus.
+- `CPUID` : 170 sites, réponse à décider (D-019).
+- 3DNow!, MMX et SSE : `PFMUL`, `PFADD`, `PFACC`, `PMOVMSKB`, `PMADDWD`, `RCPPS`, `RSQRTSS`, etc. (`CALLOTHER` 136 à 256, valeurs de 16 octets).
+- `FEMMS` (74 sites, 3DNow!), `FPREM` (4 sites), `XCHG` (2 sites, `CALLOTHER` 17 et 18), `INT3` et `RDTSC` gérés.
+
+Tests x87 sur routines réelles de CT3.exe (`tests/x87`) : `__ftol` (troncature), `FILD`/`FST`, `FADD`/`FMUL` mémoire, `FUCOMPP` + `FNSTSW` + `FSQRT` (y compris le cas NaN), 2^x (`F2XM1`, `FRNDINT`, `FSCALE`). Résultat : `X87 OK`.

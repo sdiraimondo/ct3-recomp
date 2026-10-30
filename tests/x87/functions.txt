@@ -1,0 +1,7 @@
+# Routines x87 de CT3.exe (adresses guest). Voir test_x87.c pour le comportement attendu.
+0x518ffc __ftol
+0x4696b0 FUN_004696b0
+0x42e5a0 FUN_0042e5a0
+0x426d60 FUN_00426d60
+0x4576f0 FUN_004576f0
+0x51f780 FUN_0051f780

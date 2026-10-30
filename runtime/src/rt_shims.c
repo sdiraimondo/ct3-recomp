@@ -72,3 +72,9 @@ void rt_unsupported(const char *what, uint32_t addr)
     fprintf(stderr, "rt: opération p-code non prise en charge (%s) à 0x%08x\n", what, addr);
     abort();
 }
+
+void rt_int3(uint32_t addr)
+{
+    fprintf(stderr, "rt: point d'arrêt INT3 atteint à 0x%08x\n", addr);
+    abort();
+}

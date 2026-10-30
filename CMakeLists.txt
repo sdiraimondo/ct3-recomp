@@ -16,5 +16,9 @@ set(CT3_EXE "/run/media/stephane/BC250_USB/Games/Crazy Taxi 3/CT3.exe" CACHE FIL
 set(CT3_GHIDRA_DIR "$ENV{HOME}/.local/share/ghidra_12.1.4_PUBLIC" CACHE PATH "Installation Ghidra 12.1.4")
 set(CT3_JAVA_HOME "/var/home/linuxbrew/.linuxbrew/Cellar/openjdk@21/21.0.13.0.3/libexec" CACHE PATH "JDK 21 pour Ghidra")
 
+include(cmake/CT3Recomp.cmake)
+
+add_subdirectory(runtime)
 add_subdirectory(tests/g1_d3d9_triangle)
 add_subdirectory(tests/g2)
+add_subdirectory(tests/x87)

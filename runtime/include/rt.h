@@ -12,7 +12,7 @@
 #define RT_STUB_BASE    0x7F000000u
 #define RT_STUB_END     0x7F100000u
 #define RT_HOST_RET     0x7EFFFFF0u
-#define RT_REG_BYTES    2048
+#define RT_REG_BYTES    8192
 
 typedef struct cpu {
     uint8_t reg[RT_REG_BYTES];
@@ -118,6 +118,12 @@ static inline int64_t rt_rem_s(int64_t a, int64_t b)
     return a % b;
 }
 
+static inline uint64_t rt_rdtsc(void)
+{
+    return __builtin_ia32_rdtsc();
+}
+
+void rt_int3(uint32_t addr);
 void dispatch(cpu_t *c, uint32_t addr);
 void rt_fatal(const char *msg);
 void rt_unresolved(cpu_t *c, uint32_t addr);

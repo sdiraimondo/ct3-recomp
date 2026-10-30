@@ -35,6 +35,42 @@ X87_USEROPS = {
 }
 
 
+# Userops MMX/3DNow!/SSE implémentés dans runtime/src/rt_vec.c : index -> (nom, arité).
+VEC_USEROPS = {
+    136: ("PACKSSWB", 2),
+    137: ("PACKSSDW", 2),
+    142: ("PADDSW", 2),
+    169: ("PSUBSW", 2),
+    154: ("PMADDWD", 2),
+    157: ("PMULHW", 2),
+    166: ("PSLLW", 2),
+    167: ("PSRAW", 2),
+    238: ("PFADD", 2),
+    239: ("PFSUB", 2),
+    240: ("PFSUBR", 2),
+    243: ("PFMUL", 2),
+    241: ("PFMIN", 2),
+    242: ("PFMAX", 2),
+    234: ("PFCMPGE", 2),
+    235: ("PFCMPGT", 2),
+    236: ("PFCMPEQ", 2),
+    237: ("PFACC", 2),
+    254: ("PFNACC", 2),
+    256: ("PSWAPD", 2),
+    232: ("PI2FD", 2),
+    233: ("PF2ID", 2),
+    244: ("PFRCP", 2),
+    245: ("PFRSQRT", 2),
+    246: ("PFRCPIT1", 2),
+    247: ("PFRSQIT1", 2),
+    248: ("PFRCPIT2", 2),
+    173: ("RCPPS", 2),
+    174: ("RCPSS", 2),
+    176: ("RSQRTSS", 2),
+}
+FEMMS_USEROP = 251
+
+
 def mask(size):
     return MASK_BITS[size]
 
@@ -123,6 +159,28 @@ class FunctionTranslator:
     def is_wide(self, v):
         return v is not None and v["z"] > 8
 
+    @staticmethod
+    def is_wide_int_op(m, out, ins):
+        if m not in ("INT_AND", "INT_OR", "INT_XOR", "INT_NEGATE", "INT_RIGHT", "INT_LEFT", "INT_ZEXT"):
+            return False
+        return any(v is not None and v["z"] > 8 for v in ([out] if out else []) + ins)
+
+    def emit_wide_int(self, m, out, ins):
+        n = out["z"]
+        if m in ("INT_AND", "INT_OR", "INT_XOR"):
+            fn = {"INT_AND": "rt_w_and", "INT_OR": "rt_w_or", "INT_XOR": "rt_w_xor"}[m]
+            return "%s(%s, %s, %s, %d);" % (fn, self.ptr(out), self.ptr(ins[0]), self.ptr(ins[1]), n)
+        if m == "INT_NEGATE":
+            return "rt_w_not(%s, %s, %d);" % (self.ptr(out), self.ptr(ins[0]), n)
+        if m in ("INT_RIGHT", "INT_LEFT"):
+            if ins[1]["s"] != "const":
+                raise Unsupported("décalage de valeur de %d octets par variable" % n)
+            fn = "rt_w_shr" if m == "INT_RIGHT" else "rt_w_shl"
+            return "%s(%s, %s, %d, %d);" % (fn, self.ptr(out), self.ptr(ins[0]), n, ins[1]["o"])
+        if m == "INT_ZEXT":
+            return "rt_w_zext(%s, %s, %d, %d);" % (self.ptr(out), self.ptr(ins[0]), ins[0]["z"], n)
+        raise Unsupported(m)
+
     # ---- opérations ---------------------------------------------------
     def emit_op(self, op):
         m = op["op"]
@@ -155,6 +213,8 @@ class FunctionTranslator:
                 return "memcpy(%s, %s + %d, %d);" % (self.ptr(out), self.ptr(ins[0]), k, osz)
             return self.int_assign(out, "rt_load_bytes(%s + %d, %d)" % (self.ptr(ins[0]), k, osz))
 
+        if self.is_wide_int_op(m, out, ins):
+            return self.emit_wide_int(m, out, ins)
         if m == "COPY":
             return self.int_assign(out, a(0))
         if m == "LOAD":
@@ -250,8 +310,8 @@ class FunctionTranslator:
             self.indirect += 1
             targets = self.cur_targets
             if not targets:
-                if not self.cur_is_last:
-                    raise Unsupported(m)
+                # Saut indirect sans cible Ghidra : tail-call vers une fonction (table de pointeurs).
+                # Si la cible n'est pas une fonction traduite, dispatch s'arrête avec un message explicite.
                 return "dispatch(c, (uint32_t)%s); return;" % a(0)
             parts = ["{ uint32_t t_ = (uint32_t)%s;" % a(0)]
             for t in targets:
@@ -315,6 +375,9 @@ class FunctionTranslator:
             src = self.sx(self.int_val(ins[0]), ins[0]["z"])
             return "rt_fput(%s, %d, (long double)%s);" % (self.ptr(out), osz, src)
         if m == "TRUNC":
+            if osz > 8:
+                return "rt_fput(%s, %d, truncl(rt_fget(%s, %d)));" % (
+                    self.ptr(out), osz, self.ptr(ins[0]), ins[0]["z"])
             return self.int_assign(out, "rt_ftrunc(%s, %d, %d)" % (self.ptr(ins[0]), ins[0]["z"], osz))
         if m == "ROUND":
             return "rt_fput(%s, %d, rt_fround(c, rt_fget(%s, %d)));" % (
@@ -325,10 +388,20 @@ class FunctionTranslator:
         idx = ins[0]["o"]
         if idx == 16:
             return "rt_int3(0x%x);" % self.cur_addr
+        if idx in (17, 18):
+            return "(void)0; /* marqueur XCHG : l'échange est fait par les opérations voisines */"
         if idx == 76:
             return self.int_assign(out, "rt_rdtsc()")
         if 45 <= idx <= 61:
             return self.int_assign(out, "rt_cpuid_block(c)")
+        if idx == FEMMS_USEROP:
+            return "cpu_wr(c, 4260, 2, 0xFFFF);"
+        if idx in VEC_USEROPS:
+            name, arity = VEC_USEROPS[idx]
+            args = ins[1:]
+            if len(args) != arity:
+                raise Unsupported("CALLOTHER %s : %d entrées" % (name, len(args)))
+            return "rt_v_%s(%s, %s, %s);" % (name, self.ptr(out), self.ptr(args[0]), self.ptr(args[1]))
         if idx == 109:
             i = (ins[1]["o"] - 4352) // 16
             return self.int_assign(out, "cpu_rd(c, %d, %d) | (3ULL << %d)" % (out["o"], out["z"], 2 * i))
@@ -482,7 +555,8 @@ def main():
     for start in range(0, len(translated), args.chunk):
         name = "gen_funcs_%03d.c" % (start // args.chunk)
         chunk_files.append(name)
-        body = ["/* Généré par tools/recomp/ct3rc.py : ne pas modifier. */", '#include "rt_fp.h"', ""]
+        body = ["/* Généré par tools/recomp/ct3rc.py : ne pas modifier. */",
+                '#include "rt_fp.h"', '#include "rt_vec.h"', ""]
         body.extend(translated[start:start + args.chunk])
         with open(os.path.join(args.outdir, name), "w") as f:
             f.write("\n".join(body))

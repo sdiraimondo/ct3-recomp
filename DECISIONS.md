@@ -155,7 +155,25 @@ Journal des décisions du portage. Une entrée par décision, avec la date et la
   - Les approximations (`RCPPS`, `PFRCP`) donnent un résultat exact à la précision float, pas l'approximation matérielle (environ 2^-14 pour `PFRCP`). Unicorn n'est donc pas un miroir du matériel pour ces instructions.
 - Conséquence : Unicorn est une référence fiable pour les opérations exactes (entiers, saturation, arithmétique flottante). Pour les approximations, je propose de les calculer à la précision float (comme la référence), et de documenter l'écart avec le matériel (à valider).
 
+## D-025 : opérations 3DNow! et SSE, limites de la référence (31 oct. 2026)
+
+- Référence : Unicorn (modèle Athlon pour 3DNow!/MMX, modèle par défaut pour SSE). Vérification bit à bit sur 200 vecteurs par opération.
+- Identiques à la référence : 16 opérations 3DNow! exactes, 8 MMX, 3 SSE (RCPPS, RCPSS, RSQRTSS).
+- Non vérifiables avec la référence :
+  - `PFRCPIT1`, `PFRCPIT2`, `PFRSQIT1` : Unicorn renvoie la source sans calcul (200 cas sur 200). Implémentés selon Newton-Raphson : `PFRCPIT1 = 2 - d·x`, `PFRSQIT1 = 1,5 - 0,5·d·x²`, `PFRCPIT2 = t·x`. Vérifiés par convergence (`check_newton`), pas au matériel.
+  - `PFRSQRT` pour x < 0 : Unicorn renvoie signe(x)/√|x|. Conservé. `RSQRTSS` (SSE) suit IEEE (NaN), différent : c'est voulu.
+- Précision des approximations (`PFRCP`, `PFRSQRT`, `RCPPS`, `RCPSS`, `RSQRTSS`) : exacte à la précision float, comme la référence. Le matériel est moins précis (environ 2^-12 à 2^-14). Écart non reproduit ; à valider.
+- Statut : décision de l'utilisateur de garder l'option 1 (implémentation complète). Les points non vérifiés sont listés ici pour relecture.
+
+## D-026 : couverture complète du code (31 oct. 2026)
+
+- Résultat : 4 448 fonctions traduites, 0 site non pris en charge, 16 objets compilés.
+- Sauts indirects : cibles Ghidra dans la fonction (chaîne de comparaisons), sinon tail-call `dispatch`. Une cible non traduite arrête l'exécution avec un message explicite (`rt_unresolved`), jamais en silence.
+- Marqueurs `CALLOTHER` 17 et 18 (XCHG) : sans effet propre, l'échange est fait par les opérations voisines.
+- `FEMMS` : tag word à « vide ». `RDTSC` : TSC de l'hôte (D-017 toujours ouvert).
+- Non vérifié : `FPREM`, marqueurs XCHG, tail-calls indirects (pas de référence d'exécution).
+
 ## Points ouverts
 
 - Traducteur : source sémantique à choisir. Proposition : export p-code via Ghidra headless (Ghidra 12.1.4 déjà installé). Alternative : capstone et traducteur maison.
-- D-019 (jeu d'instructions) : toujours ouvert. 3DNow!, MMX, SSE et CPUID restent non traités.
+- D-019 : résolu (option 1). Les points non vérifiés sont listés en D-025 et D-026.

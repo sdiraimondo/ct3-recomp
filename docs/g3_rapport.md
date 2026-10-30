@@ -84,3 +84,25 @@ Restants (1 773 sites) :
 - `FEMMS` (74 sites, 3DNow!), `FPREM` (4 sites), `XCHG` (2 sites, `CALLOTHER` 17 et 18), `INT3` et `RDTSC` gérés.
 
 Tests x87 sur routines réelles de CT3.exe (`tests/x87`) : `__ftol` (troncature), `FILD`/`FST`, `FADD`/`FMUL` mémoire, `FUCOMPP` + `FNSTSW` + `FSQRT` (y compris le cas NaN), 2^x (`F2XM1`, `FRNDINT`, `FSCALE`). Résultat : `X87 OK`.
+
+## Mise à jour : partie 3 (MMX, SSE, 3DNow!, sauts) — 31 oct. 2026
+
+| Élément | Avant | Après |
+|---|---|---|
+| Sites non pris en charge | 1 773 | **0** |
+| Fonctions traduites | 4 448 | 4 448 |
+| Objets compilés | 16, 0 erreur | 16, 0 erreur |
+
+Ce qui a été ajouté : MMX (8 opérations), 3DNow! (16 opérations exactes et 3 d'itération), SSE (3 opérations), opérations entières sur 16 octets (`PAND`, `POR`, `PXOR`, `PMOVMSKB`, décalages), `FEMMS`, `FPREM` (via troncature flottante), `CPUID` (profil AMD), sauts indirects (cibles Ghidra, puis tail-calls).
+
+**Vérification** (`tests/vec`, `tools/ref/gen_vectors.py`) : chaque opération est comparée à Unicorn (modèle Athlon pour MMX/3DNow!, modèle par défaut pour SSE) sur 200 vecteurs (aléatoires et cas limites). Résultat : **identique bit à bit** pour les 16 opérations 3DNow! exactes, les 8 MMX et les 3 SSE, à la comparaison NaN près.
+
+**Ce qui n'est PAS vérifié** (voir D-025 et D-026) :
+
+- `PFRCPIT1`, `PFRCPIT2`, `PFRSQIT1` : Unicorn renvoie la source telle quelle. Implémentés avec les formules de Newton-Raphson, vérifiés seulement par leur convergence.
+- `PFRSQRT` pour x négatif : convention de la référence (signe(x)/√|x|), non confirmée au matériel.
+- Approximations (`RCPPS`, `RCPSS`, `PFRCP`, `RSQRTSS`, `PFRSQRT`) : résultat exact à la précision float, pas l'approximation matérielle.
+- `FPREM` : implémenté d'après le p-code, sans référence.
+- Sauts indirects sans cible Ghidra (3) : traités comme tail-calls ; si la cible n'est pas une fonction traduite, l'exécution s'arrête avec un message explicite.
+- Couverture ≠ exactitude : la traduction est complète, mais seules les opérations ci-dessus et les routines de `tests/g2` et `tests/x87` sont vérifiées par l'exécution.
+- Deux cibles de saut restent absentes de la traduction (`0x4021DB`, `0x51D3D5`).

@@ -57,6 +57,8 @@ class FunctionTranslator:
         self.callees = set()
         self.indirect = 0
         self.cur_addr = 0
+        self.cur_targets = []
+        self.cur_is_last = False
 
     def cname(self):
         return "sub_%08x" % self.entry
@@ -246,7 +248,21 @@ class FunctionTranslator:
             return "return;"
         if m == "BRANCHIND":
             self.indirect += 1
-            raise Unsupported(m)
+            targets = self.cur_targets
+            if not targets:
+                if not self.cur_is_last:
+                    raise Unsupported(m)
+                return "dispatch(c, (uint32_t)%s); return;" % a(0)
+            parts = ["{ uint32_t t_ = (uint32_t)%s;" % a(0)]
+            for t in targets:
+                if t in self.insn_addrs:
+                    self.ram_labels.add(t)
+                    parts.append("if (t_ == 0x%x) goto A_%08x;" % (t, t))
+                else:
+                    self.callees.add(t)
+                    parts.append("if (t_ == 0x%x) { dispatch(c, t_); return; }" % t)
+            parts.append('rt_unsupported("saut indirect hors cibles connues", 0x%x); }' % self.cur_addr)
+            return " ".join(parts)
         if m == "BRANCH":
             tgt = ins[0]
             if tgt["s"] == "const":
@@ -311,6 +327,8 @@ class FunctionTranslator:
             return "rt_int3(0x%x);" % self.cur_addr
         if idx == 76:
             return self.int_assign(out, "rt_rdtsc()")
+        if 45 <= idx <= 61:
+            return self.int_assign(out, "rt_cpuid_block(c)")
         if idx == 109:
             i = (ins[1]["o"] - 4352) // 16
             return self.int_assign(out, "cpu_rd(c, %d, %d) | (3ULL << %d)" % (out["o"], out["z"], 2 * i))
@@ -329,8 +347,11 @@ class FunctionTranslator:
     # ---- fonction -----------------------------------------------------
     def translate(self):
         body = []
-        for ins in self.fn["insns"]:
+        last = len(self.fn["insns"]) - 1
+        for n, ins in enumerate(self.fn["insns"]):
             self.cur_addr = int(ins["addr"], 16)
+            self.cur_targets = [int(t, 16) for t in ins.get("targets", []) if is_hex_addr(t)]
+            self.cur_is_last = n == last
             ops = []
             for idx, op in enumerate(ins["pcode"]):
                 try:
@@ -360,6 +381,14 @@ class FunctionTranslator:
         out.append("}")
         out.append("")
         return "\n".join(out)
+
+
+def is_hex_addr(text):
+    try:
+        int(text, 16)
+        return True
+    except ValueError:
+        return False
 
 
 def reachable_from(entry, graph):

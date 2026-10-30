@@ -124,6 +124,7 @@ static inline uint64_t rt_rdtsc(void)
 }
 
 void rt_int3(uint32_t addr);
+uint32_t rt_cpuid_block(cpu_t *c);
 void dispatch(cpu_t *c, uint32_t addr);
 void rt_fatal(const char *msg);
 void rt_unresolved(cpu_t *c, uint32_t addr);

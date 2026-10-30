@@ -20,6 +20,7 @@ import ghidra.program.model.pcode.Varnode;
 import ghidra.program.model.address.AddressSetView;
 import ghidra.program.model.address.AddressRange;
 import ghidra.program.model.address.AddressRangeIterator;
+import ghidra.program.model.symbol.Reference;
 
 import java.io.FileWriter;
 import java.io.PrintWriter;
@@ -143,8 +144,20 @@ public class ExportFunctions extends GhidraScript {
                         w.println(",");
                     }
                     firstIns = false;
+                    StringBuilder targets = new StringBuilder("[");
+                    boolean firstTarget = true;
+                    for (Reference r : program.getReferenceManager().getReferencesFrom(ins.getAddress())) {
+                        if (r.getReferenceType().isComputed() && r.getReferenceType().isJump()) {
+                            if (!firstTarget) {
+                                targets.append(",");
+                            }
+                            firstTarget = false;
+                            targets.append("\"").append(r.getToAddress()).append("\"");
+                        }
+                    }
+                    targets.append("]");
                     w.print("{\"addr\":\"" + ins.getAddress() + "\",\"len\":" + ins.getLength()
-                            + ",\"text\":" + q(ins.toString()) + ",\"pcode\":[");
+                            + ",\"text\":" + q(ins.toString()) + ",\"targets\":" + targets + ",\"pcode\":[");
                     PcodeOp[] ops = ins.getPcode();
                     for (int i = 0; i < ops.length; i++) {
                         PcodeOp op = ops[i];

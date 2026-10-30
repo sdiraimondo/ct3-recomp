@@ -145,6 +145,16 @@ Journal des décisions du portage. Une entrée par décision, avec la date et la
 - Reste à faire (1 310 sites) : userops MMX (136 à 169), SSE (173, 174, 176 et opérations 16 octets : `PAND`, `POR`, `PXOR`, `PANDN`, `PMOVMSKB`), 3DNow! (232 à 256, `FEMMS` 251), `FPREM` (4 sites), `XCHG` (userops 17, 18), et 3 sauts sans cible.
 - Limite à assumer : les approximations de réciproque et de racine inverse (`RCPPS`, `RCPSS`, `RSQRTSS`, `PFRCP`, `PFRSQRT`) dépendent de tables matérielles approximatives. Une reproduction bit à bit exige ces tables. Je les implémenterai avec une précision documentée et les tests vérifieront leur écart avec le calcul exact, au lieu de prétendre à une identité bit à bit.
 
+## D-024 : référence Unicorn installée (31 oct. 2026)
+
+- Installation : environnement Python dédié `~/.venvs/unicorn-ref` (Unicorn 2.1.4), dans le répertoire personnel. Pas de changement système, pas de distrobox (image lourde). Suppression : `rm -rf ~/.venvs/unicorn-ref`.
+- Sonde : `tools/ref/probe_unicorn.py`.
+- Résultats :
+  - MMX et SSE exécutés correctement (PADDSW avec saturation, ADDPS, RCPPS, PMOVMSKB). Les registres MMX ne sont pas accessibles directement : chargement via MOVQ.
+  - 3DNow! exécuté seulement avec le modèle `UC_CPU_X86_ATHLON` (cohérent avec le profil CPUID de D-022).
+  - Les approximations (`RCPPS`, `PFRCP`) donnent un résultat exact à la précision float, pas l'approximation matérielle (environ 2^-14 pour `PFRCP`). Unicorn n'est donc pas un miroir du matériel pour ces instructions.
+- Conséquence : Unicorn est une référence fiable pour les opérations exactes (entiers, saturation, arithmétique flottante). Pour les approximations, je propose de les calculer à la précision float (comme la référence), et de documenter l'écart avec le matériel (à valider).
+
 ## Points ouverts
 
 - Traducteur : source sémantique à choisir. Proposition : export p-code via Ghidra headless (Ghidra 12.1.4 déjà installé). Alternative : capstone et traducteur maison.

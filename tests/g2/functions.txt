@@ -1,0 +1,4 @@
+# Routines de test G2 (adresses guest CT3.exe)
+0x518640 _strrchr
+0x42e740 FUN_0042e740
+0x4c1960 FUN_004c1960

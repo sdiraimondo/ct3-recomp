@@ -75,6 +75,9 @@ def mask(size):
     return MASK_BITS[size]
 
 
+TERMINAL_MNEMONICS = ("RET", "RETN", "JMP", "HLT", "INT3", "UD2")
+
+
 class Unsupported(Exception):
     pass
 
@@ -461,6 +464,12 @@ class FunctionTranslator:
                 if (addr, idx) in self.op_labels:
                     out.append("P_%08x_%d:;" % (addr, idx))
                 out.append("    " + code + "  /* %s */" % ins["text"].replace("*/", "*\\/"))
+        last_ins = self.fn["insns"][-1] if self.fn["insns"] else None
+        if last_ins is not None and last_ins["text"].split(" ")[0] not in TERMINAL_MNEMONICS:
+            # Dernière instruction non terminale : l'exécution tombe dans le code suivant, qui peut être
+            # une autre fonction (Ghidra coupe la fonction à la fin de son corps).
+            nxt = int(last_ins["addr"], 16) + int(last_ins["len"])
+            out.append("    dispatch(c, 0x%x); return;  /* chute vers l'instruction suivante */" % nxt)
         out.append("    return;")
         out.append("}")
         out.append("")

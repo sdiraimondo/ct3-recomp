@@ -1,8 +1,11 @@
 #include "rt.h"
 #include "rt_pe.h"
 #include "rt_proc.h"
+#include "rt_thread.h"
+#include "rt_file.h"
 
 #include <ctype.h>
+#include <pthread.h>
 #include <strings.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -28,6 +31,8 @@ static uint32_t now_ms(void)
     return (uint32_t)(ts.tv_sec * 1000u + ts.tv_nsec / 1000000u);
 }
 
+static char exe_path[1024] = "CT3.exe";
+
 static uint32_t guest_str_copy(const char *s)
 {
     uint32_t n = (uint32_t)strlen(s) + 1;
@@ -36,9 +41,20 @@ static uint32_t guest_str_copy(const char *s)
     return p;
 }
 
-static uint32_t sh_CloseHandle(cpu_t *c, const uint32_t *a) { (void)c; rt_shim_calls++; rt_shim_last_arg0 = a[0]; return 1; }
+static uint32_t sh_CloseHandle(cpu_t *c, const uint32_t *a) { (void)c; rt_shim_calls++; rt_shim_last_arg0 = a[0]; rt_handle_close(a[0]); return 1; }
 static uint32_t sh_GetVersion(cpu_t *c, const uint32_t *a) { (void)c; (void)a; return 0x0A280105u; /* NT 5.1, build 2600 */ }
-static uint32_t sh_GetCommandLineA(cpu_t *c, const uint32_t *a) { (void)c; (void)a; static uint32_t p; if (!p) p = guest_str_copy("CT3.exe"); return p; }
+static uint32_t sh_GetCommandLineA(cpu_t *c, const uint32_t *a)
+{
+    (void)c;
+    (void)a;
+    static uint32_t p;
+    if (!p) {
+        char line[1100];
+        snprintf(line, sizeof line, "\"%s\"", exe_path);
+        p = guest_str_copy(line);
+    }
+    return p;
+}
 static uint32_t sh_GetStartupInfoA(cpu_t *c, const uint32_t *a)
 {
     (void)c;
@@ -70,22 +86,45 @@ static uint32_t sh_GetCPInfo(cpu_t *c, const uint32_t *a)
     return 1;
 }
 static uint32_t sh_IsValidCodePage(cpu_t *c, const uint32_t *a) { (void)c; (void)a; return 1; }
-static uint32_t sh_InitializeCriticalSection(cpu_t *c, const uint32_t *a) { (void)c; memset(rt_mem_base + a[0], 0, 24); return 0; }
+static uint32_t sh_InitializeCriticalSection(cpu_t *c, const uint32_t *a) { (void)c; memset(rt_mem_base + a[0], 0, 24); rt_cs_init(a[0]); return 0; }
+static uint32_t sh_EnterCriticalSection(cpu_t *c, const uint32_t *a) { (void)c; rt_cs_enter(a[0]); return 0; }
+static uint32_t sh_LeaveCriticalSection(cpu_t *c, const uint32_t *a) { (void)c; rt_cs_leave(a[0]); return 0; }
+static uint32_t sh_DeleteCriticalSection(cpu_t *c, const uint32_t *a) { (void)c; rt_cs_delete(a[0]); return 0; }
 static uint32_t sh_NoopCS(cpu_t *c, const uint32_t *a) { (void)c; (void)a; return 0; }
-static uint32_t sh_TlsAlloc(cpu_t *c, const uint32_t *a) { (void)c; (void)a; static uint32_t next; return next++; }
-static uint32_t sh_TlsGetValue(cpu_t *c, const uint32_t *a) { (void)c; uint32_t v = 0; memcpy(&v, rt_mem_base + RT_TLS_BASE + 4 * a[0], 4); return v; }
-static uint32_t sh_TlsSetValue(cpu_t *c, const uint32_t *a) { (void)c; memcpy(rt_mem_base + RT_TLS_BASE + 4 * a[0], &a[1], 4); return 1; }
+static uint32_t tls_used;
+static uint32_t sh_TlsAlloc(cpu_t *c, const uint32_t *a) { (void)c; (void)a; return tls_used < RT_TLS_SLOTS ? tls_used++ : 0xFFFFFFFFu; }
+static uint32_t sh_TlsGetValue(cpu_t *c, const uint32_t *a) { (void)c; return a[0] < RT_TLS_SLOTS ? rt_current()->tls[a[0]] : 0; }
+static uint32_t sh_TlsSetValue(cpu_t *c, const uint32_t *a) { (void)c; if (a[0] < RT_TLS_SLOTS) rt_current()->tls[a[0]] = a[1]; return a[0] < RT_TLS_SLOTS; }
 static uint32_t sh_TlsFree(cpu_t *c, const uint32_t *a) { (void)c; (void)a; return 1; }
 static uint32_t sh_SetUnhandledExceptionFilter(cpu_t *c, const uint32_t *a) { (void)c; (void)a; return 0; }
-static uint32_t sh_GetCurrentThreadId(cpu_t *c, const uint32_t *a) { (void)c; (void)a; return 1; }
+static uint32_t sh_GetCurrentThreadId(cpu_t *c, const uint32_t *a) { (void)c; (void)a; return rt_current()->id; }
 static uint32_t sh_GetCurrentProcessId(cpu_t *c, const uint32_t *a) { (void)c; (void)a; return 1234; }
 static uint32_t sh_GetTickCount(cpu_t *c, const uint32_t *a) { (void)c; (void)a; return now_ms(); }
 static uint32_t sh_timeGetTime(cpu_t *c, const uint32_t *a) { (void)c; (void)a; return now_ms(); }
-static uint32_t sh_GetLastError(cpu_t *c, const uint32_t *a) { (void)c; (void)a; return 0; }
-static uint32_t sh_SetLastError(cpu_t *c, const uint32_t *a) { (void)c; (void)a; return 0; }
+static uint32_t sh_GetLastError(cpu_t *c, const uint32_t *a) { (void)c; (void)a; return rt_error; }
+static uint32_t sh_SetLastError(cpu_t *c, const uint32_t *a) { (void)c; rt_error = a[0]; return 0; }
+
+/* Fichiers (rt_file.c) : lit la chaîne ASCII invitée, bornée à la taille du tampon. */
+static uint32_t sh_CreateFileA(cpu_t *c, const uint32_t *a)
+{
+    (void)c;
+    char name[1024];
+    unsigned i = 0;
+    for (; i < sizeof name - 1; i++) {
+        char ch = (char)rt_mem_base[a[0] + i];
+        if (ch == 0) break;
+        name[i] = ch;
+    }
+    name[i] = 0;
+    return rt_file_open(name, a[1], a[4]);
+}
+static uint32_t sh_ReadFile(cpu_t *c, const uint32_t *a) { (void)c; return (uint32_t)rt_file_read(a[0], a[1], a[2], a[3]); }
+static uint32_t sh_WriteFile(cpu_t *c, const uint32_t *a) { (void)c; return (uint32_t)rt_file_write(a[0], a[1], a[2], a[3]); }
+static uint32_t sh_SetFilePointer(cpu_t *c, const uint32_t *a) { (void)c; return rt_file_seek(a[0], a[1], a[2], a[3]); }
+static uint32_t sh_GetFileSize(cpu_t *c, const uint32_t *a) { (void)c; return rt_file_size(a[0], a[1]); }
 static uint32_t sh_VirtualAlloc(cpu_t *c, const uint32_t *a) { (void)c; return rt_heap_alloc(a[1], 1); }
 static uint32_t sh_VirtualFree(cpu_t *c, const uint32_t *a) { (void)c; (void)a; return 1; }
-static uint32_t sh_InitializeCriticalSectionAndSpinCount(cpu_t *c, const uint32_t *a) { (void)c; memset(rt_mem_base + a[0], 0, 24); return 1; }
+static uint32_t sh_InitializeCriticalSectionAndSpinCount(cpu_t *c, const uint32_t *a) { (void)c; memset(rt_mem_base + a[0], 0, 24); rt_cs_init(a[0]); return 1; }
 /* Fiber local storage : un seul fil, valeurs stockées par index. */
 static uint32_t fls_values[256];
 static uint32_t fls_next;
@@ -183,11 +222,11 @@ static uint32_t lcmap(const uint32_t *a, int wide)
 static uint32_t sh_LCMapStringW(cpu_t *c, const uint32_t *a) { (void)c; return lcmap(a, 1); }
 static uint32_t sh_LCMapStringA(cpu_t *c, const uint32_t *a) { (void)c; return lcmap(a, 0); }
 /* Chemin absolu de l'exécutable, fourni par le lanceur (rt_set_exe_path). */
-static char exe_path[1024] = "CT3.exe";
 
 void rt_set_exe_path(const char *path)
 {
     snprintf(exe_path, sizeof exe_path, "%s", path);
+    rt_file_set_base(exe_path);
 }
 
 static uint32_t sh_GetModuleFileNameA(cpu_t *c, const uint32_t *a)
@@ -281,13 +320,7 @@ static uint32_t sh_QueryPerformanceFrequency(cpu_t *c, const uint32_t *a)
 }
 
 /* Sleep : attente réelle de l'hôte (la cadence du jeu dépend de ce délai, voir D-017). */
-static uint32_t sh_Sleep(cpu_t *c, const uint32_t *a)
-{
-    (void)c;
-    struct timespec ts = {(time_t)(a[0] / 1000), (long)(a[0] % 1000) * 1000000L};
-    nanosleep(&ts, NULL);
-    return 0;
-}
+static uint32_t sh_Sleep(cpu_t *c, const uint32_t *a) { (void)c; rt_sleep_ms(a[0]); return 0; }
 
 /* Opérations atomiques : un seul fil d'exécution pour l'instant, donc opérations ordinaires. */
 static uint32_t atomic_get(uint32_t p) { uint32_t v; memcpy(&v, rt_mem_base + p, 4); return v; }
@@ -303,6 +336,59 @@ static uint32_t sh_InterlockedCompareExchange(cpu_t *c, const uint32_t *a)
     return old;
 }
 static uint32_t sh_GetCurrentThread(cpu_t *c, const uint32_t *a) { (void)c; (void)a; return 0xFFFFFFFEu; }
+/* ---- threads et synchronisation (rt_thread.c) ---- */
+static uint32_t sh_CreateThread(cpu_t *c, const uint32_t *a)
+{
+    (void)c;
+    uint32_t id = 0;
+    uint32_t h = rt_thread_create(a[2], a[3], (a[4] & 4) != 0, &id);
+    if (a[5]) memcpy(rt_mem_base + a[5], &id, 4);
+    return h;
+}
+static uint32_t sh_ExitThread(cpu_t *c, const uint32_t *a)
+{
+    (void)c;
+    rt_current()->exit_code = a[0];
+    rt_current()->finished = 1;
+    rt_notify_state();
+    rt_unlock();
+    pthread_exit(NULL);
+}
+static uint32_t sh_GetExitCodeThread(cpu_t *c, const uint32_t *a)
+{
+    (void)c;
+    uint32_t code = rt_thread_exit_code(a[0], NULL);
+    memcpy(rt_mem_base + a[1], &code, 4);
+    return 1;
+}
+static uint32_t sh_ResumeThread(cpu_t *c, const uint32_t *a) { (void)c; return rt_thread_resume(a[0]) ? 1 : 0xFFFFFFFFu; }
+static uint32_t sh_SuspendThread(cpu_t *c, const uint32_t *a) { (void)c; (void)a; return 0; }
+static uint32_t sh_TerminateThread(cpu_t *c, const uint32_t *a) { (void)c; rt_thread_terminate(a[0], a[1]); return 1; }
+static uint32_t sh_SetThreadPriority(cpu_t *c, const uint32_t *a) { (void)c; (void)a; return 1; }
+static uint32_t sh_GetThreadPriority(cpu_t *c, const uint32_t *a) { (void)c; (void)a; return 0; }
+static uint32_t sh_CreateEventA(cpu_t *c, const uint32_t *a) { (void)c; return rt_event_create(a[1] != 0, a[2] != 0); }
+static uint32_t sh_SetEvent(cpu_t *c, const uint32_t *a) { (void)c; return rt_event_set(a[0], 1); }
+static uint32_t sh_ResetEvent(cpu_t *c, const uint32_t *a) { (void)c; return rt_event_set(a[0], 0); }
+static uint32_t sh_CreateMutexA(cpu_t *c, const uint32_t *a) { (void)c; return rt_mutex_create(a[1] != 0); }
+static uint32_t sh_ReleaseMutex(cpu_t *c, const uint32_t *a) { (void)c; return rt_mutex_release(a[0]); }
+static uint32_t sh_WaitForSingleObject(cpu_t *c, const uint32_t *a) { (void)c; return rt_wait_handles(&a[0], 1, 0, a[1]); }
+static uint32_t sh_WaitForMultipleObjects(cpu_t *c, const uint32_t *a)
+{
+    (void)c;
+    uint32_t hs[64];
+    if (a[0] > 64) return 0xFFFFFFFFu;
+    for (uint32_t i = 0; i < a[0]; i++) memcpy(&hs[i], rt_mem_base + a[1] + 4 * i, 4);
+    return rt_wait_handles(hs, a[0], a[2] != 0, a[3]);
+}
+static uint32_t sh_timeSetEvent(cpu_t *c, const uint32_t *a)
+{
+    (void)c;
+    /* timeSetEvent(uDelay, uResolution, lpTimeProc, dwUser, fuEvent) */
+    return rt_timer_create(a[0], a[2], a[3], a[2], a[4]);
+}
+static uint32_t sh_timeKillEvent(cpu_t *c, const uint32_t *a) { (void)c; rt_timer_kill(a[0]); return 0; }
+static uint32_t sh_timeBeginPeriod(cpu_t *c, const uint32_t *a) { (void)c; (void)a; return 0; }
+static uint32_t sh_timeEndPeriod(cpu_t *c, const uint32_t *a) { (void)c; (void)a; return 0; }
 static uint32_t sh_InitCommonControls(cpu_t *c, const uint32_t *a) { (void)c; (void)a; return 1; }
 /* OSVERSIONINFOA : dwOSVersionInfoSize, dwMajorVersion, dwMinorVersion, dwBuildNumber, dwPlatformId, szCSDVersion. */
 static uint32_t sh_GetVersionExA(cpu_t *c, const uint32_t *a)
@@ -331,6 +417,25 @@ static const struct {
 } rt_shims[] = {
     {"KERNEL32.dll::CloseHandle", 1, sh_CloseHandle},
     {"KERNEL32.dll::GetVersion", 0, sh_GetVersion},
+    {"KERNEL32.dll::CreateThread", 6, sh_CreateThread},
+    {"KERNEL32.dll::ExitThread", 1, sh_ExitThread},
+    {"KERNEL32.dll::GetExitCodeThread", 2, sh_GetExitCodeThread},
+    {"KERNEL32.dll::ResumeThread", 1, sh_ResumeThread},
+    {"KERNEL32.dll::SuspendThread", 1, sh_SuspendThread},
+    {"KERNEL32.dll::TerminateThread", 2, sh_TerminateThread},
+    {"KERNEL32.dll::SetThreadPriority", 2, sh_SetThreadPriority},
+    {"KERNEL32.dll::GetThreadPriority", 1, sh_GetThreadPriority},
+    {"KERNEL32.dll::CreateEventA", 4, sh_CreateEventA},
+    {"KERNEL32.dll::SetEvent", 1, sh_SetEvent},
+    {"KERNEL32.dll::ResetEvent", 1, sh_ResetEvent},
+    {"KERNEL32.dll::CreateMutexA", 3, sh_CreateMutexA},
+    {"KERNEL32.dll::ReleaseMutex", 1, sh_ReleaseMutex},
+    {"KERNEL32.dll::WaitForSingleObject", 2, sh_WaitForSingleObject},
+    {"KERNEL32.dll::WaitForMultipleObjects", 4, sh_WaitForMultipleObjects},
+    {"WINMM.dll::timeSetEvent", 5, sh_timeSetEvent},
+    {"WINMM.dll::timeKillEvent", 1, sh_timeKillEvent},
+    {"WINMM.dll::timeBeginPeriod", 1, sh_timeBeginPeriod},
+    {"WINMM.dll::timeEndPeriod", 1, sh_timeEndPeriod},
     {"KERNEL32.dll::InterlockedIncrement", 1, sh_InterlockedIncrement},
     {"KERNEL32.dll::InterlockedDecrement", 1, sh_InterlockedDecrement},
     {"KERNEL32.dll::InterlockedExchange", 2, sh_InterlockedExchange},
@@ -358,6 +463,11 @@ static const struct {
     {"KERNEL32.dll::GetStdHandle", 1, sh_GetStdHandle},
     {"KERNEL32.dll::SetHandleCount", 1, sh_SetHandleCount},
     {"KERNEL32.dll::GetFileType", 1, sh_GetFileType},
+    {"KERNEL32.dll::CreateFileA", 7, sh_CreateFileA},
+    {"KERNEL32.dll::ReadFile", 5, sh_ReadFile},
+    {"KERNEL32.dll::WriteFile", 5, sh_WriteFile},
+    {"KERNEL32.dll::SetFilePointer", 4, sh_SetFilePointer},
+    {"KERNEL32.dll::GetFileSize", 2, sh_GetFileSize},
     {"KERNEL32.dll::GetProcessHeap", 0, sh_GetProcessHeap},
     {"KERNEL32.dll::HeapCreate", 3, sh_HeapCreate},
     {"KERNEL32.dll::HeapAlloc", 3, sh_HeapAlloc},
@@ -372,9 +482,9 @@ static const struct {
     {"KERNEL32.dll::IsValidCodePage", 1, sh_IsValidCodePage},
     {"KERNEL32.dll::InitializeCriticalSection", 1, sh_InitializeCriticalSection},
     {"KERNEL32.dll::InitializeCriticalSectionAndSpinCount", 2, sh_InitializeCriticalSectionAndSpinCount},
-    {"KERNEL32.dll::EnterCriticalSection", 1, sh_NoopCS},
-    {"KERNEL32.dll::LeaveCriticalSection", 1, sh_NoopCS},
-    {"KERNEL32.dll::DeleteCriticalSection", 1, sh_NoopCS},
+    {"KERNEL32.dll::EnterCriticalSection", 1, sh_EnterCriticalSection},
+    {"KERNEL32.dll::LeaveCriticalSection", 1, sh_LeaveCriticalSection},
+    {"KERNEL32.dll::DeleteCriticalSection", 1, sh_DeleteCriticalSection},
     {"KERNEL32.dll::TlsAlloc", 0, sh_TlsAlloc},
     {"KERNEL32.dll::TlsGetValue", 1, sh_TlsGetValue},
     {"KERNEL32.dll::TlsSetValue", 2, sh_TlsSetValue},
@@ -510,7 +620,12 @@ void rt_shim_call(cpu_t *c, uint32_t addr)
                 }
                 fprintf(stderr, rt_shims[i].nargs ? ")\n" : "()\n");
             }
+            rt_lock();
             uint32_t ret = rt_shims[i].fn(c, args);
+            rt_unlock();
+            if (rt_trace_imports) {
+                fprintf(stderr, "[retour] %s -> 0x%x\n", name, ret);
+            }
             cpu_wr(c, 0, 4, ret);
             /* stdcall : l'appelé dépile l'adresse de retour et les arguments. */
             cpu_wr(c, 16, 4, esp + 4 + 4 * rt_shims[i].nargs);

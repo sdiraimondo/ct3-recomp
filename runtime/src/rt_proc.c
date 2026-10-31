@@ -1,4 +1,5 @@
 #include "rt_proc.h"
+#include "rt_thread.h"
 
 #include <stdio.h>
 #include <string.h>
@@ -82,5 +83,7 @@ int rt_process_init(cpu_t *c)
     put32(RT_PEB_BASE + 0x08, RT_IMAGE_BASE);
     memset(rt_mem_base + RT_TLS_BASE, 0, 0x1000);
     cpu_wr(c, RT_FS_OFFSET_REG, 4, RT_TEB_BASE);
+    rt_thread_main_init(c);
+    rt_install_crash_handler();
     return 0;
 }

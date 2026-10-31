@@ -134,6 +134,17 @@ public class ExportFunctions extends GhidraScript {
             InstructionIterator bi = program.getListing().getInstructions(f.getBody(), true);
             while (bi.hasNext()) {
                 Instruction ins = bi.next();
+                /* Adresses de code passées en constante (ex. point d'entrée d'un thread : push imm32). */
+                for (Reference r : program.getReferenceManager().getReferencesFrom(ins.getAddress())) {
+                    Address ta = r.getToAddress();
+                    if (ta != null && ta.isMemoryAddress() && !f.getBody().contains(ta)
+                            && fm.getFunctionAt(ta) == null) {
+                        ghidra.program.model.mem.MemoryBlock rb = mem.getBlock(ta);
+                        if (rb != null && rb.isExecute()) {
+                            candidates.add(ta.getOffset());
+                        }
+                    }
+                }
                 for (PcodeOp op : ins.getPcode()) {
                     if (op.getOpcode() != PcodeOp.BRANCH && op.getOpcode() != PcodeOp.CBRANCH
                             && op.getOpcode() != PcodeOp.CALL) {

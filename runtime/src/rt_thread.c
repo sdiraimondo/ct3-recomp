@@ -476,6 +476,7 @@ static void crash_handler(int sig, siginfo_t *info, void *ctx)
     (void)ctx;
     uintptr_t fault = (uintptr_t)info->si_addr;
     uintptr_t base = (uintptr_t)rt_mem_base;
+    fprintf(stderr, "rt: dernière instruction invitée 0x%08x\n", rt_cur_insn);
     fprintf(stderr, "rt: faute mémoire (signal %d) à l'adresse hôte %p, invitée 0x%llx\n", sig,
             info->si_addr, fault >= base && fault < base + RT_GUEST_SIZE ? (unsigned long long)(fault - base) : 0ULL);
     rt_thread *t = rt_current();

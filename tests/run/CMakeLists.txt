@@ -4,7 +4,7 @@ set(G3_LIB "${G3_DIR}/libct3gen.a")
 
 add_custom_command(
   OUTPUT "${G3_LIB}"
-  COMMAND ${CMAKE_COMMAND} -E env "OUT=${G3_DIR}" REUSE_EXPORT=1 "CT3_EXE=${CT3_EXE}"
+  COMMAND ${CMAKE_COMMAND} -E env "OUT=${G3_DIR}" REUSE_EXPORT=1 "CT3_EXE=${CT3_EXE}" "CT3_TRACE_INSN=${CT3_TRACE_INSN}"
           "JAVA_HOME=${CT3_JAVA_HOME}" "GHIDRA_DIR=${CT3_GHIDRA_DIR}"
           bash "${PROJECT_SOURCE_DIR}/tools/recomp/run_g3.sh"
   DEPENDS "${PROJECT_SOURCE_DIR}/tools/recomp/run_g3.sh" "${PROJECT_SOURCE_DIR}/tools/recomp/ct3rc.py"

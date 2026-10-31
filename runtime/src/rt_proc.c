@@ -7,12 +7,18 @@
 int rt_mem_protect(uint32_t addr, uint32_t size, int prot);
 int rt_mem_init(void);
 
+/* Dernière instruction invitée exécutée (CT3_TRACE_INSN=1 à la traduction) : affichée au plantage. */
+uint32_t rt_cur_insn;
+
 /* Tas : allocateur à croissance monotone, avec réutilisation des blocs libérés (listes par taille).
  * Chaque bloc a un en-tête de 8 octets (taille demandée). */
 static uint32_t heap_next = RT_HEAP_BASE;
 
 #define RT_HEAP_CLASSES 512
 #define RT_HEAP_FREE_MAX 4096
+
+#define RT_BLOCK_USED 0x5A110CEDu
+#define RT_BLOCK_FREE 0xF4EEF4EEu
 
 typedef struct rt_free_block {
     uint32_t block;   /* adresse invitée de l'en-tête */
@@ -58,6 +64,7 @@ uint32_t rt_heap_alloc(uint32_t size, int zero)
         heap_next += total;
     }
     put32(block, size);
+    put32(block + 4, RT_BLOCK_USED);
     if (zero) {
         memset(rt_mem_base + block + 8, 0, size);
     }
@@ -68,7 +75,9 @@ void rt_heap_free(uint32_t p)
 {
     if (!p) return;
     uint32_t block = p - 8;
-    if (block < RT_HEAP_BASE || block >= heap_next) return;
+    /* Seuls les blocs alloués sont libérables : double libération et pointeurs intérieurs sont ignorés. */
+    if (block < RT_HEAP_BASE || block >= heap_next || get32(block + 4) != RT_BLOCK_USED) return;
+    put32(block + 4, RT_BLOCK_FREE);
     if (free_count < RT_HEAP_FREE_MAX) {
         free_blocks[free_count].block = block;
         free_blocks[free_count].total = block_total(get32(block));

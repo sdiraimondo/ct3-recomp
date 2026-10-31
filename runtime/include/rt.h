@@ -25,6 +25,7 @@ typedef struct cpu {
 } cpu_t;
 
 extern uint8_t *rt_mem_base;
+extern uint32_t rt_cur_insn;
 
 void rt_fatal(const char *msg);
 

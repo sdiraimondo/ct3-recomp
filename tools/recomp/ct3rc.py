@@ -77,6 +77,9 @@ def mask(size):
 
 TERMINAL_MNEMONICS = ("RET", "RETN", "JMP", "HLT", "INT3", "UD2")
 
+# CT3_TRACE_INSN=1 : chaque instruction met à jour rt_cur_insn (diagnostic de plantage, build de débogage).
+TRACE_INSN = os.environ.get("CT3_TRACE_INSN") == "1"
+
 # __setjmp3 du CRT MSVC (CT3.exe) : l'appel est remplacé par un setjmp hôte dans le cadre appelant.
 SETJMP_ENTRY = 0x0051A238
 
@@ -480,6 +483,8 @@ class FunctionTranslator:
             for idx, code in ops:
                 if (addr, idx) in self.op_labels:
                     out.append("P_%08x_%d:;" % (addr, idx))
+                if TRACE_INSN and idx == 0:
+                    out.append("    rt_cur_insn = 0x%08x;" % addr)
                 out.append("    " + code + "  /* %s */" % ins["text"].replace("*/", "*\\/"))
         last_ins = self.fn["insns"][-1] if self.fn["insns"] else None
         if last_ins is not None and last_ins["text"].split(" ")[0] not in TERMINAL_MNEMONICS:

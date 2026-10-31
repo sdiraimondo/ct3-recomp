@@ -259,6 +259,12 @@ Journal des décisions du portage. Une entrée par décision, avec la date et la
 - Pistes écartées : threads (même plantage sans thread concurrent, `CT3_NOTHREAD`), capacités DirectSound (`GetCaps` renseignés), valeurs de retour DirectSound.
 - Piste ouverte : le flux audio `Media\SE\taxi1.bin` (banque `xbhm`, 48 Mio lus) et les objets son créés depuis `FUN_0049DCF0`. Prochaine étape : un build de traçage (`-DCT3_TRACE_INSN`, enregistrement de l'instruction courante, affiché par le gestionnaire de faute).
 
+### Piste principale (31 oct. 2026, fin de session)
+
+- Build de traçage (`-DCT3_TRACE_INSN=1`, dossier `build-dbg/`) : le jeu se comporte différemment selon le build. Dans le build normal, `CreateWindowExA` reçoit `hWndParent = hInstance = 0x1353E20` (un pointeur du tas), dans le build de traçage `0x0` et `0x400000` (valeur attendue). Le jeu lit donc une valeur non initialisée ou un état qui dépend de la disposition du code.
+- Le plantage final (`[EBX+0xE0]` ou `[base+0x2178]`, base NULL) est la conséquence probable. Piste : comparer la référence Unicorn (mémoire à zéro) au même point, et vérifier les endroits où la traduction pourrait laisser une variable non écrite (sauts vers le milieu de fonction, entrées intérieures).
+- Protection ajoutée : `HeapFree` ignore les double libérations et les pointeurs non alloués (balise par bloc), sans effet sur ce plantage.
+
 ## Environnement (31 oct. 2026)
 
 - KWin (session Plasma/Wayland) ne mappe plus les fenêtres X11 nouvelles : constaté sur G1, glxgears et CT3. Une commande de rechargement de KWin (`org.kde.KWin.reconfigure`) a été lancée par erreur, sans effet visible. Non traité : redémarrer la session graphique (déconnexion/reconnexion) devrait suffire, à confirmer par l'utilisateur.

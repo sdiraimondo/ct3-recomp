@@ -1,6 +1,11 @@
 #pragma once
 
+#include <stddef.h>
 #include <stdint.h>
+
+#ifdef __cplusplus
+extern "C" {
+#endif
 
 /* Fichiers Win32 : chemins relatifs au dossier de l'exécutable, insensibles à la casse. */
 
@@ -9,8 +14,14 @@
 extern uint32_t rt_error; /* dernière erreur (GetLastError) */
 
 void rt_file_set_base(const char *exe_path);
+void rt_file_resolve(const char *win_path, char *out, size_t n);
+const char *rt_file_base(void);
 uint32_t rt_file_open(const char *win_path, uint32_t access, uint32_t disposition);
 int rt_file_read(uint32_t h, uint32_t buf, uint32_t n, uint32_t got_addr);
 int rt_file_write(uint32_t h, uint32_t buf, uint32_t n, uint32_t got_addr);
 uint32_t rt_file_seek(uint32_t h, uint32_t dist_low, uint32_t dist_high_addr, uint32_t method);
 uint32_t rt_file_size(uint32_t h, uint32_t high_addr);
+
+#ifdef __cplusplus
+}
+#endif

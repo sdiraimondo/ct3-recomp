@@ -3,6 +3,10 @@
 #include <stdint.h>
 #include <string.h>
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 /* Espace d'adresses invité : 4 GiB réservés, image chargée à 0x400000. */
 #define RT_GUEST_SIZE   (1ULL << 32)
 #define RT_IMAGE_BASE   0x00400000u
@@ -132,3 +136,7 @@ void rt_fatal(const char *msg);
 void rt_unresolved(cpu_t *c, uint32_t addr);
 void rt_unsupported(const char *what, uint32_t addr);
 void rt_shim_call(cpu_t *c, uint32_t addr);
+
+#ifdef __cplusplus
+}
+#endif

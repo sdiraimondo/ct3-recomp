@@ -27,6 +27,19 @@ static uint32_t next_tid = 4;
 
 void rt_lock(void) { pthread_mutex_lock(&big_lock); }
 void rt_unlock(void) { pthread_mutex_unlock(&big_lock); }
+
+/* Verrou réentrant par thread : un shim peut appeler du code invité qui appelle d'autres shims. */
+static __thread int lock_depth;
+
+void rt_lock_enter(void)
+{
+    if (lock_depth++ == 0) rt_lock();
+}
+
+void rt_lock_leave(void)
+{
+    if (--lock_depth == 0) rt_unlock();
+}
 void rt_wait_state(void) { pthread_cond_wait(&state_cond, &big_lock); }
 void rt_notify_state(void) { pthread_cond_broadcast(&state_cond); }
 

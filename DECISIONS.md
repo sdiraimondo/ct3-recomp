@@ -200,6 +200,54 @@ Journal des décisions du portage. Une entrée par décision, avec la date et la
 - Décision à prendre : le support des threads (émulation coopérative ou threads hôte réels avec un état CPU par fil, verrouillage du tas et des shims). C'est un choix d'architecture, à valider avant de continuer.
 - Débogage : `gdb` sur `build/tests/run/ct3_run` montre la fonction traduite (`sub_XXXXXXXX`) à l'instant d'une boucle.
 
+## D-031 : threads hôte réels, verrou réentrant (31 oct. 2026)
+
+- Option B : chaque thread invité est un thread hôte avec son état CPU et sa pile. Un verrou global protège le tas et les shims. Les attentes (événements, sections critiques, Sleep) le relâchent.
+- Le verrou est réentrant par thread (`rt_lock_enter`/`rt_lock_leave`) : un shim peut appeler du code invité (rappels de fenêtre), qui appelle d'autres shims.
+- `dispatch` rend la main à l'appelant C quand la sentinelle `RT_HOST_RET` est atteinte (retour vers l'hôte).
+
+## D-032 : fichiers Win32 (31 oct. 2026)
+
+- Chemins relatifs au dossier de `CT3.exe`, séparateurs `\` convertis, lettre de lecteur retirée. Chaque composant existant est retrouvé sans tenir compte de la casse (les données du jeu sont en majuscules).
+- `GetFileType` renvoie `FILE_TYPE_DISK` pour les handles fichiers (sinon le CRT ferme le fichier).
+
+## D-033 : pont Direct3D 9 (31 oct. 2026)
+
+- Les objets COM invités font 8 octets `[vtable][identifiant]`. Les vtables contiennent des adresses de talons nommés `d3d9com::Interface::Méthode`.
+- Les méthodes sont générées par `tools/d3d9/gen_com.py` à partir de `d3d9.h` de dxvk-native (vtable complète de chaque interface). Les méthodes à logique propre sont écrites à la main (`runtime/src/rt_d3d9_custom.cpp`) : QueryInterface, Release, verrouillage des tampons et surfaces, création de tampons, textures, présentation.
+- Les pointeurs invités sont passés directement à l'hôte (`rt_mem_base`), sauf `D3DPRESENT_PARAMETERS` (HWND 32 bits) et les structures de verrouillage (pointeurs). Les zones verrouillées passent par une zone de transit invitée recopiée à l'unlock.
+- `Direct3DCreate9` initialise SDL et `DXVK_WSI_DRIVER=SDL2` avant dxvk (sinon dxvk échoue à la création).
+
+## D-034 : repli des textures BC (31 oct. 2026)
+
+- Si l'hôte refuse un format DXT/BC (GPU ou pilote sans compression BC, ex. llvmpipe), la texture est créée en X8R8G8B8 et les blocs écrits par le code invité sont décodés (BC1/2/3, couleurs) au déverrouillage. Sur le BC-250 (RADV), BC est pris en charge : le repli ne sert pas.
+
+## D-035 : environnement de test (31 oct. 2026)
+
+- La session graphique de l'utilisateur (KWin/XWayland) ne mappe plus les nouvelles fenêtres X11 (glxgears compris) : bloqué hors du projet, non modifié.
+- Tests : Xvfb `:99` avec llvmpipe (`DXVK_FILTER_DEVICE_NAME=llvmpipe`). Sur Xvfb, RADV échoue avec une erreur d'E/S X (absence de DRI3). G1 réussit sur llvmpipe.
+- Diagnostic : `CT3_SHOT=N` écrit le back buffer de la N-ième présentation en PPM (`CT3_SHOT_DIR`).
+
+## D-036 : setjmp/longjmp invités (31 oct. 2026)
+
+- `__setjmp3` (CRT MSVC, `0x51A238`) : l'appelant fait un `setjmp` hôte dans son cadre C, puis enregistre le cadre (adresse de reprise, ESP, buffer invité). `dispatch` détecte une reprise de `_longjmp` (même adresse et même ESP) et fait un `longjmp` hôte vers ce cadre (`runtime/src/rt_jmp.c`). Cadres par thread.
+- Cas rencontré : chargement de `Media\Sega.png` par la D3DX (erreur de décodage PNG → longjmp).
+
+## D-037 : tas (31 oct. 2026)
+
+- Tas de 192 Mio. `HeapFree` réutilise les blocs par taille exacte (listes libres). Les projections de fichiers (`MapViewOfFile`) sont copiées dans le tas et libérées par `UnmapViewOfFile`.
+
+## D-038 : audio silencieux (31 oct. 2026)
+
+- DirectSound (`DSOUND ordinal 11`) est fourni par des objets invités silencieux : les tampons ont de la mémoire réelle (Lock/Unlock), Play/Stop ne produisent rien. Audio réel (SDL) à faire.
+- DirectInput8 : objet minimal, `CreateDevice` renvoie `DIERR_DEVICENOTREG` (entrée à faire via SDL).
+
+## D-039 : sauts indirects et export Ghidra (31 oct. 2026)
+
+- Saut indirect dont la valeur n'est pas dans la liste Ghidra : `dispatch` à l'exécution (au lieu de `rt_unsupported`). Cas typique : `jmp [IAT]`.
+- Export : un appel vers le milieu de la fonction appelante, ou une cible dans une fonction connue, devient une entrée intérieure (au lieu de créer une fonction qui découpe la fonction englobante).
+- Limite connue : 4 cibles d'appel direct sans fonction traduite (`0x4A66E0`, `0x5164E5`, `0x5179B8`, `0x51B647`) ; cause non identifiée, à traiter si atteintes.
+
 ## Points ouverts
 
 - Traducteur : source sémantique à choisir. Proposition : export p-code via Ghidra headless (Ghidra 12.1.4 déjà installé). Alternative : capstone et traducteur maison.

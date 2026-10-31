@@ -77,6 +77,9 @@ def mask(size):
 
 TERMINAL_MNEMONICS = ("RET", "RETN", "JMP", "HLT", "INT3", "UD2")
 
+# __setjmp3 du CRT MSVC (CT3.exe) : l'appel est remplacé par un setjmp hôte dans le cadre appelant.
+SETJMP_ENTRY = 0x0051A238
+
 
 class Unsupported(Exception):
     pass
@@ -94,6 +97,8 @@ class FunctionTranslator:
         self.ram_labels = set()
         self.op_labels = set()
         self.callees = set()
+        self.jmpbufs = set()
+        self.cur_next = None
         self.indirect = 0
         self.cur_addr = 0
         self.cur_targets = []
@@ -304,6 +309,14 @@ class FunctionTranslator:
         if m == "CALL":
             tgt = int(ins[0]["o"])
             self.callees.add(tgt)
+            if tgt == SETJMP_ENTRY and self.cur_next in self.insn_addrs:
+                # setjmp hôte dans ce cadre : un longjmp invité reprend ici (voir rt_jmp.c).
+                r = self.cur_next
+                self.jmpbufs.add(r)
+                self.ram_labels.add(r)
+                return ("if (setjmp(jb_%08x) != 0) goto A_%08x; dispatch(c, 0x%x); "
+                        "rt_jmp_register(c, &jb_%08x, (uint32_t)guest_ld(c, (uint32_t)cpu_rd(c, 16, 4), 4), 0x%x);"
+                        % (r, r, tgt, r, r))
             return "dispatch(c, 0x%x);" % tgt
         if m == "CALLIND":
             self.indirect += 1
@@ -325,7 +338,8 @@ class FunctionTranslator:
                 else:
                     self.callees.add(t)
                     parts.append("if (t_ == 0x%x) { dispatch(c, t_); return; }" % t)
-            parts.append('rt_unsupported("saut indirect hors cibles connues", 0x%x); }' % self.cur_addr)
+            # Valeur absente de la liste Ghidra (ex. jmp [IAT] : cible d'import) : répartition à l'exécution.
+            parts.append("dispatch(c, t_); return; }")
             return " ".join(parts)
         if m == "BRANCH":
             tgt = ins[0]
@@ -437,6 +451,7 @@ class FunctionTranslator:
         for n, ins in enumerate(self.fn["insns"]):
             self.cur_addr = int(ins["addr"], 16)
             self.cur_targets = [int(t, 16) for t in ins.get("targets", []) if is_hex_addr(t)]
+            self.cur_next = int(ins["addr"], 16) + int(ins["len"])
             self.cur_is_last = n == last
             ops = []
             for idx, op in enumerate(ins["pcode"]):
@@ -452,6 +467,8 @@ class FunctionTranslator:
                 ops.append((idx, code))
             body.append((self.cur_addr, ins, ops))
         out = ["void %s(cpu_t *c)" % self.cname(), "{"]
+        for r in sorted(self.jmpbufs):
+            out.append("    jmp_buf jb_%08x;" % r)
         for (o, z) in sorted(self.ints):
             out.append("    uint64_t u%d_%d = 0;" % (o, z))
         for (o, z) in sorted(self.wides):
@@ -615,7 +632,7 @@ def main():
         name = "gen_funcs_%03d.c" % (start // args.chunk)
         chunk_files.append(name)
         body = ["/* Généré par tools/recomp/ct3rc.py : ne pas modifier. */",
-                '#include "rt_fp.h"', '#include "rt_vec.h"', ""]
+                '#include <setjmp.h>', '#include "rt_fp.h"', '#include "rt_vec.h"', '#include "rt_jmp.h"', ""]
         body.extend(translated[start:start + args.chunk])
         with open(os.path.join(args.outdir, name), "w") as f:
             f.write("\n".join(body))
@@ -626,10 +643,11 @@ def main():
             f.write("void %s(cpu_t *c);\n" % cname)
     with open(os.path.join(args.outdir, "gen_dispatch.c"), "w") as f:
         f.write("/* Généré par tools/recomp/ct3rc.py : ne pas modifier. */\n")
-        f.write('#include "rt.h"\n#include "gen_funcs.h"\n\n')
+        f.write('#include "rt.h"\n#include "rt_jmp.h"\n#include "gen_funcs.h"\n\n')
         f.write("void dispatch(cpu_t *c, uint32_t addr)\n{\n")
         f.write("    if (addr >= RT_STUB_BASE && addr < RT_STUB_END) {\n")
         f.write("        rt_shim_call(c, addr);\n        return;\n    }\n")
+        f.write("    rt_jmp_try(c, addr);\n")
         f.write("    switch (addr) {\n")
         for entry, cname in sorted(entries):
             f.write("    case 0x%08x: %s(c); return;\n" % (entry, cname))

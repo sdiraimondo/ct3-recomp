@@ -11,6 +11,7 @@ endif()
 
 set(CT3_DEPS_PREFIX "$ENV{HOME}/.local/ct3-deps/prefix" CACHE PATH "Préfixe des dépendances locales (SDL2, dxvk-native)")
 list(APPEND CMAKE_PREFIX_PATH "${CT3_DEPS_PREFIX}")
+set(CMAKE_BUILD_RPATH "${CT3_DEPS_PREFIX}/lib64")
 
 set(CT3_EXE "/run/media/stephane/BC250_USB/Games/Crazy Taxi 3/CT3.exe" CACHE FILEPATH "CT3.exe de référence (lecture seule)")
 set(CT3_GHIDRA_DIR "$ENV{HOME}/.local/share/ghidra_12.1.4_PUBLIC" CACHE PATH "Installation Ghidra 12.1.4")

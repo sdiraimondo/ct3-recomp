@@ -3,6 +3,7 @@
 #include "rt_proc.h"
 #include "rt_thread.h"
 #include "rt_file.h"
+#include "rt_shim.h"
 
 #include <ctype.h>
 #include <pthread.h>
@@ -22,7 +23,6 @@ uint32_t rt_shim_last_arg0;
 /* Trace des imports : 1 = écrit chaque appel sur stderr. */
 int rt_trace_imports = 1;
 
-typedef uint32_t (*rt_shim_fn)(cpu_t *c, const uint32_t *args);
 
 static uint32_t now_ms(void)
 {
@@ -66,11 +66,16 @@ static uint32_t sh_GetStartupInfoA(cpu_t *c, const uint32_t *a)
 /* STD_INPUT_HANDLE = -10, STD_OUTPUT = -11, STD_ERROR = -12 : pseudo-handles 0x10, 0x11, 0x12. */
 static uint32_t sh_GetStdHandle(cpu_t *c, const uint32_t *a) { (void)c; return 0x10u + (0u - a[0] - 10u); }
 static uint32_t sh_SetHandleCount(cpu_t *c, const uint32_t *a) { (void)c; return a[0]; }
-static uint32_t sh_GetFileType(cpu_t *c, const uint32_t *a) { (void)c; return a[0] >= 0x10 && a[0] <= 0x12 ? 2 : 0; }
+static uint32_t sh_GetFileType(cpu_t *c, const uint32_t *a)
+{
+    (void)c;
+    if (rt_file_fd(a[0]) >= 0) return 1;  /* FILE_TYPE_DISK */
+    return a[0] >= 0x10 && a[0] <= 0x12 ? 2 : 0;  /* FILE_TYPE_CHAR (stdio) ou inconnu */
+}
 static uint32_t sh_GetProcessHeap(cpu_t *c, const uint32_t *a) { (void)c; (void)a; return 0x30000000u; }
 static uint32_t sh_HeapCreate(cpu_t *c, const uint32_t *a) { (void)c; (void)a; return 0x30000001u; }
 static uint32_t sh_HeapAlloc(cpu_t *c, const uint32_t *a) { (void)c; return rt_heap_alloc(a[2], (a[1] & 0x8) != 0); }
-static uint32_t sh_HeapFree(cpu_t *c, const uint32_t *a) { (void)c; (void)a; return 1; }
+static uint32_t sh_HeapFree(cpu_t *c, const uint32_t *a) { (void)c; rt_heap_free(a[2]); return 1; }
 static uint32_t sh_HeapSize(cpu_t *c, const uint32_t *a) { (void)c; return rt_heap_size(a[2]); }
 static uint32_t sh_HeapReAlloc(cpu_t *c, const uint32_t *a) { (void)c; return rt_heap_realloc(a[2], a[3]); }
 static uint32_t sh_GetEnvironmentStringsW(cpu_t *c, const uint32_t *a) { (void)c; (void)a; static uint32_t p; if (!p) { p = rt_scratch_alloc(4); memset(rt_mem_base + p, 0, 4); } return p; }
@@ -101,6 +106,9 @@ static uint32_t sh_GetCurrentThreadId(cpu_t *c, const uint32_t *a) { (void)c; (v
 static uint32_t sh_GetCurrentProcessId(cpu_t *c, const uint32_t *a) { (void)c; (void)a; return 1234; }
 static uint32_t sh_GetTickCount(cpu_t *c, const uint32_t *a) { (void)c; (void)a; return now_ms(); }
 static uint32_t sh_timeGetTime(cpu_t *c, const uint32_t *a) { (void)c; (void)a; return now_ms(); }
+uint32_t rt_d3d9_create(uint32_t sdk_version);
+static uint32_t sh_Direct3DCreate9(cpu_t *c, const uint32_t *a) { (void)c; return rt_d3d9_create(a[0]); }
+
 static uint32_t sh_GetLastError(cpu_t *c, const uint32_t *a) { (void)c; (void)a; return rt_error; }
 static uint32_t sh_SetLastError(cpu_t *c, const uint32_t *a) { (void)c; rt_error = a[0]; return 0; }
 
@@ -409,12 +417,10 @@ static uint32_t sh_ExitProcess(cpu_t *c, const uint32_t *a)
 
 static uint32_t sh_GetModuleHandleA_real(cpu_t *c, const uint32_t *a);
 static uint32_t sh_GetProcAddress(cpu_t *c, const uint32_t *a);
+static const rt_shim_entry *find_entry(const char *name);
+static uint32_t sh_LoadLibraryA(cpu_t *c, const uint32_t *a);
 
-static const struct {
-    const char *name;
-    unsigned nargs;
-    rt_shim_fn fn;
-} rt_shims[] = {
+static const rt_shim_entry rt_shims[] = {
     {"KERNEL32.dll::CloseHandle", 1, sh_CloseHandle},
     {"KERNEL32.dll::GetVersion", 0, sh_GetVersion},
     {"KERNEL32.dll::CreateThread", 6, sh_CreateThread},
@@ -458,11 +464,13 @@ static const struct {
     {"KERNEL32.dll::GetVersionExA", 1, sh_GetVersionExA},
     {"KERNEL32.dll::GetModuleHandleA", 1, sh_GetModuleHandleA_real},
     {"KERNEL32.dll::GetProcAddress", 2, sh_GetProcAddress},
+    {"KERNEL32.dll::LoadLibraryA", 1, sh_LoadLibraryA},
     {"KERNEL32.dll::GetCommandLineA", 0, sh_GetCommandLineA},
     {"KERNEL32.dll::GetStartupInfoA", 1, sh_GetStartupInfoA},
     {"KERNEL32.dll::GetStdHandle", 1, sh_GetStdHandle},
     {"KERNEL32.dll::SetHandleCount", 1, sh_SetHandleCount},
     {"KERNEL32.dll::GetFileType", 1, sh_GetFileType},
+    {"d3d9.dll::Direct3DCreate9", 1, sh_Direct3DCreate9},
     {"KERNEL32.dll::CreateFileA", 7, sh_CreateFileA},
     {"KERNEL32.dll::ReadFile", 5, sh_ReadFile},
     {"KERNEL32.dll::WriteFile", 5, sh_WriteFile},
@@ -512,7 +520,7 @@ void rt_set_image(rt_pe_image *img)
 }
 
 /* Talons dynamiques : fonctions obtenues par GetProcAddress, numérotées après les imports statiques. */
-#define RT_DYN_MAX 256
+#define RT_DYN_MAX 4096
 static char *dyn_names[RT_DYN_MAX];
 static unsigned dyn_count;
 
@@ -550,6 +558,8 @@ static const char *module_name(uint32_t h)
     return mod_names[(h - RT_MOD_BASE) / 16];
 }
 
+uint32_t rt_dyn_stub_addr(const char *full);
+
 static uint32_t dyn_stub(const char *full)
 {
     for (unsigned i = 0; i < dyn_count; i++) {
@@ -575,6 +585,32 @@ static uint32_t sh_GetModuleHandleA_real(cpu_t *c, const uint32_t *a)
     return module_handle(name);
 }
 
+/* Bibliothèques fournies par le runtime (talons) : LoadLibraryA renvoie leur handle de module. */
+static int provided_dll(const char *name)
+{
+    static const char *known[] = {"d3d9.dll", "dinput8.dll", "dsound.dll", "winmm.dll", "user32.dll",
+                                  "gdi32.dll", "kernel32.dll", "advapi32.dll", "comctl32.dll", "ole32.dll"};
+    const char *base = strrchr(name, '\\');
+    base = base ? base + 1 : name;
+    for (unsigned i = 0; i < sizeof known / sizeof known[0]; i++) {
+        if (strcasecmp(base, known[i]) == 0) return 1;
+    }
+    return 0;
+}
+
+static uint32_t sh_LoadLibraryA(cpu_t *c, const uint32_t *a)
+{
+    (void)c;
+    char name[256];
+    unsigned i = 0;
+    for (; i < sizeof name - 1 && rt_mem_base[a[0] + i]; i++) name[i] = (char)rt_mem_base[a[0] + i];
+    name[i] = 0;
+    if (!provided_dll(name)) return 0;  /* ERROR_MOD_NOT_FOUND : bibliothèque absente */
+    char lower[256];
+    for (unsigned k = 0; k <= i; k++) lower[k] = (char)tolower((unsigned char)name[k]);
+    return module_handle(lower);
+}
+
 static uint32_t sh_GetProcAddress(cpu_t *c, const uint32_t *a)
 {
     (void)c;
@@ -582,7 +618,11 @@ static uint32_t sh_GetProcAddress(cpu_t *c, const uint32_t *a)
     if (!dll) return 0;
     char full[320];
     snprintf(full, sizeof full, "%s::%s", dll, (const char *)(rt_mem_base + a[1]));
-    /* Les noms de DLL stockés sont en minuscules : on reprend la casse des imports connus. */
+    /* Export inconnu du runtime : NULL, comme Windows pour un nom absent. */
+    if (!find_entry(full)) {
+        if (rt_trace_imports) fprintf(stderr, "[getprocaddress] absent : %s\n", full);
+        return 0;
+    }
     return dyn_stub(full);
 }
 
@@ -599,45 +639,101 @@ static int same_import(const char *a, const char *b)
     return strcmp(sa, sb) == 0;
 }
 
-void rt_shim_call(cpu_t *c, uint32_t addr)
+static const rt_shim_entry *find_com_entry(const char *name)
 {
-    const char *name = import_name(addr);
-    if (!name) {
-        fprintf(stderr, "rt: talon inconnu 0x%08x\n", addr);
-        exit(3);
-    }
-    for (unsigned i = 0; i < sizeof rt_shims / sizeof rt_shims[0]; i++) {
-        if (same_import(rt_shims[i].name, name)) {
-            uint32_t esp = (uint32_t)cpu_rd(c, 16, 4);
-            uint32_t args[8] = {0};
-            for (unsigned k = 0; k < rt_shims[i].nargs; k++) {
-                args[k] = (uint32_t)guest_ld(c, esp + 4 + 4 * k, 4);
-            }
-            if (rt_trace_imports) {
-                fprintf(stderr, "[import] (retour 0x%08x) %s", (uint32_t)guest_ld(c, esp, 4), name);
-                for (unsigned k = 0; k < rt_shims[i].nargs; k++) {
-                    fprintf(stderr, "%s0x%x", k ? ", " : "(", args[k]);
-                }
-                fprintf(stderr, rt_shims[i].nargs ? ")\n" : "()\n");
-            }
-            rt_lock();
-            uint32_t ret = rt_shims[i].fn(c, args);
-            rt_unlock();
-            if (rt_trace_imports) {
-                fprintf(stderr, "[retour] %s -> 0x%x\n", name, ret);
-            }
-            cpu_wr(c, 0, 4, ret);
-            /* stdcall : l'appelé dépile l'adresse de retour et les arguments. */
-            cpu_wr(c, 16, 4, esp + 4 + 4 * rt_shims[i].nargs);
-            return;
+    for (unsigned i = 0; i < rt_com_iface_count; i++) {
+        const rt_com_iface *ifc = &rt_com_ifaces[i];
+        for (unsigned k = 0; k < ifc->count; k++) {
+            if (strcmp(ifc->methods[k].name, name) == 0) return &ifc->methods[k];
         }
     }
-    fprintf(stderr, "rt: import non implémenté : %s (appel à 0x%08x)\n", name, addr);
-    exit(3);
+    return NULL;
+}
+
+static const rt_shim_entry *find_entry(const char *name)
+{
+    for (unsigned i = 0; i < sizeof rt_shims / sizeof rt_shims[0]; i++) {
+        if (same_import(rt_shims[i].name, name)) return &rt_shims[i];
+    }
+    for (unsigned i = 0; i < rt_user32_count; i++) {
+        if (same_import(rt_user32_table[i].name, name)) return &rt_user32_table[i];
+    }
+    for (unsigned i = 0; i < rt_extra_count; i++) {
+        if (same_import(rt_extra_table[i].name, name)) return &rt_extra_table[i];
+    }
+    for (unsigned i = 0; i < rt_fs_count; i++) {
+        if (same_import(rt_fs_table[i].name, name)) return &rt_fs_table[i];
+    }
+    return find_com_entry(name);
+}
+
+/* Cache par adresse de talon : évite la recherche par nom à chaque appel (COM, Direct3D). */
+#define RT_STUB_SLOTS ((RT_STUB_END - RT_STUB_BASE) / 16)
+static const rt_shim_entry *shim_cache[RT_STUB_SLOTS];
+
+void rt_shim_call(cpu_t *c, uint32_t addr)
+{
+    uint32_t slot = (addr - RT_STUB_BASE) / 16;
+    rt_lock_enter();
+    const rt_shim_entry *e = slot < RT_STUB_SLOTS ? shim_cache[slot] : NULL;
+    if (!e) {
+        const char *name = import_name(addr);
+        if (!name) {
+            fprintf(stderr, "rt: talon inconnu 0x%08x\n", addr);
+            exit(3);
+        }
+        e = find_entry(name);
+        if (!e) {
+            fprintf(stderr, "rt: import non implémenté : %s (appel à 0x%08x)\n", name, addr);
+            exit(3);
+        }
+        if (slot < RT_STUB_SLOTS) shim_cache[slot] = e;
+    }
+    uint32_t esp = (uint32_t)cpu_rd(c, 16, 4);
+    uint32_t args[8] = {0};
+    for (unsigned k = 0; k < e->nargs; k++) {
+        args[k] = (uint32_t)guest_ld(c, esp + 4 + 4 * k, 4);
+    }
+    if (rt_trace_imports) {
+        fprintf(stderr, "[import] (retour 0x%08x) %s", (uint32_t)guest_ld(c, esp, 4), e->name);
+        for (unsigned k = 0; k < e->nargs; k++) {
+            fprintf(stderr, "%s0x%x", k ? ", " : "(", args[k]);
+        }
+        fprintf(stderr, e->nargs ? ")\n" : "()\n");
+    }
+    uint32_t ret = e->fn(c, args);
+    if (rt_trace_imports) {
+        fprintf(stderr, "[retour] %s -> 0x%x\n", e->name, ret);
+    }
+    cpu_wr(c, 0, 4, ret);
+    /* stdcall : l'appelé dépile l'adresse de retour et les arguments. */
+    cpu_wr(c, 16, 4, esp + 4 + 4 * e->nargs);
+    rt_lock_leave();
+}
+
+uint32_t rt_call_guest(cpu_t *c, uint32_t fn, const uint32_t *args, unsigned n)
+{
+    uint32_t esp = (uint32_t)cpu_rd(c, 16, 4);
+    for (unsigned k = n; k-- > 0;) {
+        esp -= 4;
+        guest_st(c, esp, 4, args[k]);
+    }
+    esp -= 4;
+    guest_st(c, esp, 4, RT_HOST_RET);
+    cpu_wr(c, 16, 4, esp);
+    dispatch(c, fn);
+    return (uint32_t)cpu_rd(c, 0, 4);
+}
+
+uint32_t rt_dyn_stub_addr(const char *full)
+{
+    return dyn_stub(full);
 }
 
 void rt_unresolved(cpu_t *c, uint32_t addr)
 {
+    /* Retour vers l'hôte (threads, rappels) : dispatch rend la main à l'appelant C. */
+    if (addr == RT_HOST_RET) return;
     /* Le sommet de pile invité contient l'adresse de retour du dernier appel traduit. */
     uint32_t esp = (uint32_t)cpu_rd(c, 16, 4);
     uint32_t ret = (uint32_t)guest_ld(c, esp, 4);

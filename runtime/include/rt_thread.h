@@ -7,8 +7,13 @@
  * Le code invité s'exécute hors du verrou. */
 
 #include "rt.h"
+#include "rt_shim.h"
 
 #include <pthread.h>
+
+#ifdef __cplusplus
+extern "C" {
+#endif
 
 #define RT_THREAD_STACK_REGION 0x30000000u
 #define RT_THREAD_SLOT        0x00102000u /* TEB (4 Kio) + pile (1 Mio) + garde */
@@ -73,3 +78,7 @@ void rt_cs_leave(uint32_t addr);
 void rt_cs_delete(uint32_t addr);
 
 void rt_install_crash_handler(void);
+
+#ifdef __cplusplus
+}
+#endif

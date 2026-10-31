@@ -23,6 +23,11 @@ uint32_t rt_error;
 
 static char base_dir[1024] = ".";
 
+const char *rt_file_base(void)
+{
+    return base_dir;
+}
+
 void rt_file_set_base(const char *exe_path)
 {
     snprintf(base_dir, sizeof base_dir, "%s", exe_path);
@@ -38,7 +43,7 @@ void rt_file_set_base(const char *exe_path)
 /* Traduit un chemin Win32 : « \ » devient « / », la lettre de lecteur est retirée, le chemin est relatif
  * au dossier de l'exécutable. Chaque composant existant est retrouvé sans tenir compte de la casse. Un
  * composant final absent est gardé tel quel (création de fichier). */
-static void resolve(const char *win, char *out, size_t n)
+void rt_file_resolve(const char *win, char *out, size_t n)
 {
     char rel[1024];
     size_t k = 0;
@@ -88,7 +93,7 @@ static void resolve(const char *win, char *out, size_t n)
 uint32_t rt_file_open(const char *win_path, uint32_t desired, uint32_t disposition)
 {
     char path[2048];
-    resolve(win_path, path, sizeof path);
+    rt_file_resolve(win_path, path, sizeof path);
 
     int flags;
     if ((desired & GENERIC_READ) && (desired & GENERIC_WRITE)) {

@@ -155,6 +155,12 @@ public class ExportFunctions extends GhidraScript {
                         continue;
                     }
                     Address target = t.getAddress();
+                    if (fm.getFunctionAt(target) == null && op.getOpcode() == PcodeOp.CALL
+                            && f.getBody().contains(target)) {
+                        /* Appel vers le milieu de la fonction appelante : entrée intérieure. */
+                        candidates.add(target.getOffset());
+                        continue;
+                    }
                     if (f.getBody().contains(target) || fm.getFunctionAt(target) != null) {
                         continue;
                     }
@@ -172,6 +178,18 @@ public class ExportFunctions extends GhidraScript {
             if (fm.getFunctionAt(target) != null) {
                 continue;
             }
+            /* Adresse située dans une fonction connue : créer une fonction la découperait. Entrée intérieure. */
+            if (fm.getFunctionContaining(target) != null) {
+                if (program.getListing().getInstructionAt(target) == null) {
+                    disassemble(target);
+                }
+                if (program.getListing().getInstructionAt(target) != null) {
+                    interior.add(target);
+                } else {
+                    rejected++;
+                }
+                continue;
+            }
             disassemble(target);
             Function f = createFunction(target, null);
             if (f == null) {
@@ -180,6 +198,11 @@ public class ExportFunctions extends GhidraScript {
                     interior.add(target);
                 } else {
                     rejected++;
+                    if (rejected <= 40) {
+                        Function owner = fm.getFunctionContaining(target);
+                        println("rejet " + target + " (fonction englobante : "
+                                + (owner == null ? "aucune" : owner.getEntryPoint().toString()) + ")");
+                    }
                 }
                 continue;
             }

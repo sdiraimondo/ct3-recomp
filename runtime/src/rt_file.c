@@ -136,6 +136,11 @@ int rt_file_read(uint32_t h, uint32_t buf, uint32_t n, uint32_t got_addr)
         uint32_t got = (uint32_t)r;
         memcpy(rt_mem_base + got_addr, &got, 4);
     }
+    {
+        static int log = -1;
+        if (log < 0) log = getenv("CT3_FILELOG") != NULL;
+        if (log) fprintf(stderr, "[lecture] h=0x%x demande=0x%x lu=%zd\n", h, n, r);
+    }
     rt_error = 0;
     return 1;
 }

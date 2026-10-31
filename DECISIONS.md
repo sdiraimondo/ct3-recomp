@@ -298,6 +298,15 @@ Outils de diagnostic ajoutés (build de traçage uniquement) : `CT3_PROBE=<lo>-<
 
 Prochaine étape : déterminer qui remplit `[élément+0]` (tableau de canaux) pour les éléments de la banque, dans le parseur (`FUN_004162B0`, boucle `0x4164xx`) ou dans `FUN_004150D0`/`FUN_00415290`, et pourquoi c'est nul.
 
+### Diagnostic audio, suite (31 oct. 2026)
+
+- Constats corrigés : `[élément+0]` n'est pas nul (`0x264F2B5C`, valide). L'hypothèse « pointeur nul » est fausse.
+- Le parseur lit la banque entière en mémoire quand `[0x67BE78]` est non nul (confirmé par les `fread` de 0x2E92A00 et 0x2E6800 octets). `FUN_004154A0` prend alors la branche « mémoire » : pointeur de donnée = `[EBX+0x38] + décalage + 0x40`, et renvoie la longueur (`0x2178`).
+- `FUN_004146B0` (démarrage de voix) copie `longueur` octets depuis ce pointeur vers un tampon, puis appelle des méthodes `IDirectSoundBuffer` (stubs silencieux, D-038). Le plantage survient après ces appels, dans le chemin de sortie de la chaîne d'appels, dont le cadre SEH n'est pas encore expliqué.
+- Le champ `+0x10` de l'enregistrement d'élément (`0x20006238`) est un pointeur du périphérique D3D : il vient d'un reste de pile non initialisé. À vérifier : sa valeur dépend de ce que le code D3D a laissé en pile, ce que notre pont ne reproduit peut-être pas.
+
+Outils ajoutés (build de traçage) : `CT3_MEMWATCH=lo-hi` (écritures dans une plage, avec l'instruction), `CT3_MEMWATCH_VAL=hex` (écritures d'une valeur), `CT3_FILELOG=1` (ReadFile : demandé et lu), sonde `CT3_PROBE` avec registres, pile et tampon `FILE`.
+
 ## Environnement (31 oct. 2026)
 
 - KWin (session Plasma/Wayland) ne mappe plus les fenêtres X11 nouvelles : constaté sur G1, glxgears et CT3. Une commande de rechargement de KWin (`org.kde.KWin.reconfigure`) a été lancée par erreur, sans effet visible. Non traité : redémarrer la session graphique (déconnexion/reconnexion) devrait suffire, à confirmer par l'utilisateur.

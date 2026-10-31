@@ -28,10 +28,13 @@ extern uint8_t *rt_mem_base;
 extern uint32_t rt_cur_insn;
 /* Diagnostic (CT3_TRACE_INSN=1, CT3_PROBE=lo-hi) : affiche les instructions invitées exécutées dans la plage. */
 extern uint32_t rt_probe_lo, rt_probe_span;
-void rt_probe_hit(uint32_t addr);
-static inline void rt_probe(uint32_t addr)
+void rt_probe_hit(cpu_t *c, uint32_t addr);
+/* Diagnostic (CT3_MEMWATCH=lo-hi) : affiche chaque écriture invitée dans la plage. */
+extern uint32_t rt_memwatch_lo, rt_memwatch_span, rt_memwatch_val;
+void rt_memwatch_hit(cpu_t *c, uint32_t addr, unsigned size, uint64_t v);
+static inline void rt_probe(cpu_t *c, uint32_t addr)
 {
-    if (addr - rt_probe_lo < rt_probe_span) rt_probe_hit(addr);
+    if (addr - rt_probe_lo < rt_probe_span) rt_probe_hit(c, addr);
 }
 
 /* Pile des adresses de retour des appels traduits (par thread). Un RET dont la cible est le sommet
@@ -89,7 +92,7 @@ static inline uint64_t guest_ld(cpu_t *c, uint32_t addr, unsigned size)
 
 static inline void guest_st(cpu_t *c, uint32_t addr, unsigned size, uint64_t v)
 {
-    (void)c;
+    if (__builtin_expect(addr - rt_memwatch_lo < rt_memwatch_span, 0) || (rt_memwatch_val && (uint32_t)v == rt_memwatch_val)) rt_memwatch_hit(c, addr, size, v);
     memcpy(rt_mem_base + addr, &v, size);
 }
 

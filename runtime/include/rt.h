@@ -29,6 +29,8 @@ extern uint32_t rt_cur_insn;
 /* Diagnostic (CT3_TRACE_INSN=1, CT3_PROBE=lo-hi) : affiche les instructions invitées exécutées dans la plage. */
 extern uint32_t rt_probe_lo, rt_probe_span;
 void rt_probe_hit(cpu_t *c, uint32_t addr);
+void rt_probe_present(void);
+void rt_probe_dump(void);
 /* Diagnostic (CT3_MEMWATCH=lo-hi) : affiche chaque écriture invitée dans la plage. */
 extern uint32_t rt_memwatch_lo, rt_memwatch_span, rt_memwatch_val;
 void rt_memwatch_hit(cpu_t *c, uint32_t addr, unsigned size, uint64_t v);

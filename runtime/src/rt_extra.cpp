@@ -325,6 +325,18 @@ const char *const kDsbMethods[] = {"QueryInterface", "AddRef", "Release", "GetCa
                                    "SetFX", "AcquireResources", "GetObjectInPath"};  // IDirectSoundBuffer8
 uint32_t ds_vtable;
 uint32_t dsb_vtable;
+uint32_t ds3d_vtable;
+uint32_t ds3d_obj;
+// IDirectSound3DBuffer : ordre de la vtable de dsound.h (index 17 = SetMinDistance, 3 arguments).
+const char *const kDs3dMethods[] = {"QueryInterface", "AddRef", "Release", "GetAllParameters", "GetConeAngles",
+                                    "GetConeOrientation", "GetConeOutsideVolume", "GetMaxDistance",
+                                    "GetMinDistance", "GetMode", "GetPosition", "GetVelocity",
+                                    "SetAllParameters", "SetConeAngles", "SetConeOrientation",
+                                    "SetConeOutsideVolume", "SetMaxDistance", "SetMinDistance", "SetMode",
+                                    "SetPosition", "SetVelocity"};
+// {279AFA86-4981-11CE-A521-0020AF0BE560} : IID_IDirectSound3DBuffer (vérifié dans CT3.exe à 0x5CEF4C).
+const uint8_t kIidDs3dBuffer[16] = {0x86, 0xFA, 0x9A, 0x27, 0x81, 0x49, 0xCE, 0x11,
+                                    0xA5, 0x21, 0x00, 0x20, 0xAF, 0x0B, 0xE5, 0x60};
 
 uint32_t make_vtable(const char *prefix, const char *const *names, unsigned count)
 {
@@ -460,6 +472,7 @@ uint32_t sh_DirectSoundCreate(cpu_t *c, const uint32_t *a)
     (void)c;
     if (!ds_vtable) ds_vtable = make_vtable("dsoundcom::IDirectSound::", kDsMethods, 11);
     if (!dsb_vtable) dsb_vtable = make_vtable("dsoundcom::IDirectSoundBuffer::", kDsbMethods, 24);
+    if (!ds3d_vtable) ds3d_vtable = make_vtable("dsoundcom3d::IDirectSound3DBuffer::", kDs3dMethods, 21);
     uint32_t obj = new_object(ds_vtable, 0);
     if (a[1]) put32(a[1], obj);
     return 0;  // DS_OK
@@ -574,6 +587,39 @@ uint32_t sh_ds_addref(cpu_t *c, const uint32_t *a) { (void)c; (void)a; return 2;
 uint32_t sh_ds_release(cpu_t *c, const uint32_t *a) { (void)c; (void)a; return 1; }
 // QueryInterface : le même objet, pour IUnknown, IDirectSoundBuffer, IDirectSoundNotify...
 uint32_t sh_ds_qi(cpu_t *c, const uint32_t *a) { (void)c; if (a[2]) put32(a[2], a[0]); return 0; }
+
+// IDirectSoundBuffer::QueryInterface : l'interface 3D est un objet distinct (vtable 3D, arités propres) ;
+// les autres IID renvoient le tampon lui-même.
+uint32_t sh_dsb_qi(cpu_t *c, const uint32_t *a)
+{
+    (void)c;
+    if (!a[1] || !a[2]) return 0;
+    if (memcmp(rt_mem_base + a[1], kIidDs3dBuffer, 16) == 0) {
+        if (!ds3d_obj) ds3d_obj = new_object(ds3d_vtable, 0);
+        put32(a[2], ds3d_obj);
+    } else {
+        put32(a[2], a[0]);
+    }
+    return 0;
+}
+
+// Méthodes 3D sans effet : les paramètres ne sont pas appliqués au son (il est muet pour l'instant).
+// Les méthodes Get écrivent des zéros dans leurs sorties pour que le jeu lise des valeurs définies.
+uint32_t sh_ds3d_ok(cpu_t *c, const uint32_t *a) { (void)c; (void)a; return 0; }
+uint32_t sh_ds3d_get1(cpu_t *c, const uint32_t *a) { (void)c; if (a[1]) put32(a[1], 0); return 0; }
+uint32_t sh_ds3d_get_vec(cpu_t *c, const uint32_t *a)
+{
+    (void)c;
+    if (a[1]) { put32(a[1], 0); put32(a[1] + 4, 0); put32(a[1] + 8, 0); }
+    return 0;
+}
+uint32_t sh_ds3d_get_angles(cpu_t *c, const uint32_t *a)
+{
+    (void)c;
+    if (a[1]) put32(a[1], 0);
+    if (a[2]) put32(a[2], 0);
+    return 0;
+}
 
 uint32_t sh_DebugSetMute(cpu_t *c, const uint32_t *a)
 {
@@ -696,7 +742,28 @@ extern "C" const rt_shim_entry rt_extra_table[] = {
     {"dsoundcom::IDirectSound::GetSpeakerConfig", 2, sh_ds_zero},
     {"dsoundcom::IDirectSound::SetSpeakerConfig", 2, sh_ds_ok},
     {"dsoundcom::IDirectSound::Initialize", 2, sh_ds_ok},
-    {"dsoundcom::IDirectSoundBuffer::QueryInterface", 3, sh_ds_qi},
+    {"dsoundcom::IDirectSoundBuffer::QueryInterface", 3, sh_dsb_qi},
+    {"dsoundcom3d::IDirectSound3DBuffer::QueryInterface", 3, sh_ds_qi},
+    {"dsoundcom3d::IDirectSound3DBuffer::AddRef", 1, sh_ds_addref},
+    {"dsoundcom3d::IDirectSound3DBuffer::Release", 1, sh_ds_release},
+    {"dsoundcom3d::IDirectSound3DBuffer::GetAllParameters", 2, sh_ds3d_ok},
+    {"dsoundcom3d::IDirectSound3DBuffer::GetConeAngles", 3, sh_ds3d_get_angles},
+    {"dsoundcom3d::IDirectSound3DBuffer::GetConeOrientation", 2, sh_ds3d_get_vec},
+    {"dsoundcom3d::IDirectSound3DBuffer::GetConeOutsideVolume", 2, sh_ds3d_get1},
+    {"dsoundcom3d::IDirectSound3DBuffer::GetMaxDistance", 2, sh_ds3d_get1},
+    {"dsoundcom3d::IDirectSound3DBuffer::GetMinDistance", 2, sh_ds3d_get1},
+    {"dsoundcom3d::IDirectSound3DBuffer::GetMode", 2, sh_ds3d_get1},
+    {"dsoundcom3d::IDirectSound3DBuffer::GetPosition", 2, sh_ds3d_get_vec},
+    {"dsoundcom3d::IDirectSound3DBuffer::GetVelocity", 2, sh_ds3d_get_vec},
+    {"dsoundcom3d::IDirectSound3DBuffer::SetAllParameters", 3, sh_ds3d_ok},
+    {"dsoundcom3d::IDirectSound3DBuffer::SetConeAngles", 4, sh_ds3d_ok},
+    {"dsoundcom3d::IDirectSound3DBuffer::SetConeOrientation", 5, sh_ds3d_ok},
+    {"dsoundcom3d::IDirectSound3DBuffer::SetConeOutsideVolume", 3, sh_ds3d_ok},
+    {"dsoundcom3d::IDirectSound3DBuffer::SetMaxDistance", 3, sh_ds3d_ok},
+    {"dsoundcom3d::IDirectSound3DBuffer::SetMinDistance", 3, sh_ds3d_ok},
+    {"dsoundcom3d::IDirectSound3DBuffer::SetMode", 3, sh_ds3d_ok},
+    {"dsoundcom3d::IDirectSound3DBuffer::SetPosition", 5, sh_ds3d_ok},
+    {"dsoundcom3d::IDirectSound3DBuffer::SetVelocity", 5, sh_ds3d_ok},
     {"dsoundcom::IDirectSoundBuffer::AddRef", 1, sh_ds_addref},
     {"dsoundcom::IDirectSoundBuffer::Release", 1, sh_ds_release},
     {"dsoundcom::IDirectSoundBuffer::GetCaps", 2, sh_dsb_GetCaps},

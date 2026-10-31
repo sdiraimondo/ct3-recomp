@@ -27,14 +27,15 @@ void rt_regs_save(cpu_t *c, uint32_t s[4])
 void rt_regs_check(cpu_t *c, const uint32_t s[4], uint32_t site, uint32_t target)
 {
     /* Exceptions du CRT MSVC : l'épilogue 0x51B3CB restaure les registres du cadre (retour de fonction,
-     * pas un appel ordinaire) ; le prologue SEH 0x51B390 modifie EBP légitimement. */
+     * pas un appel ordinaire) ; les prologues SEH 0x51B390 et 0x519D80 modifient EBP légitimement ; le helper 64 bits 0x518E20 utilise EBX. */
     static int disabled = -1;
     if (disabled < 0) disabled = getenv("CT3_NOREGCHK") != NULL;
     if (disabled || target == 0x0051B3CBu) return;
     static const char *names[4] = {"EBX", "EBP", "ESI", "EDI"};
     static const unsigned offs[4] = {12, 20, 24, 28};
     for (unsigned k = 0; k < 4; k++) {
-        if (k == 1 && target == 0x0051B390u) continue;
+        if (k == 1 && (target == 0x0051B390u || target == 0x00519D80u)) continue;
+        if (k == 0 && target == 0x00518E20u) continue;  /* _aulldiv : EBX scratch, l'appelant le réaffecte */
         uint32_t now = (uint32_t)cpu_rd(c, offs[k], 4);
         if (now != s[k]) {
             fprintf(stderr, "rt: registre %s modifié par l'appel à 0x%08x depuis 0x%08x : 0x%08x -> 0x%08x\n",

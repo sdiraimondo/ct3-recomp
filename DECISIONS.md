@@ -307,6 +307,15 @@ Prochaine étape : déterminer qui remplit `[élément+0]` (tableau de canaux) p
 
 Outils ajoutés (build de traçage) : `CT3_MEMWATCH=lo-hi` (écritures dans une plage, avec l'instruction), `CT3_MEMWATCH_VAL=hex` (écritures d'une valeur), `CT3_FILELOG=1` (ReadFile : demandé et lu), sonde `CT3_PROBE` avec registres, pile et tampon `FILE`.
 
+### Première image hors intro (31 oct. 2026, correction de fond)
+
+- **Décompte corrigé** : `grep -c IDirect3DDevice9::Present` compte les lignes `[import]` et `[retour]`. Les « 2 050 présentations » étaient donc environ 1 025 images réelles. Cela concorde avec les 1 024 images de l'état 1 mesurées plus tôt.
+- **Bug de traduction (D-041)** : le corps d'une fonction était émis dans l'ordre des adresses. Si un bloc plus bas (atteint par saut) précédait le point d'entrée, l'appel exécutait ce bloc. Exemple : `_strchr` (entrée 0x518830) exécutait `lea; pop ebx; ret` de 0x518820. Correctif : `goto` vers l'entrée au début du corps (`tools/recomp/ct3rc.py`). Traduction régénérée : 5 594 fonctions.
+- **Interface DirectSound 3D (D-042)** : `QueryInterface` renvoyait le tampon pour tout IID. Le jeu prend `IDirectSound3DBuffer` (`{279AFA86-…}`, vérifié dans CT3.exe) et appelle `SetMinDistance` (3 arguments) à l'index 17, que notre table attribuait à `SetFrequency` (2 arguments) : 4 octets nettoyés de trop à chaque appel. Une interface 3D distincte, avec les arités de dsound.h, corrige l'équilibre de pile.
+- **Résultat** : premier écran hors intro, le logo « Crazy Taxi 3 » (capture `captures/frame_1300.png`).
+- **Limite actuelle** : le tas invité (192 Mio) est épuisé vers 1 400 images (`tas invité épuisé`). 17 651 allocations pour 2 897 libérations, presque toutes depuis un même point du CRT (`0x516F74`). Fuite ou libération manquante à identifier.
+- **Attention** : `/tmp` est un tmpfs de 4,8 Go. Les journaux de trace l'ont saturé et ont fait échouer une compilation et Xvfb. Garder les journaux de trace petits.
+
 ## Environnement (31 oct. 2026)
 
 - KWin (session Plasma/Wayland) ne mappe plus les fenêtres X11 nouvelles : constaté sur G1, glxgears et CT3. Une commande de rechargement de KWin (`org.kde.KWin.reconfigure`) a été lancée par erreur, sans effet visible. Non traité : redémarrer la session graphique (déconnexion/reconnexion) devrait suffire, à confirmer par l'utilisateur.

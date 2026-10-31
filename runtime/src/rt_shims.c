@@ -740,6 +740,7 @@ void rt_unresolved(cpu_t *c, uint32_t addr)
     uint32_t esp = (uint32_t)cpu_rd(c, 16, 4);
     uint32_t ret = (uint32_t)guest_ld(c, esp, 4);
     fprintf(stderr, "rt: appel vers une adresse non traduite 0x%08x (retour invité 0x%08x)\n", addr, ret);
+    rt_probe_dump();
     exit(3);
 }
 

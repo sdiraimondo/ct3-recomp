@@ -462,6 +462,7 @@ class FunctionTranslator:
     # ---- fonction -----------------------------------------------------
     def translate(self):
         body = []
+        self.ram_labels.add(self.entry)
         last = len(self.fn["insns"]) - 1
         for n, ins in enumerate(self.fn["insns"]):
             self.cur_addr = int(ins["addr"], 16)
@@ -489,6 +490,10 @@ class FunctionTranslator:
         for (o, z) in sorted(self.wides):
             out.append("    rt_wide w%d_%d;" % (o, z))
             out.append("    memset(&w%d_%d, 0, sizeof w%d_%d);" % (o, z, o, z))
+        if body and body[0][0] != self.entry and self.entry in self.insn_addrs:
+            # Le corps est émis dans l'ordre des adresses : un bloc plus bas (atteint par saut) peut précéder
+            # le point d'entrée ; l'exécution doit commencer à l'entrée.
+            out.append("    goto A_%08x;" % self.entry)
         for addr, ins, ops in body:
             if addr in self.ram_labels:
                 out.append("A_%08x:;" % addr)

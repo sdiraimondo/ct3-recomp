@@ -587,6 +587,7 @@ void dump_backbuffer(IDirect3DDevice9 *dev, uint32_t frame)
 
 extern "C" uint32_t custom_IDirect3DDevice9_Present(cpu_t *c, const uint32_t *a)
 {
+    rt_probe_present();
     (void)c;
     IDirect3DDevice9 *self = rt_self<IDirect3DDevice9>(a[0]);
     HRESULT hr = self->Present(static_cast<const RECT *>(rt_gptr(a[1])), static_cast<const RECT *>(rt_gptr(a[2])),

@@ -1,3 +1,5 @@
+#include <stdio.h>
+#include <stdlib.h>
 #include "rt_proc.h"
 #include "rt_thread.h"
 
@@ -9,6 +11,35 @@ int rt_mem_init(void);
 
 /* Dernière instruction invitée exécutée (CT3_TRACE_INSN=1 à la traduction) : affichée au plantage. */
 uint32_t rt_cur_insn;
+
+__thread uint32_t rt_cs_stack[RT_CS_MAX];
+__thread unsigned rt_cs_depth;
+
+void rt_regs_save(cpu_t *c, uint32_t s[4])
+{
+    s[0] = (uint32_t)cpu_rd(c, 12, 4);  /* EBX */
+    s[1] = (uint32_t)cpu_rd(c, 20, 4);  /* EBP */
+    s[2] = (uint32_t)cpu_rd(c, 24, 4);  /* ESI */
+    s[3] = (uint32_t)cpu_rd(c, 28, 4);  /* EDI */
+}
+
+void rt_regs_check(cpu_t *c, const uint32_t s[4], uint32_t site, uint32_t target)
+{
+    /* Exceptions du CRT MSVC : l'épilogue 0x51B3CB restaure les registres du cadre (retour de fonction,
+     * pas un appel ordinaire) ; le prologue SEH 0x51B390 modifie EBP légitimement. */
+    if (target == 0x0051B3CBu) return;
+    static const char *names[4] = {"EBX", "EBP", "ESI", "EDI"};
+    static const unsigned offs[4] = {12, 20, 24, 28};
+    for (unsigned k = 0; k < 4; k++) {
+        if (k == 1 && target == 0x0051B390u) continue;
+        uint32_t now = (uint32_t)cpu_rd(c, offs[k], 4);
+        if (now != s[k]) {
+            fprintf(stderr, "rt: registre %s modifié par l'appel à 0x%08x depuis 0x%08x : 0x%08x -> 0x%08x\n",
+                    names[k], target, site, s[k], now);
+            exit(6);
+        }
+    }
+}
 
 /* Tas : allocateur à croissance monotone, avec réutilisation des blocs libérés (listes par taille).
  * Chaque bloc a un en-tête de 8 octets (taille demandée). */

@@ -317,15 +317,27 @@ class FunctionTranslator:
                 r = self.cur_next
                 self.jmpbufs.add(r)
                 self.ram_labels.add(r)
-                return ("if (setjmp(jb_%08x) != 0) goto A_%08x; dispatch(c, 0x%x); "
+                return ("if (setjmp(jb_%08x) != 0) goto A_%08x; rt_cs_push(0x%x); dispatch(c, 0x%x); rt_cs_pop(); "
                         "rt_jmp_register(c, &jb_%08x, (uint32_t)guest_ld(c, (uint32_t)cpu_rd(c, 16, 4), 4), 0x%x);"
-                        % (r, r, tgt, r, r))
-            return "dispatch(c, 0x%x);" % tgt
+                        % (r, r, r, tgt, r, r))
+            r = self.cur_next
+            if TRACE_INSN:
+                return ("{ uint32_t s_[4]; rt_regs_save(c, s_); rt_cs_push(0x%x); dispatch(c, 0x%x); rt_cs_pop(); "
+                        "rt_regs_check(c, s_, 0x%x, 0x%x); }" % (r, tgt, self.cur_addr, tgt))
+            return "rt_cs_push(0x%x); dispatch(c, 0x%x); rt_cs_pop();" % (r, tgt)
         if m == "CALLIND":
             self.indirect += 1
-            return "dispatch(c, (uint32_t)%s);" % a(0)
+            r = self.cur_next
+            if TRACE_INSN:
+                return ("{ uint32_t s_[4]; rt_regs_save(c, s_); rt_cs_push(0x%x); dispatch(c, (uint32_t)%s); "
+                        "rt_cs_pop(); rt_regs_check(c, s_, 0x%x, 0); }" % (r, a(0), self.cur_addr))
+            return "rt_cs_push(0x%x); dispatch(c, (uint32_t)%s); rt_cs_pop();" % (r, a(0))
         if m == "RETURN":
-            return "return;"
+            if not ins:
+                return "return;"
+            # Un RET peut servir de saut (prologues SEH du CRT : push cible ; ret). Un retour normal
+            # correspond au sommet de la pile des adresses de retour (empilée à chaque appel).
+            return ("if (rt_cs_top() != (uint32_t)%s) dispatch(c, (uint32_t)%s); return;" % (a(0), a(0)))
         if m == "BRANCHIND":
             self.indirect += 1
             targets = self.cur_targets

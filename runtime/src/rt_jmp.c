@@ -9,6 +9,7 @@ typedef struct rt_jmp_frame {
     uint32_t guest_buf;
     uint32_t resume;
     uint32_t esp;
+    unsigned depth;   /* profondeur de la pile des appels au moment du setjmp */
 } rt_jmp_frame;
 
 /* Propres à chaque thread hôte : chacun a sa pile C. */
@@ -28,7 +29,7 @@ void rt_jmp_register(cpu_t *c, jmp_buf *jb, uint32_t guest_buf, uint32_t resume)
     }
     frame_count = keep;
     if (frame_count >= RT_JMP_MAX) rt_fatal("trop de cadres setjmp");
-    frames[frame_count++] = (rt_jmp_frame){jb, guest_buf, resume, esp};
+    frames[frame_count++] = (rt_jmp_frame){jb, guest_buf, resume, esp, rt_cs_depth};
 }
 
 /* Appelé par dispatch avant chaque transfert de contrôle : reprise d'un longjmp invité. */
@@ -40,6 +41,7 @@ void rt_jmp_try(cpu_t *c, uint32_t addr)
         if (frames[i].resume == addr && frames[i].esp == esp) {
             jmp_buf *jb = frames[i].jb;
             frame_count = i;  /* les cadres au-dessus sont abandonnés */
+            rt_cs_depth = frames[i].depth;
             longjmp(*jb, 1);
         }
     }

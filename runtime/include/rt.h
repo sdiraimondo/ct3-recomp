@@ -27,6 +27,35 @@ typedef struct cpu {
 extern uint8_t *rt_mem_base;
 extern uint32_t rt_cur_insn;
 
+/* Pile des adresses de retour des appels traduits (par thread). Un RET dont la cible est le sommet
+ * de la pile est un retour C ; sinon c'est un saut (rt_cs_top, voir ct3rc.py). */
+#define RT_CS_MAX 65536
+extern __thread uint32_t rt_cs_stack[RT_CS_MAX];
+extern __thread unsigned rt_cs_depth;
+
+static inline void rt_cs_push(uint32_t r)
+{
+    if (rt_cs_depth >= RT_CS_MAX) {
+        extern void rt_fatal(const char *msg);
+        rt_fatal("pile des appels saturée");
+    }
+    rt_cs_stack[rt_cs_depth++] = r;
+}
+
+static inline void rt_cs_pop(void)
+{
+    if (rt_cs_depth) rt_cs_depth--;
+}
+
+static inline uint32_t rt_cs_top(void)
+{
+    return rt_cs_depth ? rt_cs_stack[rt_cs_depth - 1] : 0xFFFFFFFFu;
+}
+
+/* Diagnostic (CT3_TRACE_INSN=1) : EBX, EBP, ESI, EDI doivent être préservés par un appel. */
+void rt_regs_save(cpu_t *c, uint32_t s[4]);
+void rt_regs_check(cpu_t *c, const uint32_t s[4], uint32_t site, uint32_t target);
+
 void rt_fatal(const char *msg);
 
 static inline uint64_t cpu_rd(cpu_t *c, unsigned off, unsigned size)

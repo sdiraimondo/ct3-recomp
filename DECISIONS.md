@@ -272,6 +272,14 @@ Journal des décisions du portage. Une entrée par décision, avec la date et la
 - **Plantage précisé** : en build de traçage `-O0`, la dernière instruction invitée est `MOV [ESI],EAX` à `0x4A01F0` (boucle de création d'objets sonores dans `FUN_004A0150`). `ESI` vaut `0x2178` au lieu de la valeur de la boucle : un registre préservé par un appel a été écrasé. La source reste à trouver (surveillance matérielle de `ESI` trop lente sous gdb).
 - Captures d'écran : dossier `captures/` (hors git).
 
+### Vérification des registres préservés (31 oct. 2026)
+
+- Build de traçage (`CT3_TRACE_INSN=1`) : après chaque appel, EBX/ESI/EDI (et EBP hors prologues) sont comparés ; écart = arrêt avec le site et la cible (`rt_regs_check`).
+- Exceptions légitimes : épilogue `0x51B3CB` (retour de fonction), prologue SEH `0x51B390` (modifie EBP).
+- **Bug de traduction corrigé** : `RET` servant de saut (prologue SEH `0x519D80` : `push cible ; ret`) était traduit en `return` C, donc la cible (`0x53A4B2`) n'était jamais exécutée. Chaque appel empile désormais son adresse de retour (`rt_cs_push/pop`) ; un `RET` vers une autre adresse est un saut (`dispatch`). Profondeur sauvegardée dans les cadres `setjmp`.
+- Reste : le corps `0x53A4B2` sort par `jmp 0x515C71`, un épilogue de dépilage SEH (appel à `0x51BE13`) non émulé. Le plantage à 2 050 présentations subsiste (adresse 0x217C au lieu de 0x2178).
+- Piste suivante : émuler le dépilage SEH (`__global_unwind2`/`_except_handler`) pour les sorties par `jmp` vers les épilogues de `try`, ou vérifier qu'une telle sortie est bien traitée par le CRT.
+
 ## Environnement (31 oct. 2026)
 
 - KWin (session Plasma/Wayland) ne mappe plus les fenêtres X11 nouvelles : constaté sur G1, glxgears et CT3. Une commande de rechargement de KWin (`org.kde.KWin.reconfigure`) a été lancée par erreur, sans effet visible. Non traité : redémarrer la session graphique (déconnexion/reconnexion) devrait suffire, à confirmer par l'utilisateur.

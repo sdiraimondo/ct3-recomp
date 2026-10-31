@@ -27,7 +27,9 @@ void rt_regs_check(cpu_t *c, const uint32_t s[4], uint32_t site, uint32_t target
 {
     /* Exceptions du CRT MSVC : l'épilogue 0x51B3CB restaure les registres du cadre (retour de fonction,
      * pas un appel ordinaire) ; le prologue SEH 0x51B390 modifie EBP légitimement. */
-    if (target == 0x0051B3CBu) return;
+    static int disabled = -1;
+    if (disabled < 0) disabled = getenv("CT3_NOREGCHK") != NULL;
+    if (disabled || target == 0x0051B3CBu) return;
     static const char *names[4] = {"EBX", "EBP", "ESI", "EDI"};
     static const unsigned offs[4] = {12, 20, 24, 28};
     for (unsigned k = 0; k < 4; k++) {

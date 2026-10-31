@@ -280,6 +280,11 @@ Journal des décisions du portage. Une entrée par décision, avec la date et la
 - Reste : le corps `0x53A4B2` sort par `jmp 0x515C71`, un épilogue de dépilage SEH (appel à `0x51BE13`) non émulé. Le plantage à 2 050 présentations subsiste (adresse 0x217C au lieu de 0x2178).
 - Piste suivante : émuler le dépilage SEH (`__global_unwind2`/`_except_handler`) pour les sorties par `jmp` vers les épilogues de `try`, ou vérifier qu'une telle sortie est bien traitée par le CRT.
 
+### Essai de contournement audio (31 oct. 2026) : échec
+
+- Banques `Media\SE\*.bin` rendues absentes (`CT3_NOSOUND=1`) : le jeu atteint toujours 2 050 présentations, puis plante plus loin (`FUN_00414330` appelée par `FUN_004383A0` avec `ECX = [0x7CABB0] = NULL`). Le gestionnaire audio est donc nécessaire à la phase suivante. Contournement retiré.
+- Diagnostic ajouté : `CT3_NOREGCHK=1` désactive la vérification des registres du build de traçage.
+
 ## Environnement (31 oct. 2026)
 
 - KWin (session Plasma/Wayland) ne mappe plus les fenêtres X11 nouvelles : constaté sur G1, glxgears et CT3. Une commande de rechargement de KWin (`org.kde.KWin.reconfigure`) a été lancée par erreur, sans effet visible. Non traité : redémarrer la session graphique (déconnexion/reconnexion) devrait suffire, à confirmer par l'utilisateur.

@@ -496,7 +496,7 @@ class FunctionTranslator:
                 if (addr, idx) in self.op_labels:
                     out.append("P_%08x_%d:;" % (addr, idx))
                 if TRACE_INSN and idx == 0:
-                    out.append("    rt_cur_insn = 0x%08x;" % addr)
+                    out.append("    rt_cur_insn = 0x%08x; rt_probe(0x%08x);" % (addr, addr))
                 out.append("    " + code + "  /* %s */" % ins["text"].replace("*/", "*\\/"))
         last_ins = self.fn["insns"][-1] if self.fn["insns"] else None
         if last_ins is not None and last_ins["text"].split(" ")[0] not in TERMINAL_MNEMONICS:
@@ -665,6 +665,8 @@ def main():
         f.write("    if (addr >= RT_STUB_BASE && addr < RT_STUB_END) {\n")
         f.write("        rt_shim_call(c, addr);\n        return;\n    }\n")
         f.write("    rt_jmp_try(c, addr);\n")
+        if TRACE_INSN:
+            f.write("    rt_watch_entry(c, addr);\n")
         f.write("    switch (addr) {\n")
         for entry, cname in sorted(entries):
             f.write("    case 0x%08x: %s(c); return;\n" % (entry, cname))

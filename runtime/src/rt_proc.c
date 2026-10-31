@@ -2,6 +2,7 @@
 #include <stdlib.h>
 #include "rt_proc.h"
 #include "rt_thread.h"
+void rt_diag_init(void);
 
 #include <stdio.h>
 #include <string.h>
@@ -167,5 +168,43 @@ int rt_process_init(cpu_t *c)
     cpu_wr(c, RT_FS_OFFSET_REG, 4, RT_TEB_BASE);
     rt_thread_main_init(c);
     rt_install_crash_handler();
+    rt_diag_init();
     return 0;
+}
+
+/* CT3_WATCH=<adresse> : à chaque entrée de cette fonction (5000 premières fois), affiche ECX, le premier
+ * argument et la table pointée par [ECX+0x88] (premier élément et son mot en +0x18). Les lectures
+ * invitées sont bornées : une adresse hors zone lisible donne 0 au lieu de faire planter le diagnostic. */
+static uint32_t watch_rd(uint32_t g, unsigned n)
+{
+    uint32_t v = 0;
+    if (g >= 0x10000u && g < 0x7F000000u - 8u && g + n <= 0x7F000000u) memcpy(&v, rt_mem_base + g, n);
+    return v;
+}
+
+void rt_watch_entry(cpu_t *c, uint32_t addr)
+{
+    static uint32_t watch = 0;
+    static int init = 0, shown = 0;
+    if (!init) {
+        const char *w = getenv("CT3_WATCH");
+        watch = w ? (uint32_t)strtoul(w, NULL, 16) : 0;
+        init = 1;
+    }
+    if (!watch || addr != watch || shown >= 5000) return;
+    shown++;
+    uint32_t ecx = (uint32_t)cpu_rd(c, 4, 4);
+    uint32_t esp = (uint32_t)cpu_rd(c, 16, 4);
+    uint32_t arg = watch_rd(esp + 4, 4);
+    uint32_t n88 = watch_rd(ecx + 0x88, 4), n8c = watch_rd(ecx + 0x8c, 4);
+    uint32_t t0 = 0, e0 = 0, w18 = 0;
+    if (n88 && n8c) {
+        t0 = watch_rd(n88, 4);
+        if (t0) {
+            e0 = watch_rd(t0, 4);
+            w18 = watch_rd(e0 + 0x18, 2);
+        }
+    }
+    fprintf(stderr, "[watch 0x%08x] ecx=0x%08x arg=0x%08x n8c=%u tbl=0x%08x e0=0x%08x w18=%u etat=%u\n",
+            addr, ecx, arg, n8c, n88, t0, w18, watch_rd(0x7bc334u, 4));
 }

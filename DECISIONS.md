@@ -285,6 +285,19 @@ Journal des décisions du portage. Une entrée par décision, avec la date et la
 - Banques `Media\SE\*.bin` rendues absentes (`CT3_NOSOUND=1`) : le jeu atteint toujours 2 050 présentations, puis plante plus loin (`FUN_00414330` appelée par `FUN_004383A0` avec `ECX = [0x7CABB0] = NULL`). Le gestionnaire audio est donc nécessaire à la phase suivante. Contournement retiré.
 - Diagnostic ajouté : `CT3_NOREGCHK=1` désactive la vérification des registres du build de traçage.
 
+### Diagnostic audio : chaîne établie (31 oct. 2026)
+
+- La machine d'états du jeu (`FUN_0042E140`, table `0x67F94C`, état dans `[0x7BC334]`) reste en état 1 pendant 1 024 images (compteur `[0x717884]`, `FUN_0042E160`). À `0x400`, elle charge les banques (`FUN_004A0150` → parseur `FUN_004162B0`), puis passe aux états 6, 7, 8, 9.
+- Le parseur accepte les banques réelles : `taxi0.bin` (11 entrées) et `taxi1.bin` (5 entrées), lues en little-endian après `TMBR`. Le compteur est bien écrit dans `[ESI+0x18]`.
+- L'initialisation audio `FUN_0043EC20` (qui remplit `[0x7CABB0]`) n'est pas exécutée avant le plantage : `[0x7CABB0]` reste NULL car elle n'a jamais été appelée, pas parce que la banque échoue. Ses appelants (`FUN_0043FF80`, `FUN_00440730`, points d'entrée `ENTRY_0044004B`) sont atteints par pointeurs de fonction, pas encore identifiés.
+- Le plantage survient juste après le chargement : `FUN_004A0150` appelle `FUN_00415B00` (recherche et lecture d'élément) pour chaque élément, qui appelle `FUN_00415730`. Celle-ci déréférence `[élément+0]` (pointeur vers le tableau de canaux, 0x74 octets chacun), qui est invalide pour cet élément (valeur `0x2178`). L'élément n'a donc pas été initialisé par le parseur.
+- Le contournement par faux élément (`CT3_HOOK_AUDIO`, abandonné) faisait passer le jeu à 2 054 présentations, puis un appel non traduit à `0x5A8FD8`, qui est une zone de données : un faux élément n'est pas une solution.
+- La surveillance `CT3_WATCH` lisait des adresses hors zone et plantait ; elle est bornée depuis.
+
+Outils de diagnostic ajoutés (build de traçage uniquement) : `CT3_PROBE=<lo>-<hi>` (sonde d'instructions, `runtime/src/rt_diag.c`), `CT3_WATCH=<adresse>` (affiche ECX, argument, état de la machine d'états).
+
+Prochaine étape : déterminer qui remplit `[élément+0]` (tableau de canaux) pour les éléments de la banque, dans le parseur (`FUN_004162B0`, boucle `0x4164xx`) ou dans `FUN_004150D0`/`FUN_00415290`, et pourquoi c'est nul.
+
 ## Environnement (31 oct. 2026)
 
 - KWin (session Plasma/Wayland) ne mappe plus les fenêtres X11 nouvelles : constaté sur G1, glxgears et CT3. Une commande de rechargement de KWin (`org.kde.KWin.reconfigure`) a été lancée par erreur, sans effet visible. Non traité : redémarrer la session graphique (déconnexion/reconnexion) devrait suffire, à confirmer par l'utilisateur.

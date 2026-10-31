@@ -26,6 +26,13 @@ typedef struct cpu {
 
 extern uint8_t *rt_mem_base;
 extern uint32_t rt_cur_insn;
+/* Diagnostic (CT3_TRACE_INSN=1, CT3_PROBE=lo-hi) : affiche les instructions invitées exécutées dans la plage. */
+extern uint32_t rt_probe_lo, rt_probe_span;
+void rt_probe_hit(uint32_t addr);
+static inline void rt_probe(uint32_t addr)
+{
+    if (addr - rt_probe_lo < rt_probe_span) rt_probe_hit(addr);
+}
 
 /* Pile des adresses de retour des appels traduits (par thread). Un RET dont la cible est le sommet
  * de la pile est un retour C ; sinon c'est un saut (rt_cs_top, voir ct3rc.py). */
@@ -54,6 +61,8 @@ static inline uint32_t rt_cs_top(void)
 
 /* Diagnostic (CT3_TRACE_INSN=1) : EBX, EBP, ESI, EDI doivent être préservés par un appel. */
 void rt_regs_save(cpu_t *c, uint32_t s[4]);
+/* Diagnostic (CT3_TRACE_INSN=1, CT3_WATCH=<adresse hex>) : affiche l'état à l'entrée d'une fonction. */
+void rt_watch_entry(cpu_t *c, uint32_t addr);
 void rt_regs_check(cpu_t *c, const uint32_t s[4], uint32_t site, uint32_t target);
 
 void rt_fatal(const char *msg);

@@ -15,6 +15,7 @@ add_library(ct3_rt STATIC
   "${CMAKE_CURRENT_SOURCE_DIR}/src/rt_thread.c"
   "${CMAKE_CURRENT_SOURCE_DIR}/src/rt_file.c"
   "${CMAKE_CURRENT_SOURCE_DIR}/src/rt_jmp.c"
+  "${CMAKE_CURRENT_SOURCE_DIR}/src/rt_diag.c"
   "${CMAKE_CURRENT_SOURCE_DIR}/src/rt_d3d9.cpp"
   "${CMAKE_CURRENT_SOURCE_DIR}/src/rt_d3d9_custom.cpp"
   "${CMAKE_CURRENT_SOURCE_DIR}/src/rt_d3d9_gen.cpp"

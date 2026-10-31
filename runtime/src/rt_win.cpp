@@ -707,6 +707,14 @@ uint32_t sh_MessageBoxA(cpu_t *c, const uint32_t *a)
     return 1;  // IDOK
 }
 
+// Menu de la ressource (CT3.exe en contient un) : handle fictif non nul, le jeu le transmet à CreateWindowExA.
+uint32_t sh_LoadMenuA(cpu_t *c, const uint32_t *a)
+{
+    (void)c;
+    (void)a;
+    return 0x00090001u;
+}
+
 uint32_t sh_ret1(cpu_t *c, const uint32_t *a)
 {
     (void)c;
@@ -761,7 +769,7 @@ extern "C" const rt_shim_entry rt_user32_table[] = {
     {"USER32.dll::MessageBoxA", 4, sh_MessageBoxA},
     {"USER32.dll::GetMenu", 1, sh_ret0},
     {"USER32.dll::SetMenu", 2, sh_ret1},
-    {"USER32.dll::LoadMenuA", 2, sh_ret0},
+    {"USER32.dll::LoadMenuA", 2, sh_LoadMenuA},
     {"USER32.dll::LoadAcceleratorsA", 2, sh_ret0},
     {"USER32.dll::TranslateAcceleratorA", 3, sh_ret0},
     {"USER32.dll::DestroyAcceleratorTable", 1, sh_ret1},

@@ -418,6 +418,7 @@ static uint32_t sh_ExitProcess(cpu_t *c, const uint32_t *a)
 static uint32_t sh_GetModuleHandleA_real(cpu_t *c, const uint32_t *a);
 static uint32_t sh_GetProcAddress(cpu_t *c, const uint32_t *a);
 static const rt_shim_entry *find_entry(const char *name);
+#define RT_SHIM_MAX_ARGS 16
 static uint32_t sh_LoadLibraryA(cpu_t *c, const uint32_t *a);
 
 static const rt_shim_entry rt_shims[] = {
@@ -690,7 +691,8 @@ void rt_shim_call(cpu_t *c, uint32_t addr)
         if (slot < RT_STUB_SLOTS) shim_cache[slot] = e;
     }
     uint32_t esp = (uint32_t)cpu_rd(c, 16, 4);
-    uint32_t args[8] = {0};
+    if (e->nargs > RT_SHIM_MAX_ARGS) rt_fatal("talon avec trop d'arguments");
+    uint32_t args[RT_SHIM_MAX_ARGS] = {0};
     for (unsigned k = 0; k < e->nargs; k++) {
         args[k] = (uint32_t)guest_ld(c, esp + 4 + 4 * k, 4);
     }

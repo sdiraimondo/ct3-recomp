@@ -265,6 +265,13 @@ Journal des décisions du portage. Une entrée par décision, avec la date et la
 - Le plantage final (`[EBX+0xE0]` ou `[base+0x2178]`, base NULL) est la conséquence probable. Piste : comparer la référence Unicorn (mémoire à zéro) au même point, et vérifier les endroits où la traduction pourrait laisser une variable non écrite (sauts vers le milieu de fonction, entrées intérieures).
 - Protection ajoutée : `HeapFree` ignore les double libérations et les pointeurs non alloués (balise par bloc), sans effet sur ce plantage.
 
+### Mise à jour (31 oct. 2026, suite)
+
+- **Bug corrigé** : `rt_shim_call` écrivait les arguments dans un tableau de 8 mots alors que `CreateWindowExA` en prend 12 et `CreateFontA` 14 (débordement de pile hôte, comportement indéfini dépendant de l'optimisation). Tableau porté à 16, avec vérification.
+- **Bug corrigé** : `LoadMenuA` renvoyait NULL alors que CT3.exe contient un menu ; le jeu déréférençait ce handle (crash en `-O0`). Handle fictif désormais.
+- **Plantage précisé** : en build de traçage `-O0`, la dernière instruction invitée est `MOV [ESI],EAX` à `0x4A01F0` (boucle de création d'objets sonores dans `FUN_004A0150`). `ESI` vaut `0x2178` au lieu de la valeur de la boucle : un registre préservé par un appel a été écrasé. La source reste à trouver (surveillance matérielle de `ESI` trop lente sous gdb).
+- Captures d'écran : dossier `captures/` (hors git).
+
 ## Environnement (31 oct. 2026)
 
 - KWin (session Plasma/Wayland) ne mappe plus les fenêtres X11 nouvelles : constaté sur G1, glxgears et CT3. Une commande de rechargement de KWin (`org.kde.KWin.reconfigure`) a été lancée par erreur, sans effet visible. Non traité : redémarrer la session graphique (déconnexion/reconnexion) devrait suffire, à confirmer par l'utilisateur.

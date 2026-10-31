@@ -5,12 +5,14 @@
 #include "rt.h"
 #include "rt_pe.h"
 
+#include <limits.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
 rt_pe_image *rt_pe_load(const char *path);
 void rt_set_image(rt_pe_image *img);
+void rt_set_exe_path(const char *path);
 int rt_mem_protect(uint32_t addr, uint32_t size, int prot);
 extern unsigned rt_shim_calls;
 extern uint32_t rt_shim_last_arg0;
@@ -80,6 +82,10 @@ static rt_pe_image *harness_load(int argc, char **argv)
         return NULL;
     }
     rt_set_image(img);
+    char resolved[1024];
+    if (realpath(argv[1], resolved)) {
+        rt_set_exe_path(resolved);
+    }
     if (rt_mem_protect(RT_SCRATCH_BASE, RT_SCRATCH_SIZE, 3) != 0) {
         return NULL;
     }

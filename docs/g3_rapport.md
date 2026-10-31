@@ -106,3 +106,9 @@ Ce qui a été ajouté : MMX (8 opérations), 3DNow! (16 opérations exactes et 
 - Sauts indirects sans cible Ghidra (3) : traités comme tail-calls ; si la cible n'est pas une fonction traduite, l'exécution s'arrête avec un message explicite.
 - Couverture ≠ exactitude : la traduction est complète, mais seules les opérations ci-dessus et les routines de `tests/g2` et `tests/x87` sont vérifiées par l'exécution.
 - Deux cibles de saut restent absentes de la traduction (`0x4021DB`, `0x51D3D5`).
+
+## Mise à jour : démarrage du programme (31 oct. 2026)
+
+- Entrées ajoutées à la traduction : 725 fonctions à partir de pointeurs de code, 218 points d'entrée intérieurs (`interior_entries`). Total : 5 398 fonctions.
+- Sites non pris en charge : 0 (le compte peut varier avec les entrées ajoutées ; voir `build/g3/gen/rapport.md`).
+- Premier démarrage réel depuis `0x518A9A` : le programme exécute le CRT jusqu'à `CreateThread` (voir D-030).

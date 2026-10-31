@@ -173,6 +173,33 @@ Journal des décisions du portage. Une entrée par décision, avec la date et la
 - `FEMMS` : tag word à « vide ». `RDTSC` : TSC de l'hôte (D-017 toujours ouvert).
 - Non vérifié : `FPREM`, marqueurs XCHG, tail-calls indirects (pas de référence d'exécution).
 
+## D-027 : démarrage depuis le point d'entrée (31 oct. 2026)
+
+- Processus minimal : TEB (`FS_OFFSET`, registre p-code à l'offset 272), PEB, zone TLS, tas de 64 Mo (`runtime/src/rt_proc.c`).
+- Zone mémoire invitée (0x10000000-0x10400000) : tests < 0x10080000, bloc CPUID 0x10080000, TEB/PEB/TLS 0x10090000, zone de travail 0x10100000-0x10300000, pile 0x10300000-0x103FFF00.
+- Imports : chaque appel est tracé (`[import] (retour …) nom(args)`). Un import non implémenté arrête l'exécution avec son nom (code 3, pas de core dump).
+- Les fonctions chargées par `GetProcAddress` reçoivent des talons dynamiques. Les noms de DLL sont comparés sans tenir compte de la casse ni du suffixe `.dll`.
+- `GetModuleFileNameA` renvoie le chemin réel de `CT3.exe` (fourni par le lanceur). `IsProcessorFeaturePresent` répond selon le profil CPUID (D-022).
+- Shims implémentés (nargs vérifiés par la convention stdcall) : version et environnement (GetVersion, GetVersionExA, GetCommandLineA, GetEnvironmentStringsW, GetACP, GetOEMCP, GetCPInfo), tas (HeapCreate/Alloc/Free/Size/ReAlloc), conversions (MultiByteToWideChar, WideCharToMultiByte : Latin-1, hors plage -> '?'), types de caractères CT3_CTYPE1 et LCMapString (minuscules/majuscules ASCII seulement), sections critiques, TLS et FLS, temps (horloge hôte), Sleep, Interlocked* (un seul fil).
+
+## D-028 : points d'entrée découverts (31 oct. 2026)
+
+- Ghidra n'identifie pas toutes les fonctions. Deux sources ajoutées :
+  1. Pointeurs de code dans les données (tables de fonctions, `pcode-all-ptrs`) : 1 033 candidats, 732 fonctions créées, 301 rejetées (pas du code).
+  2. Cibles de branchement ou d'appel direct vers une instruction d'une autre fonction (ex. continuation SEH `0x52675D` dans `FUN_00526747`) : 218 entrées, traduites comme suite linéaire jusqu'au premier RET (`interior_entries` dans `ct3rc.py`).
+- Total : 5 398 fonctions traduites.
+
+## D-029 : cibles des sauts internes à l'instruction (31 oct. 2026)
+
+- Les cibles `const` de `BRANCH`/`CBRANCH` dans une même instruction sont des décalages relatifs à l'index de l'opération (entier signé 32 bits), pas des indices absolus. Erreur corrigée : la séquence `CPUID` bouclait sur elle-même (`P_…_33`).
+- Vérification : toutes les branches de la table CPUID convergent vers l'index 67, fin de la séquence.
+
+## D-030 : état et blocage (31 oct. 2026)
+
+- Démarrage : le programme passe l'initialisation du CRT jusqu'à `CreateThread`, appelé par le jeu. Le runtime est monofil.
+- Décision à prendre : le support des threads (émulation coopérative ou threads hôte réels avec un état CPU par fil, verrouillage du tas et des shims). C'est un choix d'architecture, à valider avant de continuer.
+- Débogage : `gdb` sur `build/tests/run/ct3_run` montre la fonction traduite (`sub_XXXXXXXX`) à l'instant d'une boucle.
+
 ## Points ouverts
 
 - Traducteur : source sémantique à choisir. Proposition : export p-code via Ghidra headless (Ghidra 12.1.4 déjà installé). Alternative : capstone et traducteur maison.

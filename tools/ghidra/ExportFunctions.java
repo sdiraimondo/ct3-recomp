@@ -55,6 +55,8 @@ public class ExportFunctions extends GhidraScript {
             exportPcode(program, args[1], args[2]);
         } else if (args[0].equals("pcode-all")) {
             exportPcodeAll(program, args[1]);
+        } else if (args[0].equals("pcode-all-ptrs")) {
+            exportPcodeAllWithPointers(program, args[1]);
         } else {
             throw new IllegalArgumentException("mode inconnu : " + args[0]);
         }
@@ -97,6 +99,87 @@ public class ExportFunctions extends GhidraScript {
         }
     }
 
+    /* Fonctions non reconnues par l'analyse automatique mais pointées par des données (tables de
+     * fonctions du CRT, etc.) : créées ici avant l'export. Les adresses qui ne se désassemblent pas
+     * sont ignorées et comptées. */
+    private void exportPcodeAllWithPointers(Program program, String out) throws Exception {
+        FunctionManager fm = program.getFunctionManager();
+        List<String> addrs = new java.util.ArrayList<>();
+        for (Function f : fm.getFunctions(true)) {
+            if (!f.isExternal()) {
+                addrs.add(f.getEntryPoint().toString());
+            }
+        }
+        ghidra.program.model.mem.Memory mem = program.getMemory();
+        java.util.TreeSet<Long> candidates = new java.util.TreeSet<>();
+        for (ghidra.program.model.mem.MemoryBlock block : mem.getBlocks()) {
+            if (!block.isInitialized() || block.isExecute()) {
+                continue;
+            }
+            for (Address a = block.getStart(); a != null && block.contains(a) && a.compareTo(block.getEnd()) < 0;
+                 a = a.add(4)) {
+                long v = mem.getInt(a) & 0xFFFFFFFFL;
+                Address target = program.getAddressFactory().getDefaultAddressSpace().getAddress(v);
+                ghidra.program.model.mem.MemoryBlock tb = mem.getBlock(target);
+                if (tb != null && tb.isExecute() && fm.getFunctionAt(target) == null) {
+                    candidates.add(v);
+                }
+            }
+        }
+        /* Cibles de branchement ou d'appel direct hors de la fonction courante, sans fonction connue. */
+        for (Function f : fm.getFunctions(true)) {
+            if (f.isExternal()) {
+                continue;
+            }
+            InstructionIterator bi = program.getListing().getInstructions(f.getBody(), true);
+            while (bi.hasNext()) {
+                Instruction ins = bi.next();
+                for (PcodeOp op : ins.getPcode()) {
+                    if (op.getOpcode() != PcodeOp.BRANCH && op.getOpcode() != PcodeOp.CBRANCH
+                            && op.getOpcode() != PcodeOp.CALL) {
+                        continue;
+                    }
+                    Varnode t = op.getInput(0);
+                    if (!t.getAddress().isMemoryAddress()) {
+                        continue;
+                    }
+                    Address target = t.getAddress();
+                    if (f.getBody().contains(target) || fm.getFunctionAt(target) != null) {
+                        continue;
+                    }
+                    ghidra.program.model.mem.MemoryBlock tb = mem.getBlock(target);
+                    if (tb != null && tb.isExecute()) {
+                        candidates.add(target.getOffset());
+                    }
+                }
+            }
+        }
+        int created = 0, rejected = 0;
+        List<Address> interior = new java.util.ArrayList<>();
+        for (long v : candidates) {
+            Address target = program.getAddressFactory().getDefaultAddressSpace().getAddress(v);
+            if (fm.getFunctionAt(target) != null) {
+                continue;
+            }
+            disassemble(target);
+            Function f = createFunction(target, null);
+            if (f == null) {
+                /* Point d'entrée à l'intérieur d'une fonction (ex. gestionnaire SEH) : exporté linéairement. */
+                if (program.getListing().getInstructionAt(target) != null) {
+                    interior.add(target);
+                } else {
+                    rejected++;
+                }
+                continue;
+            }
+            created++;
+            addrs.add(target.toString());
+        }
+        println("pointeurs de code : " + candidates.size() + ", fonctions créées : " + created
+                + ", entrées intérieures : " + interior.size() + ", rejetées : " + rejected);
+        exportPcodeList(program, addrs, out, interior);
+    }
+
     private void exportPcodeAll(Program program, String out) throws Exception {
         List<String> addrs = new java.util.ArrayList<>();
         for (Function f : program.getFunctionManager().getFunctions(true)) {
@@ -120,6 +203,12 @@ public class ExportFunctions extends GhidraScript {
     }
 
     private void exportPcodeList(Program program, List<String> addrs, String out) throws Exception {
+        exportPcodeList(program, addrs, out, new java.util.ArrayList<>());
+    }
+
+    /* Entrées intérieures : instructions linéaires depuis l'adresse, jusqu'au premier RET (inclus). */
+    private void exportPcodeList(Program program, List<String> addrs, String out, List<Address> interior)
+            throws Exception {
         FunctionManager fm = program.getFunctionManager();
         Listing listing = program.getListing();
         try (PrintWriter w = new PrintWriter(new FileWriter(out))) {
@@ -136,49 +225,71 @@ public class ExportFunctions extends GhidraScript {
                 }
                 firstFn = false;
                 w.println("{\"name\":" + q(f.getName()) + ",\"entry\":\"" + entry + "\",\"insns\":[");
-                InstructionIterator ii = listing.getInstructions(f.getBody(), true);
-                boolean firstIns = true;
-                while (ii.hasNext()) {
-                    Instruction ins = ii.next();
-                    if (!firstIns) {
-                        w.println(",");
-                    }
-                    firstIns = false;
-                    StringBuilder targets = new StringBuilder("[");
-                    boolean firstTarget = true;
-                    for (Reference r : program.getReferenceManager().getReferencesFrom(ins.getAddress())) {
-                        if (r.getReferenceType().isComputed() && r.getReferenceType().isJump()) {
-                            if (!firstTarget) {
-                                targets.append(",");
-                            }
-                            firstTarget = false;
-                            targets.append("\"").append(r.getToAddress()).append("\"");
-                        }
-                    }
-                    targets.append("]");
-                    w.print("{\"addr\":\"" + ins.getAddress() + "\",\"len\":" + ins.getLength()
-                            + ",\"text\":" + q(ins.toString()) + ",\"targets\":" + targets + ",\"pcode\":[");
-                    PcodeOp[] ops = ins.getPcode();
-                    for (int i = 0; i < ops.length; i++) {
-                        PcodeOp op = ops[i];
-                        if (i > 0) {
-                            w.print(",");
-                        }
-                        w.print("{\"op\":" + q(op.getMnemonic()) + ",\"out\":" + vn(op.getOutput()) + ",\"in\":[");
-                        Varnode[] in = op.getInputs();
-                        for (int j = 0; j < in.length; j++) {
-                            if (j > 0) {
-                                w.print(",");
-                            }
-                            w.print(vn(in[j]));
-                        }
-                        w.print("]}");
-                    }
-                    w.print("]}");
+                writeInstructions(program, w, listing.getInstructions(f.getBody(), true), false);
+                w.println("]}");
+            }
+            for (Address entry : interior) {
+                if (!firstFn) {
+                    w.println(",");
                 }
+                firstFn = false;
+                w.println("{\"name\":" + q("ENTRY_" + entry) + ",\"entry\":\"" + entry + "\",\"insns\":[");
+                writeInstructions(program, w, listing.getInstructions(entry, true), true);
                 w.println("]}");
             }
             w.println("]");
+        }
+    }
+
+    /* Écrit les instructions ; si stopAtReturn, s'arrête après la première instruction portant un RETURN. */
+    private void writeInstructions(Program program, PrintWriter w, InstructionIterator ii, boolean stopAtReturn) {
+        boolean firstIns = true;
+        int count = 0;
+        while (ii.hasNext()) {
+            Instruction ins = ii.next();
+            if (!firstIns) {
+                w.println(",");
+            }
+            firstIns = false;
+            StringBuilder targets = new StringBuilder("[");
+            boolean firstTarget = true;
+            for (Reference r : program.getReferenceManager().getReferencesFrom(ins.getAddress())) {
+                if (r.getReferenceType().isComputed() && r.getReferenceType().isJump()) {
+                    if (!firstTarget) {
+                        targets.append(",");
+                    }
+                    firstTarget = false;
+                    targets.append("\"").append(r.getToAddress()).append("\"");
+                }
+            }
+            targets.append("]");
+            w.print("{\"addr\":\"" + ins.getAddress() + "\",\"len\":" + ins.getLength()
+                    + ",\"text\":" + q(ins.toString()) + ",\"targets\":" + targets + ",\"pcode\":[");
+            PcodeOp[] ops = ins.getPcode();
+            boolean hasReturn = false;
+            for (int i = 0; i < ops.length; i++) {
+                PcodeOp op = ops[i];
+                if (i > 0) {
+                    w.print(",");
+                }
+                if (op.getOpcode() == PcodeOp.RETURN) {
+                    hasReturn = true;
+                }
+                w.print("{\"op\":" + q(op.getMnemonic()) + ",\"out\":" + vn(op.getOutput()) + ",\"in\":[");
+                Varnode[] in = op.getInputs();
+                for (int j = 0; j < in.length; j++) {
+                    if (j > 0) {
+                        w.print(",");
+                    }
+                    w.print(vn(in[j]));
+                }
+                w.print("]}");
+            }
+            w.print("]}");
+            count++;
+            if (stopAtReturn && (hasReturn || count >= 2000)) {
+                break;
+            }
         }
     }
 

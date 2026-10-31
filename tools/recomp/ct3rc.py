@@ -95,6 +95,7 @@ class FunctionTranslator:
         self.cur_addr = 0
         self.cur_targets = []
         self.cur_is_last = False
+        self.cur_op_index = 0
 
     def cname(self):
         return "sub_%08x" % self.entry
@@ -326,8 +327,9 @@ class FunctionTranslator:
         if m == "BRANCH":
             tgt = ins[0]
             if tgt["s"] == "const":
-                self.op_labels.add((self.cur_addr, tgt["o"]))
-                return "goto P_%08x_%d;" % (self.cur_addr, tgt["o"])
+                k = self.local_target(tgt)
+                self.op_labels.add((self.cur_addr, k))
+                return "goto P_%08x_%d;" % (self.cur_addr, k)
             t = tgt["o"]
             if t in self.insn_addrs:
                 self.ram_labels.add(t)
@@ -338,8 +340,9 @@ class FunctionTranslator:
             tgt = ins[0]
             cond = a(1)
             if tgt["s"] == "const":
-                self.op_labels.add((self.cur_addr, tgt["o"]))
-                return "if (%s) goto P_%08x_%d;" % (cond, self.cur_addr, tgt["o"])
+                k = self.local_target(tgt)
+                self.op_labels.add((self.cur_addr, k))
+                return "if (%s) goto P_%08x_%d;" % (cond, self.cur_addr, k)
             t = tgt["o"]
             if t in self.insn_addrs:
                 self.ram_labels.add(t)
@@ -347,6 +350,13 @@ class FunctionTranslator:
             self.callees.add(t)
             return "if (%s) { dispatch(c, 0x%x); return; }" % (cond, t)
         raise Unsupported(m)
+
+    def local_target(self, tgt):
+        """Cible d'un saut interne à l'instruction : décalage relatif à l'index de l'opération (entier signé 32 bits)."""
+        off = tgt["o"] & 0xFFFFFFFF
+        if off >= 0x80000000:
+            off -= 0x100000000
+        return self.cur_op_index + off
 
     def emit_float(self, m, out, ins):
         osz = out["z"] if out else 0
@@ -427,6 +437,7 @@ class FunctionTranslator:
             self.cur_is_last = n == last
             ops = []
             for idx, op in enumerate(ins["pcode"]):
+                self.cur_op_index = idx
                 try:
                     code = self.emit_op(op)
                 except Unsupported as e:
@@ -454,6 +465,42 @@ class FunctionTranslator:
         out.append("}")
         out.append("")
         return "\n".join(out)
+
+
+def interior_entries(functions):
+    """Points d'entrée atteints par branchement ou appel direct, qui ne sont pas le début d'une fonction
+    (ex. continuation d'un gestionnaire SEH). Le code est la suite linéaire des instructions de la
+    fonction qui les contient, jusqu'au premier RET (inclus)."""
+    entry_set = {int(f["entry"], 16) for f in functions}
+    owner = {}
+    for f in functions:
+        for idx, ins in enumerate(f["insns"]):
+            owner[int(ins["addr"], 16)] = (f, idx)
+    wanted = set()
+    for f in functions:
+        own = {int(i["addr"], 16) for i in f["insns"]}
+        for ins in f["insns"]:
+            for op in ins["pcode"]:
+                if op["op"] not in ("BRANCH", "CBRANCH", "CALL") or not op["in"]:
+                    continue
+                t = op["in"][0]
+                if t["s"] != "ram":
+                    continue
+                target = t["o"]
+                if target in own or target in entry_set or target not in owner:
+                    continue
+                wanted.add(target)
+    extra = []
+    for target in sorted(wanted):
+        f, idx = owner[target]
+        insns = []
+        for ins in f["insns"][idx:]:
+            insns.append(ins)
+            if any(p["op"] == "RETURN" for p in ins["pcode"]):
+                break
+        extra.append({"name": "ENTRY_%08x" % target, "entry": "0x%08x" % target,
+                      "insns": insns, "thunk": False})
+    return extra
 
 
 def is_hex_addr(text):
@@ -523,12 +570,15 @@ def main():
         functions = json.load(f)
 
     os.makedirs(args.outdir, exist_ok=True)
+    extra = interior_entries(functions)
+    functions = functions + extra
     stats = {"unsupported": Counter(), "unsupported_sites": [], "unsupported_fn_entries": set()}
     entries = []
     nins = nops = 0
     translated = []
     graph = {}
     indirect = {}
+    print("points d'entrée intérieurs ajoutés : %d" % len(extra))
     for fn in functions:
         nins += len(fn["insns"])
         nops += sum(len(i["pcode"]) for i in fn["insns"])

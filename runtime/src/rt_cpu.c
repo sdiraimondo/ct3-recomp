@@ -3,7 +3,7 @@
 /* Profil processeur annoncé par CPUID : AMD, famille 6 (Athlon XP), avec MMX, SSE, SSE2 et 3DNow!.
  * Les extensions annoncées doivent correspondre à celles que le runtime implémente. */
 
-#define RT_CPUID_SCRATCH (RT_SCRATCH_BASE + 0x3E0000u)
+#define RT_CPUID_SCRATCH (RT_SCRATCH_BASE + 0x00080000u)
 
 #define CPUID1_EDX_FPU (1u << 0)
 #define CPUID1_EDX_TSC (1u << 4)

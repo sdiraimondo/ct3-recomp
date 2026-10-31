@@ -30,7 +30,7 @@ if [ "${REUSE_EXPORT:-0}" != "1" ] || [ ! -s "$OUT/pcode_all.json" ]; then
   "$GHIDRA_DIR/support/analyzeHeadless" "$OUT/ghidra" ct3 \
     -import "$CT3_EXE" \
     -scriptPath "$ROOT/tools/ghidra" \
-    -postScript ExportFunctions.java pcode-all "$OUT/pcode_all.json" \
+    -postScript ExportFunctions.java pcode-all-ptrs "$OUT/pcode_all.json" \
     -deleteProject > "$OUT/export.log" 2>&1
 fi
 
@@ -45,6 +45,10 @@ ls "$OUT"/gen/gen_funcs_*.c "$OUT/gen/gen_dispatch.c" | xargs -P "$JOBS" -I{} sh
 STATUS=$?
 set -e
 OBJS=$(ls "$OUT"/obj/*.o 2>/dev/null | wc -l)
+if [ $STATUS -eq 0 ]; then
+  rm -f "$OUT/libct3gen.a"
+  ar rcs "$OUT/libct3gen.a" "$OUT"/obj/*.o
+fi
 echo "[g3] objets : $OBJS, erreurs de compilation : $([ $STATUS -eq 0 ] && echo 0 || echo "voir $OUT/compile.log")"
 cat "$OUT/gen/rapport.md"
 exit $STATUS

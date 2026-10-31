@@ -1,10 +1,14 @@
 #include "rt.h"
+#include "rt_pe.h"
+#include "rt_proc.h"
 
+#include <ctype.h>
+#include <strings.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-
-#include "rt_pe.h"
+#include <time.h>
+#include <unistd.h>
 
 static rt_pe_image *rt_image;
 
@@ -12,21 +16,384 @@ static rt_pe_image *rt_image;
 unsigned rt_shim_calls;
 uint32_t rt_shim_last_arg0;
 
-typedef uint32_t (*rt_shim_fn)(const uint32_t *args);
+/* Trace des imports : 1 = écrit chaque appel sur stderr. */
+int rt_trace_imports = 1;
 
-static uint32_t shim_CloseHandle(const uint32_t *args)
+typedef uint32_t (*rt_shim_fn)(cpu_t *c, const uint32_t *args);
+
+static uint32_t now_ms(void)
 {
-    rt_shim_calls++;
-    rt_shim_last_arg0 = args[0];
-    return 1; /* TRUE */
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return (uint32_t)(ts.tv_sec * 1000u + ts.tv_nsec / 1000000u);
 }
+
+static uint32_t guest_str_copy(const char *s)
+{
+    uint32_t n = (uint32_t)strlen(s) + 1;
+    uint32_t p = rt_scratch_alloc(n);
+    memcpy(rt_mem_base + p, s, n);
+    return p;
+}
+
+static uint32_t sh_CloseHandle(cpu_t *c, const uint32_t *a) { (void)c; rt_shim_calls++; rt_shim_last_arg0 = a[0]; return 1; }
+static uint32_t sh_GetVersion(cpu_t *c, const uint32_t *a) { (void)c; (void)a; return 0x0A280105u; /* NT 5.1, build 2600 */ }
+static uint32_t sh_GetCommandLineA(cpu_t *c, const uint32_t *a) { (void)c; (void)a; static uint32_t p; if (!p) p = guest_str_copy("CT3.exe"); return p; }
+static uint32_t sh_GetStartupInfoA(cpu_t *c, const uint32_t *a)
+{
+    (void)c;
+    memset(rt_mem_base + a[0], 0, 68);
+    uint32_t cb = 68;
+    memcpy(rt_mem_base + a[0], &cb, 4);
+    return 0;
+}
+/* STD_INPUT_HANDLE = -10, STD_OUTPUT = -11, STD_ERROR = -12 : pseudo-handles 0x10, 0x11, 0x12. */
+static uint32_t sh_GetStdHandle(cpu_t *c, const uint32_t *a) { (void)c; return 0x10u + (0u - a[0] - 10u); }
+static uint32_t sh_SetHandleCount(cpu_t *c, const uint32_t *a) { (void)c; return a[0]; }
+static uint32_t sh_GetFileType(cpu_t *c, const uint32_t *a) { (void)c; return a[0] >= 0x10 && a[0] <= 0x12 ? 2 : 0; }
+static uint32_t sh_GetProcessHeap(cpu_t *c, const uint32_t *a) { (void)c; (void)a; return 0x30000000u; }
+static uint32_t sh_HeapCreate(cpu_t *c, const uint32_t *a) { (void)c; (void)a; return 0x30000001u; }
+static uint32_t sh_HeapAlloc(cpu_t *c, const uint32_t *a) { (void)c; return rt_heap_alloc(a[2], (a[1] & 0x8) != 0); }
+static uint32_t sh_HeapFree(cpu_t *c, const uint32_t *a) { (void)c; (void)a; return 1; }
+static uint32_t sh_HeapSize(cpu_t *c, const uint32_t *a) { (void)c; return rt_heap_size(a[2]); }
+static uint32_t sh_HeapReAlloc(cpu_t *c, const uint32_t *a) { (void)c; return rt_heap_realloc(a[2], a[3]); }
+static uint32_t sh_GetEnvironmentStringsW(cpu_t *c, const uint32_t *a) { (void)c; (void)a; static uint32_t p; if (!p) { p = rt_scratch_alloc(4); memset(rt_mem_base + p, 0, 4); } return p; }
+static uint32_t sh_FreeEnvironmentStringsW(cpu_t *c, const uint32_t *a) { (void)c; (void)a; return 1; }
+static uint32_t sh_GetACP(cpu_t *c, const uint32_t *a) { (void)c; (void)a; return 1252; }
+static uint32_t sh_GetOEMCP(cpu_t *c, const uint32_t *a) { (void)c; (void)a; return 437; }
+static uint32_t sh_GetCPInfo(cpu_t *c, const uint32_t *a)
+{
+    (void)c;
+    memset(rt_mem_base + a[1], 0, 18);
+    uint32_t one = 1;
+    memcpy(rt_mem_base + a[1], &one, 4); /* MaxCharSize */
+    return 1;
+}
+static uint32_t sh_IsValidCodePage(cpu_t *c, const uint32_t *a) { (void)c; (void)a; return 1; }
+static uint32_t sh_InitializeCriticalSection(cpu_t *c, const uint32_t *a) { (void)c; memset(rt_mem_base + a[0], 0, 24); return 0; }
+static uint32_t sh_NoopCS(cpu_t *c, const uint32_t *a) { (void)c; (void)a; return 0; }
+static uint32_t sh_TlsAlloc(cpu_t *c, const uint32_t *a) { (void)c; (void)a; static uint32_t next; return next++; }
+static uint32_t sh_TlsGetValue(cpu_t *c, const uint32_t *a) { (void)c; uint32_t v = 0; memcpy(&v, rt_mem_base + RT_TLS_BASE + 4 * a[0], 4); return v; }
+static uint32_t sh_TlsSetValue(cpu_t *c, const uint32_t *a) { (void)c; memcpy(rt_mem_base + RT_TLS_BASE + 4 * a[0], &a[1], 4); return 1; }
+static uint32_t sh_TlsFree(cpu_t *c, const uint32_t *a) { (void)c; (void)a; return 1; }
+static uint32_t sh_SetUnhandledExceptionFilter(cpu_t *c, const uint32_t *a) { (void)c; (void)a; return 0; }
+static uint32_t sh_GetCurrentThreadId(cpu_t *c, const uint32_t *a) { (void)c; (void)a; return 1; }
+static uint32_t sh_GetCurrentProcessId(cpu_t *c, const uint32_t *a) { (void)c; (void)a; return 1234; }
+static uint32_t sh_GetTickCount(cpu_t *c, const uint32_t *a) { (void)c; (void)a; return now_ms(); }
+static uint32_t sh_timeGetTime(cpu_t *c, const uint32_t *a) { (void)c; (void)a; return now_ms(); }
+static uint32_t sh_GetLastError(cpu_t *c, const uint32_t *a) { (void)c; (void)a; return 0; }
+static uint32_t sh_SetLastError(cpu_t *c, const uint32_t *a) { (void)c; (void)a; return 0; }
+static uint32_t sh_VirtualAlloc(cpu_t *c, const uint32_t *a) { (void)c; return rt_heap_alloc(a[1], 1); }
+static uint32_t sh_VirtualFree(cpu_t *c, const uint32_t *a) { (void)c; (void)a; return 1; }
+static uint32_t sh_InitializeCriticalSectionAndSpinCount(cpu_t *c, const uint32_t *a) { (void)c; memset(rt_mem_base + a[0], 0, 24); return 1; }
+/* Fiber local storage : un seul fil, valeurs stockées par index. */
+static uint32_t fls_values[256];
+static uint32_t fls_next;
+static uint32_t sh_FlsAlloc(cpu_t *c, const uint32_t *a) { (void)c; (void)a; return fls_next < 256 ? fls_next++ : 0xFFFFFFFFu; }
+static uint32_t sh_FlsGetValue(cpu_t *c, const uint32_t *a) { (void)c; return a[0] < 256 ? fls_values[a[0]] : 0; }
+static uint32_t sh_FlsSetValue(cpu_t *c, const uint32_t *a) { (void)c; if (a[0] < 256) fls_values[a[0]] = a[1]; return 1; }
+static uint32_t sh_FlsFree(cpu_t *c, const uint32_t *a) { (void)c; (void)a; return 1; }
+/* Conversions : pages de codes monooctet (1252, OEM, ACP) traitées comme Latin-1 ; hors plage -> '?'. */
+static uint32_t sh_MultiByteToWideChar(cpu_t *c, const uint32_t *a)
+{
+    (void)c;
+    int32_t srclen = (int32_t)a[3];
+    uint32_t n = srclen == -1 ? (uint32_t)strlen((const char *)(rt_mem_base + a[2])) + 1 : (uint32_t)srclen;
+    if (a[4] == 0) return n;
+    if (a[5] < n) return 0;
+    for (uint32_t i = 0; i < n; i++) {
+        uint16_t w = rt_mem_base[a[2] + i];
+        memcpy(rt_mem_base + a[4] + 2 * i, &w, 2);
+    }
+    return n;
+}
+static uint32_t sh_WideCharToMultiByte(cpu_t *c, const uint32_t *a)
+{
+    (void)c;
+    int32_t srclen = (int32_t)a[3];
+    uint32_t n = 0;
+    if (srclen == -1) {
+        while (1) {
+            uint16_t w;
+            memcpy(&w, rt_mem_base + a[2] + 2 * n, 2);
+            n++;
+            if (w == 0) break;
+        }
+    } else {
+        n = (uint32_t)srclen;
+    }
+    if (a[4] == 0) return n;
+    if (a[5] < n) return 0;
+    for (uint32_t i = 0; i < n; i++) {
+        uint16_t w;
+        memcpy(&w, rt_mem_base + a[2] + 2 * i, 2);
+        rt_mem_base[a[4] + i] = w <= 0xFF ? (uint8_t)w : '?';
+    }
+    return n;
+}
+/* Types de caractères CT_CTYPE1 (C1_*), sur ASCII. Au-delà de 127 : 0 (locale C). */
+static uint16_t ctype1(uint32_t ch)
+{
+    uint16_t t = 0;
+    if (ch > 127) return 0;
+    if (isupper((int)ch)) t |= 0x001 | 0x100;
+    if (islower((int)ch)) t |= 0x002 | 0x100;
+    if (isdigit((int)ch)) t |= 0x004;
+    if (isspace((int)ch)) t |= 0x008;
+    if (ispunct((int)ch)) t |= 0x010;
+    if (iscntrl((int)ch)) t |= 0x020;
+    if (ch == ' ' || ch == '\t') t |= 0x040;
+    if (isxdigit((int)ch)) t |= 0x080;
+    if (isalpha((int)ch)) t |= 0x100;
+    return t;
+}
+static uint32_t get_string_type(const uint32_t *a, int wide)
+{
+    if (a[0] != 1) rt_fatal("GetStringType : type d'information non implémenté");
+    uint32_t n = a[2];
+    uint32_t out = a[3];
+    for (uint32_t i = 0; i < n; i++) {
+        uint32_t ch = wide ? (uint32_t)(uint16_t)guest_ld(NULL, a[1] + 2 * i, 2) : rt_mem_base[a[1] + i];
+        uint16_t t = ctype1(ch);
+        memcpy(rt_mem_base + out + 2 * i, &t, 2);
+    }
+    return 1;
+}
+static uint32_t sh_GetStringTypeW(cpu_t *c, const uint32_t *a) { (void)c; return get_string_type(a, 1); }
+static uint32_t sh_GetStringTypeA(cpu_t *c, const uint32_t *a) { (void)c; return get_string_type(a, 0); }
+/* LCMapString : LCMAP_LOWERCASE (0x100) et LCMAP_UPPERCASE (0x200) sur ASCII ; autres indicateurs refusés. */
+static uint32_t lcmap(const uint32_t *a, int wide)
+{
+    uint32_t flags = a[1], n = a[3];
+    if (flags != 0x100 && flags != 0x200) rt_fatal("LCMapString : indicateurs non implémentés");
+    if (n == (uint32_t)-1) rt_fatal("LCMapString : longueur -1 non implémentée");
+    if (a[5] == 0) return n;
+    for (uint32_t i = 0; i < n; i++) {
+        uint32_t ch = wide ? (uint32_t)(uint16_t)guest_ld(NULL, a[2] + 2 * i, 2) : rt_mem_base[a[2] + i];
+        if (ch < 128) ch = flags == 0x100 ? (uint32_t)tolower((int)ch) : (uint32_t)toupper((int)ch);
+        if (wide) {
+            uint16_t w = (uint16_t)ch;
+            memcpy(rt_mem_base + a[4] + 2 * i, &w, 2);
+        } else {
+            rt_mem_base[a[4] + i] = (uint8_t)ch;
+        }
+    }
+    return n;
+}
+static uint32_t sh_LCMapStringW(cpu_t *c, const uint32_t *a) { (void)c; return lcmap(a, 1); }
+static uint32_t sh_LCMapStringA(cpu_t *c, const uint32_t *a) { (void)c; return lcmap(a, 0); }
+/* Chemin absolu de l'exécutable, fourni par le lanceur (rt_set_exe_path). */
+static char exe_path[1024] = "CT3.exe";
+
+void rt_set_exe_path(const char *path)
+{
+    snprintf(exe_path, sizeof exe_path, "%s", path);
+}
+
+static uint32_t sh_GetModuleFileNameA(cpu_t *c, const uint32_t *a)
+{
+    (void)c;
+    uint32_t len = (uint32_t)strlen(exe_path);
+    if (a[2] == 0) return 0;
+    uint32_t n = len < a[2] - 1 ? len : a[2] - 1;
+    memcpy(rt_mem_base + a[1], exe_path, n);
+    rt_mem_base[a[1] + n] = 0;
+    return n;
+}
+/* PF_* de IsProcessorFeaturePresent : cohérent avec le profil CPUID (rt_cpu.c). */
+static uint32_t sh_IsProcessorFeaturePresent(cpu_t *c, const uint32_t *a)
+{
+    (void)c;
+    switch (a[0]) {
+    case 3:  /* MMX */
+    case 6:  /* SSE */
+    case 7:  /* 3DNow! */
+    case 8:  /* RDTSC */
+    case 10: /* SSE2 */
+        return 1;
+    default:
+        return 0;
+    }
+}
+/* Temps : horloge de l'hôte. FILETIME = 100 ns depuis le 1er janvier 1601. */
+static void host_now(struct timespec *ts) { clock_gettime(CLOCK_REALTIME, ts); }
+
+static uint32_t sh_GetSystemTimeAsFileTime(cpu_t *c, const uint32_t *a)
+{
+    (void)c;
+    struct timespec ts;
+    host_now(&ts);
+    uint64_t ft = ((uint64_t)ts.tv_sec + 11644473600ULL) * 10000000ULL + (uint64_t)ts.tv_nsec / 100;
+    uint32_t lo = (uint32_t)ft, hi = (uint32_t)(ft >> 32);
+    memcpy(rt_mem_base + a[0], &lo, 4);
+    memcpy(rt_mem_base + a[0] + 4, &hi, 4);
+    return 0;
+}
+
+/* SYSTEMTIME : wYear, wMonth, wDayOfWeek, wDay, wHour, wMinute, wSecond, wMilliseconds (16 octets). */
+static void fill_systemtime(uint32_t dst, const struct tm *t, unsigned ms)
+{
+    uint16_t v[8] = {(uint16_t)(t->tm_year + 1900), (uint16_t)(t->tm_mon + 1), (uint16_t)t->tm_wday,
+                     (uint16_t)t->tm_mday, (uint16_t)t->tm_hour, (uint16_t)t->tm_min, (uint16_t)t->tm_sec,
+                     (uint16_t)ms};
+    memcpy(rt_mem_base + dst, v, 16);
+}
+
+static uint32_t sh_GetSystemTime(cpu_t *c, const uint32_t *a)
+{
+    (void)c;
+    struct timespec ts;
+    host_now(&ts);
+    struct tm t;
+    gmtime_r(&ts.tv_sec, &t);
+    fill_systemtime(a[0], &t, (unsigned)(ts.tv_nsec / 1000000));
+    return 0;
+}
+
+static uint32_t sh_GetLocalTime(cpu_t *c, const uint32_t *a)
+{
+    (void)c;
+    struct timespec ts;
+    host_now(&ts);
+    struct tm t;
+    localtime_r(&ts.tv_sec, &t);
+    fill_systemtime(a[0], &t, (unsigned)(ts.tv_nsec / 1000000));
+    return 0;
+}
+
+/* Compteur haute résolution : nanosecondes monotones, fréquence 1 GHz. */
+static uint32_t sh_QueryPerformanceCounter(cpu_t *c, const uint32_t *a)
+{
+    (void)c;
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    uint64_t v = (uint64_t)ts.tv_sec * 1000000000ULL + (uint64_t)ts.tv_nsec;
+    memcpy(rt_mem_base + a[0], &v, 8);
+    return 1;
+}
+
+static uint32_t sh_QueryPerformanceFrequency(cpu_t *c, const uint32_t *a)
+{
+    (void)c;
+    uint64_t v = 1000000000ULL;
+    memcpy(rt_mem_base + a[0], &v, 8);
+    return 1;
+}
+
+/* Sleep : attente réelle de l'hôte (la cadence du jeu dépend de ce délai, voir D-017). */
+static uint32_t sh_Sleep(cpu_t *c, const uint32_t *a)
+{
+    (void)c;
+    struct timespec ts = {(time_t)(a[0] / 1000), (long)(a[0] % 1000) * 1000000L};
+    nanosleep(&ts, NULL);
+    return 0;
+}
+
+/* Opérations atomiques : un seul fil d'exécution pour l'instant, donc opérations ordinaires. */
+static uint32_t atomic_get(uint32_t p) { uint32_t v; memcpy(&v, rt_mem_base + p, 4); return v; }
+static void atomic_set(uint32_t p, uint32_t v) { memcpy(rt_mem_base + p, &v, 4); }
+static uint32_t sh_InterlockedIncrement(cpu_t *c, const uint32_t *a) { (void)c; uint32_t v = atomic_get(a[0]) + 1; atomic_set(a[0], v); return v; }
+static uint32_t sh_InterlockedDecrement(cpu_t *c, const uint32_t *a) { (void)c; uint32_t v = atomic_get(a[0]) - 1; atomic_set(a[0], v); return v; }
+static uint32_t sh_InterlockedExchange(cpu_t *c, const uint32_t *a) { (void)c; uint32_t old = atomic_get(a[0]); atomic_set(a[0], a[1]); return old; }
+static uint32_t sh_InterlockedCompareExchange(cpu_t *c, const uint32_t *a)
+{
+    (void)c;
+    uint32_t old = atomic_get(a[0]);
+    if (old == a[2]) atomic_set(a[0], a[1]);
+    return old;
+}
+static uint32_t sh_GetCurrentThread(cpu_t *c, const uint32_t *a) { (void)c; (void)a; return 0xFFFFFFFEu; }
+static uint32_t sh_InitCommonControls(cpu_t *c, const uint32_t *a) { (void)c; (void)a; return 1; }
+/* OSVERSIONINFOA : dwOSVersionInfoSize, dwMajorVersion, dwMinorVersion, dwBuildNumber, dwPlatformId, szCSDVersion. */
+static uint32_t sh_GetVersionExA(cpu_t *c, const uint32_t *a)
+{
+    (void)c;
+    uint32_t v[5] = {0, 5, 1, 2600, 2};
+    memcpy(&v[0], rt_mem_base + a[0], 4);
+    memcpy(rt_mem_base + a[0], v, 4 * 5);
+    memset(rt_mem_base + a[0] + 20, 0, 128);
+    return 1;
+}
+static uint32_t sh_ExitProcess(cpu_t *c, const uint32_t *a)
+{
+    (void)c;
+    fprintf(stderr, "rt: ExitProcess(%u)\n", a[0]);
+    exit((int)a[0]);
+}
+
+static uint32_t sh_GetModuleHandleA_real(cpu_t *c, const uint32_t *a);
+static uint32_t sh_GetProcAddress(cpu_t *c, const uint32_t *a);
 
 static const struct {
     const char *name;
     unsigned nargs;
     rt_shim_fn fn;
 } rt_shims[] = {
-    {"KERNEL32.dll::CloseHandle", 1, shim_CloseHandle},
+    {"KERNEL32.dll::CloseHandle", 1, sh_CloseHandle},
+    {"KERNEL32.dll::GetVersion", 0, sh_GetVersion},
+    {"KERNEL32.dll::InterlockedIncrement", 1, sh_InterlockedIncrement},
+    {"KERNEL32.dll::InterlockedDecrement", 1, sh_InterlockedDecrement},
+    {"KERNEL32.dll::InterlockedExchange", 2, sh_InterlockedExchange},
+    {"KERNEL32.dll::InterlockedCompareExchange", 3, sh_InterlockedCompareExchange},
+    {"KERNEL32.dll::GetCurrentThread", 0, sh_GetCurrentThread},
+    {"KERNEL32.dll::GetSystemTimeAsFileTime", 1, sh_GetSystemTimeAsFileTime},
+    {"KERNEL32.dll::GetSystemTime", 1, sh_GetSystemTime},
+    {"KERNEL32.dll::GetLocalTime", 1, sh_GetLocalTime},
+    {"KERNEL32.dll::QueryPerformanceCounter", 1, sh_QueryPerformanceCounter},
+    {"KERNEL32.dll::QueryPerformanceFrequency", 1, sh_QueryPerformanceFrequency},
+    {"KERNEL32.dll::Sleep", 1, sh_Sleep},
+    {"KERNEL32.dll::IsProcessorFeaturePresent", 1, sh_IsProcessorFeaturePresent},
+    {"KERNEL32.dll::GetModuleFileNameA", 3, sh_GetModuleFileNameA},
+    {"KERNEL32.dll::LCMapStringW", 6, sh_LCMapStringW},
+    {"KERNEL32.dll::LCMapStringA", 6, sh_LCMapStringA},
+    {"KERNEL32.dll::GetStringTypeW", 4, sh_GetStringTypeW},
+    {"KERNEL32.dll::GetStringTypeA", 5, sh_GetStringTypeA},
+    {"KERNEL32.dll::MultiByteToWideChar", 6, sh_MultiByteToWideChar},
+    {"KERNEL32.dll::WideCharToMultiByte", 8, sh_WideCharToMultiByte},
+    {"KERNEL32.dll::GetVersionExA", 1, sh_GetVersionExA},
+    {"KERNEL32.dll::GetModuleHandleA", 1, sh_GetModuleHandleA_real},
+    {"KERNEL32.dll::GetProcAddress", 2, sh_GetProcAddress},
+    {"KERNEL32.dll::GetCommandLineA", 0, sh_GetCommandLineA},
+    {"KERNEL32.dll::GetStartupInfoA", 1, sh_GetStartupInfoA},
+    {"KERNEL32.dll::GetStdHandle", 1, sh_GetStdHandle},
+    {"KERNEL32.dll::SetHandleCount", 1, sh_SetHandleCount},
+    {"KERNEL32.dll::GetFileType", 1, sh_GetFileType},
+    {"KERNEL32.dll::GetProcessHeap", 0, sh_GetProcessHeap},
+    {"KERNEL32.dll::HeapCreate", 3, sh_HeapCreate},
+    {"KERNEL32.dll::HeapAlloc", 3, sh_HeapAlloc},
+    {"KERNEL32.dll::HeapFree", 3, sh_HeapFree},
+    {"KERNEL32.dll::HeapSize", 3, sh_HeapSize},
+    {"KERNEL32.dll::HeapReAlloc", 4, sh_HeapReAlloc},
+    {"KERNEL32.dll::GetEnvironmentStringsW", 0, sh_GetEnvironmentStringsW},
+    {"KERNEL32.dll::FreeEnvironmentStringsW", 1, sh_FreeEnvironmentStringsW},
+    {"KERNEL32.dll::GetACP", 0, sh_GetACP},
+    {"KERNEL32.dll::GetOEMCP", 0, sh_GetOEMCP},
+    {"KERNEL32.dll::GetCPInfo", 2, sh_GetCPInfo},
+    {"KERNEL32.dll::IsValidCodePage", 1, sh_IsValidCodePage},
+    {"KERNEL32.dll::InitializeCriticalSection", 1, sh_InitializeCriticalSection},
+    {"KERNEL32.dll::InitializeCriticalSectionAndSpinCount", 2, sh_InitializeCriticalSectionAndSpinCount},
+    {"KERNEL32.dll::EnterCriticalSection", 1, sh_NoopCS},
+    {"KERNEL32.dll::LeaveCriticalSection", 1, sh_NoopCS},
+    {"KERNEL32.dll::DeleteCriticalSection", 1, sh_NoopCS},
+    {"KERNEL32.dll::TlsAlloc", 0, sh_TlsAlloc},
+    {"KERNEL32.dll::TlsGetValue", 1, sh_TlsGetValue},
+    {"KERNEL32.dll::TlsSetValue", 2, sh_TlsSetValue},
+    {"KERNEL32.dll::TlsFree", 1, sh_TlsFree},
+    {"KERNEL32.dll::FlsAlloc", 1, sh_FlsAlloc},
+    {"KERNEL32.dll::FlsGetValue", 1, sh_FlsGetValue},
+    {"KERNEL32.dll::FlsSetValue", 2, sh_FlsSetValue},
+    {"KERNEL32.dll::FlsFree", 1, sh_FlsFree},
+    {"KERNEL32.dll::SetUnhandledExceptionFilter", 1, sh_SetUnhandledExceptionFilter},
+    {"KERNEL32.dll::GetCurrentThreadId", 0, sh_GetCurrentThreadId},
+    {"KERNEL32.dll::GetCurrentProcessId", 0, sh_GetCurrentProcessId},
+    {"KERNEL32.dll::GetTickCount", 0, sh_GetTickCount},
+    {"KERNEL32.dll::GetLastError", 0, sh_GetLastError},
+    {"KERNEL32.dll::SetLastError", 1, sh_SetLastError},
+    {"KERNEL32.dll::VirtualAlloc", 4, sh_VirtualAlloc},
+    {"KERNEL32.dll::VirtualFree", 3, sh_VirtualFree},
+    {"KERNEL32.dll::ExitProcess", 1, sh_ExitProcess},
+    {"WINMM.dll::timeGetTime", 0, sh_timeGetTime},
+    {"COMCTL32.dll::#17", 0, sh_InitCommonControls},
 };
 
 void rt_set_image(rt_pe_image *img)
@@ -34,47 +401,143 @@ void rt_set_image(rt_pe_image *img)
     rt_image = img;
 }
 
-void rt_shim_call(cpu_t *c, uint32_t addr)
+/* Talons dynamiques : fonctions obtenues par GetProcAddress, numérotées après les imports statiques. */
+#define RT_DYN_MAX 256
+static char *dyn_names[RT_DYN_MAX];
+static unsigned dyn_count;
+
+/* Modules : handles pseudo-fixes par nom de DLL (GetModuleHandleA). */
+#define RT_MOD_BASE 0x60000000u
+static char *mod_names[64];
+static unsigned mod_count;
+
+static const char *import_name(uint32_t addr)
 {
     uint32_t idx = (addr - RT_STUB_BASE) / 16;
-    if (!rt_image || idx >= rt_image->import_count) {
-        fprintf(stderr, "rt: talon inconnu 0x%08x\n", addr);
-        abort();
+    uint32_t n = rt_image ? rt_image->import_count : 0;
+    if (idx < n) {
+        return rt_image->import_names[idx];
     }
-    const char *name = rt_image->import_names[idx];
+    if (idx - n < dyn_count) {
+        return dyn_names[idx - n];
+    }
+    return NULL;
+}
+
+static uint32_t module_handle(const char *dll)
+{
+    for (unsigned i = 0; i < mod_count; i++) {
+        if (strcmp(mod_names[i], dll) == 0) return RT_MOD_BASE + 16 * i;
+    }
+    if (mod_count >= 64) rt_fatal("trop de modules");
+    mod_names[mod_count] = strdup(dll);
+    return RT_MOD_BASE + 16 * mod_count++;
+}
+
+static const char *module_name(uint32_t h)
+{
+    if (h < RT_MOD_BASE || (h - RT_MOD_BASE) / 16 >= mod_count) return NULL;
+    return mod_names[(h - RT_MOD_BASE) / 16];
+}
+
+static uint32_t dyn_stub(const char *full)
+{
+    for (unsigned i = 0; i < dyn_count; i++) {
+        if (strcmp(dyn_names[i], full) == 0) return RT_STUB_BASE + 16 * (rt_image->import_count + i);
+    }
+    if (dyn_count >= RT_DYN_MAX) rt_fatal("trop de fonctions dynamiques");
+    dyn_names[dyn_count] = strdup(full);
+    return RT_STUB_BASE + 16 * (rt_image->import_count + dyn_count++);
+}
+
+static uint32_t sh_GetModuleHandleA_real(cpu_t *c, const uint32_t *a)
+{
+    if (a[0] == 0) return RT_IMAGE_BASE;
+    char name[256];
+    unsigned i = 0;
+    for (; i < sizeof name - 1; i++) {
+        char ch = (char)rt_mem_base[a[0] + i];
+        if (ch == 0) break;
+        name[i] = (char)(ch >= 'A' && ch <= 'Z' ? ch + 32 : ch);
+    }
+    name[i] = 0;
+    (void)c;
+    return module_handle(name);
+}
+
+static uint32_t sh_GetProcAddress(cpu_t *c, const uint32_t *a)
+{
+    (void)c;
+    const char *dll = module_name(a[0]);
+    if (!dll) return 0;
+    char full[320];
+    snprintf(full, sizeof full, "%s::%s", dll, (const char *)(rt_mem_base + a[1]));
+    /* Les noms de DLL stockés sont en minuscules : on reprend la casse des imports connus. */
+    return dyn_stub(full);
+}
+
+/* Compare « DLL::fonction » : DLL sans tenir compte de la casse, fonction exacte. */
+static int same_import(const char *a, const char *b)
+{
+    const char *sa = strstr(a, "::"), *sb = strstr(b, "::");
+    if (!sa || !sb) return strcmp(a, b) == 0;
+    /* Suffixe « .dll » optionnel dans le nom de module. */
+    size_t la = (size_t)(sa - a), lb = (size_t)(sb - b);
+    if (la > 4 && strncasecmp(sa - 4, ".dll", 4) == 0) la -= 4;
+    if (lb > 4 && strncasecmp(sb - 4, ".dll", 4) == 0) lb -= 4;
+    if (la != lb || strncasecmp(a, b, la) != 0) return 0;
+    return strcmp(sa, sb) == 0;
+}
+
+void rt_shim_call(cpu_t *c, uint32_t addr)
+{
+    const char *name = import_name(addr);
+    if (!name) {
+        fprintf(stderr, "rt: talon inconnu 0x%08x\n", addr);
+        exit(3);
+    }
     for (unsigned i = 0; i < sizeof rt_shims / sizeof rt_shims[0]; i++) {
-        if (strcmp(rt_shims[i].name, name) == 0) {
+        if (same_import(rt_shims[i].name, name)) {
             uint32_t esp = (uint32_t)cpu_rd(c, 16, 4);
             uint32_t args[8] = {0};
             for (unsigned k = 0; k < rt_shims[i].nargs; k++) {
                 args[k] = (uint32_t)guest_ld(c, esp + 4 + 4 * k, 4);
             }
-            uint32_t ret = rt_shims[i].fn(args);
+            if (rt_trace_imports) {
+                fprintf(stderr, "[import] (retour 0x%08x) %s", (uint32_t)guest_ld(c, esp, 4), name);
+                for (unsigned k = 0; k < rt_shims[i].nargs; k++) {
+                    fprintf(stderr, "%s0x%x", k ? ", " : "(", args[k]);
+                }
+                fprintf(stderr, rt_shims[i].nargs ? ")\n" : "()\n");
+            }
+            uint32_t ret = rt_shims[i].fn(c, args);
             cpu_wr(c, 0, 4, ret);
             /* stdcall : l'appelé dépile l'adresse de retour et les arguments. */
             cpu_wr(c, 16, 4, esp + 4 + 4 * rt_shims[i].nargs);
             return;
         }
     }
-    fprintf(stderr, "rt: import non implémenté : %s\n", name);
-    abort();
+    fprintf(stderr, "rt: import non implémenté : %s (appel à 0x%08x)\n", name, addr);
+    exit(3);
 }
 
 void rt_unresolved(cpu_t *c, uint32_t addr)
 {
-    (void)c;
-    fprintf(stderr, "rt: appel vers une adresse non traduite 0x%08x\n", addr);
-    abort();
+    /* Le sommet de pile invité contient l'adresse de retour du dernier appel traduit. */
+    uint32_t esp = (uint32_t)cpu_rd(c, 16, 4);
+    uint32_t ret = (uint32_t)guest_ld(c, esp, 4);
+    fprintf(stderr, "rt: appel vers une adresse non traduite 0x%08x (retour invité 0x%08x)\n", addr, ret);
+    exit(3);
 }
 
 void rt_unsupported(const char *what, uint32_t addr)
 {
     fprintf(stderr, "rt: opération p-code non prise en charge (%s) à 0x%08x\n", what, addr);
-    abort();
+    exit(3);
 }
 
 void rt_int3(uint32_t addr)
 {
     fprintf(stderr, "rt: point d'arrêt INT3 atteint à 0x%08x\n", addr);
-    abort();
+    exit(3);
 }

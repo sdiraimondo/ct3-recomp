@@ -9,7 +9,7 @@ uint8_t *rt_mem_base = NULL;
 void rt_fatal(const char *msg)
 {
     fprintf(stderr, "rt: %s\n", msg);
-    abort();
+    exit(3);
 }
 
 int rt_mem_init(void)

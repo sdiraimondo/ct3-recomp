@@ -294,6 +294,17 @@ void rt_win_init(void)
     ensure_sdl();
 }
 
+void rt_win_fit(uint32_t hwnd, uint32_t width, uint32_t height, int windowed)
+{
+    (void)windowed;  /* plein écran : même traitement (pas de changement de mode d'affichage) */
+    window *w = find_window(hwnd);
+    if (!w || !w->sdl || !width || !height) return;
+    SDL_SetWindowResizable(w->sdl, SDL_TRUE);
+    SDL_SetWindowSize(w->sdl, (int)width, (int)height);
+    w->w = (int)width;
+    w->h = (int)height;
+}
+
 void *rt_win_host(uint32_t hwnd)
 {
     window *w = find_window(hwnd);

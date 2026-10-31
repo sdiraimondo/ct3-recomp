@@ -248,6 +248,22 @@ Journal des décisions du portage. Une entrée par décision, avec la date et la
 - Export : un appel vers le milieu de la fonction appelante, ou une cible dans une fonction connue, devient une entrée intérieure (au lieu de créer une fonction qui découpe la fonction englobante).
 - Limite connue : 4 cibles d'appel direct sans fonction traduite (`0x4A66E0`, `0x5164E5`, `0x5179B8`, `0x51B647`) ; cause non identifiée, à traiter si atteintes.
 
+## D-040 : fenêtre et plein écran (31 oct. 2026)
+
+- Le jeu crée le device avec `Windowed = 0` (1280×960). La fenêtre SDL est dimensionnée au back buffer AVANT `CreateDevice`/`Reset` (dxvk crée la swapchain avec la taille de la fenêtre à ce moment). Sans bordure ni déplacement : la fenêtre garde ses décorations.
+- Vérifié : écrans d'intro affichés dans la fenêtre (« Created by Hitmaker », « Presented by SEGA », logo Strangelite) sous Xvfb + llvmpipe.
+
+## Problème ouvert : plantage après environ 2 050 présentations (31 oct. 2026)
+
+- Plantage (adresse invitée 0x2178, base NULL) dans la fonction du jeu appelée depuis `sub_004079E0` (`FUN_00428DA0` dans l'export), environ 70 s après le lancement, pendant l'intro/menu.
+- Pistes écartées : threads (même plantage sans thread concurrent, `CT3_NOTHREAD`), capacités DirectSound (`GetCaps` renseignés), valeurs de retour DirectSound.
+- Piste ouverte : le flux audio `Media\SE\taxi1.bin` (banque `xbhm`, 48 Mio lus) et les objets son créés depuis `FUN_0049DCF0`. Prochaine étape : un build de traçage (`-DCT3_TRACE_INSN`, enregistrement de l'instruction courante, affiché par le gestionnaire de faute).
+
+## Environnement (31 oct. 2026)
+
+- KWin (session Plasma/Wayland) ne mappe plus les fenêtres X11 nouvelles : constaté sur G1, glxgears et CT3. Une commande de rechargement de KWin (`org.kde.KWin.reconfigure`) a été lancée par erreur, sans effet visible. Non traité : redémarrer la session graphique (déconnexion/reconnexion) devrait suffire, à confirmer par l'utilisateur.
+- Xvfb (`DISPLAY=:99`) : RADV échoue (erreur d'E/S X, absence de DRI3). Test avec `DXVK_FILTER_DEVICE_NAME=llvmpipe`.
+
 ## Points ouverts
 
 - Traducteur : source sémantique à choisir. Proposition : export p-code via Ghidra headless (Ghidra 12.1.4 déjà installé). Alternative : capstone et traducteur maison.

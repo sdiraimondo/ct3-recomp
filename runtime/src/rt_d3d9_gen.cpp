@@ -5,6 +5,7 @@
 
 extern "C" {
 
+uint32_t custom_IDirect3D9_CreateDevice(cpu_t *c, const uint32_t *a);
 uint32_t custom_IDirect3D9_GetAdapterMonitor(cpu_t *c, const uint32_t *a);
 uint32_t custom_IDirect3DCubeTexture9_LockRect(cpu_t *c, const uint32_t *a);
 uint32_t custom_IDirect3DCubeTexture9_UnlockRect(cpu_t *c, const uint32_t *a);
@@ -13,6 +14,7 @@ uint32_t custom_IDirect3DDevice9_CreateTexture(cpu_t *c, const uint32_t *a);
 uint32_t custom_IDirect3DDevice9_CreateVertexBuffer(cpu_t *c, const uint32_t *a);
 uint32_t custom_IDirect3DDevice9_GetCreationParameters(cpu_t *c, const uint32_t *a);
 uint32_t custom_IDirect3DDevice9_Present(cpu_t *c, const uint32_t *a);
+uint32_t custom_IDirect3DDevice9_Reset(cpu_t *c, const uint32_t *a);
 uint32_t custom_IDirect3DIndexBuffer9_Lock(cpu_t *c, const uint32_t *a);
 uint32_t custom_IDirect3DIndexBuffer9_Unlock(cpu_t *c, const uint32_t *a);
 uint32_t custom_IDirect3DSurface9_LockRect(cpu_t *c, const uint32_t *a);
@@ -119,17 +121,6 @@ static uint32_t m_IDirect3D9_GetDeviceCaps(cpu_t *c, const uint32_t *a)
     HRESULT r = self->GetDeviceCaps((UINT)a[1], (D3DDEVTYPE)a[2], (D3DCAPS9*)rt_gptr(a[3]));
     return (uint32_t)r;
 }
-static uint32_t m_IDirect3D9_CreateDevice(cpu_t *c, const uint32_t *a)
-{
-    (void)c;
-    IDirect3D9 *self = rt_self<IDirect3D9>(a[0]);
-    D3DPRESENT_PARAMETERS pp5;
-    if (a[5]) rt_pp_in(a[5], pp5);
-    IDirect3DDevice9 *o6 = nullptr;
-    HRESULT r = self->CreateDevice((UINT)a[1], (D3DDEVTYPE)a[2], rt_hwnd(a[3]), (DWORD)a[4], a[5] ? &pp5 : nullptr, &o6);
-    rt_com_out(a[6], o6, 1);
-    return (uint32_t)r;
-}
 static uint32_t m_IDirect3DDevice9_TestCooperativeLevel(cpu_t *c, const uint32_t *a)
 {
     (void)c;
@@ -220,15 +211,6 @@ static uint32_t m_IDirect3DDevice9_GetNumberOfSwapChains(cpu_t *c, const uint32_
     (void)c;
     IDirect3DDevice9 *self = rt_self<IDirect3DDevice9>(a[0]);
     UINT r = self->GetNumberOfSwapChains();
-    return (uint32_t)r;
-}
-static uint32_t m_IDirect3DDevice9_Reset(cpu_t *c, const uint32_t *a)
-{
-    (void)c;
-    IDirect3DDevice9 *self = rt_self<IDirect3DDevice9>(a[0]);
-    D3DPRESENT_PARAMETERS pp1;
-    if (a[1]) rt_pp_in(a[1], pp1);
-    HRESULT r = self->Reset(a[1] ? &pp1 : nullptr);
     return (uint32_t)r;
 }
 static uint32_t m_IDirect3DDevice9_GetBackBuffer(cpu_t *c, const uint32_t *a)
@@ -1925,7 +1907,7 @@ static const rt_shim_entry d3d9_IDirect3D9[] = {
     {"d3d9com::IDirect3D9::CheckDeviceFormatConversion", 5, m_IDirect3D9_CheckDeviceFormatConversion},
     {"d3d9com::IDirect3D9::GetDeviceCaps", 4, m_IDirect3D9_GetDeviceCaps},
     {"d3d9com::IDirect3D9::GetAdapterMonitor", 2, custom_IDirect3D9_GetAdapterMonitor},
-    {"d3d9com::IDirect3D9::CreateDevice", 7, m_IDirect3D9_CreateDevice},
+    {"d3d9com::IDirect3D9::CreateDevice", 7, custom_IDirect3D9_CreateDevice},
 };
 
 static const rt_shim_entry d3d9_IDirect3DDevice9[] = {
@@ -1945,7 +1927,7 @@ static const rt_shim_entry d3d9_IDirect3DDevice9[] = {
     {"d3d9com::IDirect3DDevice9::CreateAdditionalSwapChain", 3, m_IDirect3DDevice9_CreateAdditionalSwapChain},
     {"d3d9com::IDirect3DDevice9::GetSwapChain", 3, m_IDirect3DDevice9_GetSwapChain},
     {"d3d9com::IDirect3DDevice9::GetNumberOfSwapChains", 1, m_IDirect3DDevice9_GetNumberOfSwapChains},
-    {"d3d9com::IDirect3DDevice9::Reset", 2, m_IDirect3DDevice9_Reset},
+    {"d3d9com::IDirect3DDevice9::Reset", 2, custom_IDirect3DDevice9_Reset},
     {"d3d9com::IDirect3DDevice9::Present", 5, custom_IDirect3DDevice9_Present},
     {"d3d9com::IDirect3DDevice9::GetBackBuffer", 5, m_IDirect3DDevice9_GetBackBuffer},
     {"d3d9com::IDirect3DDevice9::GetRasterStatus", 3, m_IDirect3DDevice9_GetRasterStatus},

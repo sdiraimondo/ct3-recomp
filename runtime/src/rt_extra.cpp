@@ -505,6 +505,69 @@ uint32_t sh_dsb_GetStatus(cpu_t *c, const uint32_t *a)
     return 0;
 }
 
+// GetFormat(this, lpwfx, cbwfx, lpdwWritten) : WAVEFORMATEX PCM 44,1 kHz stéréo 16 bits.
+uint32_t sh_dsb_GetFormat(cpu_t *c, const uint32_t *a)
+{
+    (void)c;
+    uint8_t wf[18] = {0};
+    uint16_t tag = 1, ch = 2, align = 4, bits = 16, cb = 0;
+    uint32_t rate = 44100, avg = 176400;
+    memcpy(wf + 0, &tag, 2);
+    memcpy(wf + 2, &ch, 2);
+    memcpy(wf + 4, &rate, 4);
+    memcpy(wf + 8, &avg, 4);
+    memcpy(wf + 12, &align, 2);
+    memcpy(wf + 14, &bits, 2);
+    memcpy(wf + 16, &cb, 2);
+    if (a[1]) memcpy(rt_mem_base + a[1], wf, a[2] < 18 ? a[2] : 18);
+    if (a[3]) put32(a[3], 18);
+    return 0;
+}
+
+// GetFrequency / GetCaps : valeurs constantes (fréquence 44,1 kHz ; DSBCAPS de 96 octets).
+uint32_t sh_dsb_GetFrequency(cpu_t *c, const uint32_t *a)
+{
+    (void)c;
+    if (a[1]) put32(a[1], 44100);
+    return 0;
+}
+
+// DSBCAPS (20 octets) : taille, drapeaux, taille du tampon.
+uint32_t sh_dsb_GetCaps(cpu_t *c, const uint32_t *a)
+{
+    (void)c;
+    if (a[1]) {
+        memset(rt_mem_base + a[1], 0, 20);
+        put32(a[1], 20);
+        put32(a[1] + 8, get32(a[0] + 8));
+    }
+    return 0;
+}
+
+// DSCAPS (96 octets) : capacités matérielles plausibles (32 tampons de mixage, 16 Mio de mémoire).
+uint32_t sh_ds_GetCaps(cpu_t *c, const uint32_t *a)
+{
+    (void)c;
+    if (a[1]) {
+        memset(rt_mem_base + a[1], 0, 96);
+        put32(a[1] + 0, 96);
+        put32(a[1] + 1 * 4, 0x00000060);           // DSCAPS_PRIMARY16BIT | DSCAPS_PRIMARYSTEREO
+        put32(a[1] + 2 * 4, 100);                  // dwMinSecondarySampleRate
+        put32(a[1] + 3 * 4, 96000);                // dwMaxSecondarySampleRate
+        put32(a[1] + 4 * 4, 1);                    // dwPrimaryBuffers
+        put32(a[1] + 5 * 4, 32);                   // dwMaxHwMixingAllBuffers
+        put32(a[1] + 6 * 4, 16);                   // dwMaxHwMixingStaticBuffers
+        put32(a[1] + 7 * 4, 16);                   // dwMaxHwMixingStreamingBuffers
+        put32(a[1] + 8 * 4, 32);                   // dwFreeHwMixingAllBuffers
+        put32(a[1] + 9 * 4, 16);                   // dwFreeHwMixingStaticBuffers
+        put32(a[1] + 10 * 4, 16);                  // dwFreeHwMixingStreamingBuffers
+        put32(a[1] + 17 * 4, 16u << 20);           // dwTotalHwMemBytes
+        put32(a[1] + 18 * 4, 16u << 20);           // dwFreeHwMemBytes
+        put32(a[1] + 19 * 4, 16u << 20);           // dwMaxContigFreeHwMemBytes
+    }
+    return 0;
+}
+
 uint32_t sh_ds_ok(cpu_t *c, const uint32_t *a) { (void)c; (void)a; return 0; }
 uint32_t sh_ds_zero(cpu_t *c, const uint32_t *a) { (void)c; (void)a; return 0; }
 uint32_t sh_ds_addref(cpu_t *c, const uint32_t *a) { (void)c; (void)a; return 2; }
@@ -626,7 +689,7 @@ extern "C" const rt_shim_entry rt_extra_table[] = {
     {"dsoundcom::IDirectSound::AddRef", 1, sh_ds_addref},
     {"dsoundcom::IDirectSound::Release", 1, sh_ds_release},
     {"dsoundcom::IDirectSound::CreateSoundBuffer", 4, sh_ds_CreateSoundBuffer},
-    {"dsoundcom::IDirectSound::GetCaps", 2, sh_ds_zero},
+    {"dsoundcom::IDirectSound::GetCaps", 2, sh_ds_GetCaps},
     {"dsoundcom::IDirectSound::DuplicateSoundBuffer", 3, sh_ds_zero},
     {"dsoundcom::IDirectSound::SetCooperativeLevel", 3, sh_ds_ok},
     {"dsoundcom::IDirectSound::Compact", 1, sh_ds_ok},
@@ -636,12 +699,12 @@ extern "C" const rt_shim_entry rt_extra_table[] = {
     {"dsoundcom::IDirectSoundBuffer::QueryInterface", 3, sh_ds_qi},
     {"dsoundcom::IDirectSoundBuffer::AddRef", 1, sh_ds_addref},
     {"dsoundcom::IDirectSoundBuffer::Release", 1, sh_ds_release},
-    {"dsoundcom::IDirectSoundBuffer::GetCaps", 2, sh_ds_zero},
+    {"dsoundcom::IDirectSoundBuffer::GetCaps", 2, sh_dsb_GetCaps},
     {"dsoundcom::IDirectSoundBuffer::GetCurrentPosition", 3, sh_dsb_GetCurrentPosition},
-    {"dsoundcom::IDirectSoundBuffer::GetFormat", 4, sh_ds_zero},
+    {"dsoundcom::IDirectSoundBuffer::GetFormat", 4, sh_dsb_GetFormat},
     {"dsoundcom::IDirectSoundBuffer::GetVolume", 2, sh_ds_zero},
     {"dsoundcom::IDirectSoundBuffer::GetPan", 2, sh_ds_zero},
-    {"dsoundcom::IDirectSoundBuffer::GetFrequency", 2, sh_ds_zero},
+    {"dsoundcom::IDirectSoundBuffer::GetFrequency", 2, sh_dsb_GetFrequency},
     {"dsoundcom::IDirectSoundBuffer::GetStatus", 2, sh_dsb_GetStatus},
     {"dsoundcom::IDirectSoundBuffer::Initialize", 3, sh_ds_ok},
     {"dsoundcom::IDirectSoundBuffer::Lock", 8, sh_dsb_Lock},

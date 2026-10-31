@@ -17,9 +17,10 @@ static pthread_mutex_t big_lock = PTHREAD_MUTEX_INITIALIZER;
 static pthread_cond_t state_cond = PTHREAD_COND_INITIALIZER;
 
 static __thread rt_thread *current_thread;
-rt_thread *rt_current(void) { return current_thread; }
 
-static rt_thread main_thread;
+static rt_thread main_thread = {.id = 1};
+
+rt_thread *rt_current(void) { return current_thread ? current_thread : &main_thread; }
 static unsigned thread_count;
 static uint32_t next_tid = 4;
 

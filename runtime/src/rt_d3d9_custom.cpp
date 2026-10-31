@@ -5,6 +5,7 @@
 
 #include "rt_d3d9.h"
 #include "rt_proc.h"
+#include "rt_win.h"
 
 #include <cstdio>
 #include <cstdlib>
@@ -594,4 +595,35 @@ extern "C" uint32_t custom_IDirect3DDevice9_Present(cpu_t *c, const uint32_t *a)
     const char *shot = getenv("CT3_SHOT");
     if (shot && present_count == (uint32_t)atoi(shot)) dump_backbuffer(self, present_count);
     return (uint32_t)hr;
+}
+
+// ---- Création et réinitialisation : fenêtre à la taille du back buffer -----
+
+extern "C" uint32_t custom_IDirect3D9_CreateDevice(cpu_t *c, const uint32_t *a)
+{
+    IDirect3D9 *self = rt_self<IDirect3D9>(a[0]);
+    D3DPRESENT_PARAMETERS pp;
+    if (a[5]) rt_pp_in(a[5], pp);
+    IDirect3DDevice9 *dev = nullptr;
+    /* La swapchain est créée avec la taille de la fenêtre : la fenêtre est dimensionnée d'abord. */
+    if (a[5]) rt_win_fit(a[3], pp.BackBufferWidth, pp.BackBufferHeight, pp.Windowed != 0);
+    HRESULT hr = self->CreateDevice(a[1], (D3DDEVTYPE)a[2], rt_hwnd(a[3]), a[4], a[5] ? &pp : nullptr, &dev);
+    rt_com_out(a[6], dev, rt_com_iface_index("IDirect3DDevice9"));
+    (void)c;
+    return (uint32_t)hr;
+}
+
+extern "C" uint32_t custom_IDirect3DDevice9_Reset(cpu_t *c, const uint32_t *a)
+{
+    (void)c;
+    IDirect3DDevice9 *self = rt_self<IDirect3DDevice9>(a[0]);
+    D3DPRESENT_PARAMETERS pp;
+    if (a[1]) rt_pp_in(a[1], pp);
+    if (a[1]) {
+        D3DDEVICE_CREATION_PARAMETERS cp;
+        if (SUCCEEDED(self->GetCreationParameters(&cp))) {
+            rt_win_fit(rt_win_guest(cp.hFocusWindow), pp.BackBufferWidth, pp.BackBufferHeight, pp.Windowed != 0);
+        }
+    }
+    return (uint32_t)self->Reset(a[1] ? &pp : nullptr);
 }

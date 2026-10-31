@@ -695,7 +695,7 @@ void rt_shim_call(cpu_t *c, uint32_t addr)
         args[k] = (uint32_t)guest_ld(c, esp + 4 + 4 * k, 4);
     }
     if (rt_trace_imports) {
-        fprintf(stderr, "[import] (retour 0x%08x) %s", (uint32_t)guest_ld(c, esp, 4), e->name);
+        fprintf(stderr, "[import t%u] (retour 0x%08x) %s", rt_current()->id, (uint32_t)guest_ld(c, esp, 4), e->name);
         for (unsigned k = 0; k < e->nargs; k++) {
             fprintf(stderr, "%s0x%x", k ? ", " : "(", args[k]);
         }

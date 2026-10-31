@@ -53,6 +53,8 @@ CUSTOM = {
     "IDirect3DDevice9::CreateVertexBuffer",
     "IDirect3DDevice9::CreateIndexBuffer",
     "IDirect3DDevice9::CreateTexture",
+    "IDirect3D9::CreateDevice",
+    "IDirect3DDevice9::Reset",
     "IDirect3DDevice9::Present",
     "IDirect3DVertexBuffer9::Lock",
     "IDirect3DVertexBuffer9::Unlock",

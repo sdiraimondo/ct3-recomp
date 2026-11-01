@@ -216,6 +216,19 @@ Pour compter les images, utiliser `grep -c "retour\] d3d9com::IDirect3DDevice9::
 - **Diagnostic utile** : `CT3_TRACE_FROM=N CT3_TRACE_TO=M` active la trace d'imports seulement entre deux
   présentations (évite les journaux géants). `CT3_WATCH=42e140` affiche maintenant l'horodatage, la longueur de
   file du chargeur (`file=`, `[0x71650C]`) et le drapeau du travailleur (`travail=`, `[0x716504]`).
+- **Test sur l'écran de l'utilisateur (DISPLAY=:0, RADV)** : le menu principal s'affiche et se navigue (rapporté
+  par l'utilisateur). Le plantage observé au lancement d'une partie (deux appuis sur Start depuis le menu principal,
+  puis écran de sélection des conducteurs et véhicules) n'est pas encore reproduit à l'identique : les appuis
+  automatiques (`CT3_KEY_AT`, `CT3_KEY_AT2`) ne suivent pas le même chemin que les appuis manuels.
+  Constats des essais :
+  1. Le jeu atteint la fin du sous-état 2 (trame 5509, environ 92 s) puis : soit il sort avec le code 1 sans message
+     (run sous gdb), soit il tourne à 99 % CPU sans rien écrire (run normal). Pile non obtenue dans le second cas.
+  2. Une perte de périphérique Vulkan (`VK_ERROR_DEVICE_LOST`, RADV) est apparue dans un run sous gdb.
+  3. **Environnement** : les nouvelles fenêtres X11 de la session ne sont pas mappées (`xmessage` : `IsUnMapped`).
+     SDL bloque alors dans `X11_ShowWindow`. Redémarrer la session Plasma (ou KWin) règle le problème.
+- **Diagnostic de plantage** : les core dumps sont désactivés dans les lancements avec `ulimit -c 0`. Pour une pile,
+  lancer sous `gdb -batch -ex run -ex "thread apply all bt 25"`, ou `catch syscall exit_group` pour une sortie.
+  Pour une boucle active, attacher un gdb à un processus déjà lancé (`gdb -p PID -batch -ex "thread apply 1 bt 12"`).
 - **Piège** : `pkill -f <motif>` tue aussi le shell qui contient le motif. Utiliser `pgrep -x ct3_run` puis `kill`
   par PID.
 - **Dépôt** : un fichier `index.html` non suivi (une réponse JSON d'erreur) est présent depuis la session

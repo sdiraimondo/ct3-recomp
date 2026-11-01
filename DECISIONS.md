@@ -324,6 +324,13 @@ Outils ajoutés (build de traçage) : `CT3_MEMWATCH=lo-hi` (écritures dans une 
 - **Diagnostic ajouté** : `CT3_ALLOCLOG=1` journalise les allocations et libérations avec les appelants du jeu (hors plage CRT).
 - **Plantage suivant** (non résolu) : vers la 2 154e présentation, `FUN_00425F90` appelle `[ECX+0x48]` sur `[EAX]`, où `EAX` est le tampon renvoyé par `FUN_00425810` (conversion de pixels). Cette fonction ne renvoie jamais d'objet COM, donc le chemin pris n'est probablement pas celui de la version d'origine : un indicateur (`[ESP+0x38]`) diffère, probablement à cause des formats ou des capacités annoncées par notre pont D3D (voir D-034).
 
+### Plantage texture : suite (1er nov. 2026)
+
+- **Corrigé (D-044)** : `wsprintfA` ne gérait pas `%S`. Dans les fonctions `wsprintf` de Win32, `%S` est une chaîne **large** (UTF-16) pour la version ANSI. Notre formateur recopiait `%S` sans consommer l'argument, et le jeu ouvrait des fichiers nommés `%S`. Corrigé dans `guest_format` (`runtime/src/rt_extra.cpp`) ; les ouvertures `%S` ont disparu.
+- **Vérifié, pas en cause** : le tas (`CT3_HEAPCHK=1`, vérification après chaque opération) reste cohérent ; le bloc renvoyé par `HeapAlloc(0x8000)` est bien celui que renvoie `FUN_00425810`.
+- **Divergence identifiée (non résolue)** : dans `FUN_00425F90`, entre `LEA EAX,[ESP+0x18]` (0x426251, sortie ppTexture) et la lecture `MOV EAX,[ESP+0x1c]` (0x42643A), l'équilibre de pile ou les registres diffèrent du natif. `FUN_004C8B84` a un chemin d'erreur (`D3DERR_INVALIDCALL`, `RET 0x20`) qui n'est pris que si `[EBP+8]` ou `[EBP+0x24]` vaut 0. Notre exécution le prend ; le natif prend `RET 0x24`. Le premier argument vient d'un registre (`EDX`) qui n'est pas couvert par la vérification des registres préservés (caller-saved). Prochaine étape : tracer la valeur de `EDX` à l'entrée de `FUN_004C8B84`, puis remonter sa source.
+- **Fichiers de diagnostic** : `CT3_FILELOG=1` journalise aussi les ouvertures de fichiers ; `CT3_HEAPCHK=1` vérifie le tas ; sonde `CT3_PROBE` avec `[esp]` et `[esp+0x40]`.
+
 ## Environnement (31 oct. 2026)
 
 - KWin (session Plasma/Wayland) ne mappe plus les fenêtres X11 nouvelles : constaté sur G1, glxgears et CT3. Une commande de rechargement de KWin (`org.kde.KWin.reconfigure`) a été lancée par erreur, sans effet visible. Non traité : redémarrer la session graphique (déconnexion/reconnexion) devrait suffire, à confirmer par l'utilisateur.

@@ -45,9 +45,8 @@ void rt_probe_hit(cpu_t *c, uint32_t addr)
     uint32_t ecx = (uint32_t)cpu_rd(c, 4, 4);
     uint32_t esp = (uint32_t)cpu_rd(c, 16, 4);
     uint32_t edi = (uint32_t)cpu_rd(c, 28, 4);
-    fprintf(stderr, "[probe 0x%08x] eax=0x%08x esp=0x%08x ecx=0x%08x edi=0x%08x FILE{ptr=0x%08x cnt=%u base=0x%08x flag=0x%x} pile[+44..+4c]=%08x %08x %08x\n",
-            addr, eax, esp, ecx, edi, probe_rd(edi), probe_rd(edi + 4), probe_rd(edi + 8), probe_rd(edi + 12),
-            probe_rd(esp + 0x44), probe_rd(esp + 0x48), probe_rd(esp + 0x4c));
+    fprintf(stderr, "[probe 0x%08x] eax=0x%08x esp=0x%08x ecx=0x%08x edi=0x%08x [esp]=%08x [esp+4..+c]=%08x %08x %08x %08x [esp+0x40]=%08x\n",
+            addr, eax, esp, ecx, edi, probe_rd(esp), probe_rd(esp + 4), probe_rd(esp + 8), probe_rd(esp + 12), probe_rd(esp + 16), probe_rd(esp + 0x40));
     if (addr == 0x00539728u) {
         uint32_t sp = (uint32_t)cpu_rd(c, 16, 4);
         fprintf(stderr, "    handler 539728: esp=0x%08x [esp]=0x%08x [esp+4]=0x%08x [esp+8]=0x%08x [esp+0xc]=0x%08x insn precedente=0x%08x\n",

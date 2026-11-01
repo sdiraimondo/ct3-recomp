@@ -420,6 +420,17 @@ std::string guest_format(const char *fmt, uint32_t args)
             out += buf;
             break;
         }
+        case 'S': {
+            // wsprintfA : %S lit une chaîne large (UTF-16) ; convertie ici en ASCII (non-ASCII : '?').
+            uint32_t p = next32();
+            for (unsigned k = 0; k < 4096 && p >= 0x10000u && p + 2 * k + 2 <= 0x7F000000u; k++) {
+                uint16_t u;
+                memcpy(&u, rt_mem_base + p + 2 * k, 2);
+                if (!u) break;
+                out.push_back(u < 0x80 ? (char)u : '?');
+            }
+            break;
+        }
         case 'p':
             snprintf(buf, sizeof buf, "%08X", (unsigned)next32());
             out += buf;

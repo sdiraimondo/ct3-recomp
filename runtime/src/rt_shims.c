@@ -143,6 +143,7 @@ static uint32_t sh_CreateFileA(cpu_t *c, const uint32_t *a)
         name[i] = ch;
     }
     name[i] = 0;
+    if (getenv("CT3_FILELOG")) fprintf(stderr, "[ouverture] %s\n", name);
     return rt_file_open(name, a[1], a[4]);
 }
 static uint32_t sh_ReadFile(cpu_t *c, const uint32_t *a) { (void)c; return (uint32_t)rt_file_read(a[0], a[1], a[2], a[3]); }

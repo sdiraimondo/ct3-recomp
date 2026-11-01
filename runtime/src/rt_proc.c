@@ -101,6 +101,32 @@ static void bin_remove(uint32_t block, uint32_t total)
     }
 }
 
+/* CT3_HEAPCHK=1 : vérifie la cohérence du tas après chaque opération (diagnostic, lent). */
+static void heap_check(const char *where)
+{
+    static int on = -1;
+    if (on < 0) on = getenv("CT3_HEAPCHK") != NULL;
+    if (!on) return;
+    unsigned free_seen = 0, free_listed = 0;
+    for (uint32_t b = RT_HEAP_BASE; b < heap_next;) {
+        uint32_t st = get32(b + 4);
+        uint32_t t = block_total(get32(b));
+        if (t < 16 || b + t > heap_next || (st != RT_BLOCK_USED && st != RT_BLOCK_FREE)) {
+            fprintf(stderr, "rt: TAS CORROMPU (%s) bloc 0x%08x taille=0x%x etat=0x%08x\n", where, b, get32(b), st);
+            exit(7);
+        }
+        if (st == RT_BLOCK_FREE) free_seen++;
+        b += t;
+    }
+    for (unsigned k = 0; k < RT_HEAP_BINS; k++) {
+        for (uint32_t cur = heap_bins[k]; cur; cur = get32(cur + 8)) free_listed++;
+    }
+    if (free_seen != free_listed) {
+        fprintf(stderr, "rt: TAS INCOHERENT (%s) libres vus=%u listés=%u\n", where, free_seen, free_listed);
+        exit(7);
+    }
+}
+
 uint32_t rt_heap_alloc(uint32_t size, int zero)
 {
     uint32_t total = block_total(size);
@@ -139,6 +165,7 @@ uint32_t rt_heap_alloc(uint32_t size, int zero)
     if (zero) {
         memset(rt_mem_base + block + 8, 0, cap);
     }
+    heap_check("alloc");
     return block + 8;
 }
 
@@ -158,10 +185,12 @@ void rt_heap_free(uint32_t p)
     }
     if (next == heap_next) {
         heap_next = block;
+        heap_check("libre-fin");
         return;
     }
     put32(block, total - 8);
     bin_insert(block, total);
+    heap_check("libre");
 }
 
 uint32_t rt_heap_size(uint32_t p)

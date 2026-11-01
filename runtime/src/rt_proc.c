@@ -279,7 +279,10 @@ void rt_watch_entry(cpu_t *c, uint32_t addr)
             w18 = watch_rd(e0 + 0x18, 2);
         }
     }
-    fprintf(stderr, "[watch 0x%08x] etat=%u sous=%u trame=%u fondu=%u chargeur=%u flag=%u\n", addr,
+    struct timespec wts;
+    clock_gettime(CLOCK_MONOTONIC, &wts);
+    fprintf(stderr, "[watch 0x%08x] ms=%ld etat=%u sous=%u trame=%u fondu=%u chargeur=%u flag=%u file=%u travail=%u\n", addr,
+            (long)(wts.tv_sec * 1000 + wts.tv_nsec / 1000000),
             watch_rd(0x7bc334u, 4), watch_rd(0x7bc354u, 4), watch_rd(0x717884u, 4), watch_rd(0x7178fcu, 4),
-            watch_rd(0x71ef8cu, 4), watch_rd(0x717889u, 1));
+            watch_rd(0x71ef8cu, 4), watch_rd(0x717889u, 1), watch_rd(0x71650cu, 4), watch_rd(0x716504u, 1));
 }

@@ -191,34 +191,35 @@ Pour compter les images, utiliser `grep -c "retour\] d3d9com::IDirect3DDevice9::
 
 ## 7. État actuel et prochaine étape
 
-- Commits : dernier commit du travail `0df49a9` puis `f91405d` (ce document). Les modifications de la session
-  « menu » (décrites ci-dessous et dans `DECISIONS.md` D-051 à D-054) sont **non commitées à la rédaction** ; les
-  tests (`test_cpu`, `test_vec`, `test_g2`, `test_x87`, `g1_d3d9_triangle`) passent avec elles.
-- Le jeu tourne sans erreur au-delà de 5 000 images (build normal, Xvfb, llvmpipe). Enchaînement observé, sans
-  trace d'imports : intros, titre (logo + « PRESS START »), appui (`CT3_KEY_AT=2400`), état 6, état 7 (fondu 255
-  vers 0), état 2, état 3 sous-état 1, second appui (`CT3_KEY_AT2=3700`), état 3 sous-état 2.
-- **Le menu n'apparaît toujours pas.** Constats établis (détail dans `DECISIONS.md`, D-054) :
-  1. Les images noires viennent du **jeu** : il ne dessine pas le logo ce jour-là. `CT3_FRAMESTAT=1` donne 1 dessin
-     (2 primitives) quand l'écran est noir ou ne montre que « PRESS START », contre 3 ou 4 dessins quand le logo est
-     visible. Les textures du logo sont copiées telles quelles (DXT1), sans corruption détectée.
-  2. En sous-état 2 de l'état 3, aucun logo ni menu n'est dessiné. Hypothèse non vérifiée : les ressources du menu
-     ne sont pas chargées.
-  3. **Blocage de l'état 7** : avec `CT3_IMPORTS=1`, le jeu reste à l'état 7 (sous-état 0) pendant plus de 30 000
-     images, avec `chargeur=0` et `flag=0` (`CT3_WATCH=42e140`). L'état 7 attend le drapeau `[0x717889]`, mis à 1
-     par `0x42D930` quand le chargeur `[0x71EF8C]` avance. Ce dernier est piloté par `0x440DA0`/`0x440280`, dans un
-     thread de chargement. Le thread audio (`0x413560`, appelle `GetCurrentPosition` toutes les 250 ms) a été rendu
-     réaliste (D-051) mais le blocage persiste : la cause est ailleurs.
+- Commits : `4a94650` (session précédente) puis le commit « FPREM » (voir `git log`). Les tests (`test_cpu`,
+  `test_vec`, `test_g2`, `test_x87`, `g1_d3d9_triangle`) passent.
+- **Le menu n'apparaît toujours pas.** Enchaînement observé (appuis à 2 400 et 3 700 images) : intros, titre
+  (logo et « PRESS START »), état 6, état 7 (fondu), état 3 sous-état 1 (logo visible), état 3 sous-état 2
+  (« PRESS START » seul, le logo n'est plus dessiné).
+- **Corrigé cette session** (`DECISIONS.md` D-055, D-056) :
+  1. Blocage de l'état 7 : la fonction `fmod` (`0x518904`) boucle sur `FPREM`, dont la p-code de Ghidra ne met pas
+     à jour C2. Le traducteur remplace désormais `FPREM`/`FPREM1` par `rt_fprem` (`runtime/include/rt_fp.h`).
+  2. Les durées des sous-états du titre sont en **temps réel** : `[0x7C3C34] = ms × 0,06` (fonction `0x47A5C0`,
+     `timeGetTime`). Sous-état 0 ≈ 85 s, sous-état 1 ≈ 79 s, sous-état 2 ≈ 92 s, sans appui. Un appui force la fin.
+     Donc le menu (s'il suit le sous-état 2) ne peut apparaître qu'après ≈ 92 s de sous-état 2.
+- **Blocage actuel (environnement de test, pas le jeu)** : vers 5 500 images, le thread principal reste bloqué
+  dans `Present` (`dxvk::Presenter::acquireNextImage`) ou dans `LockBuffer` (fence DXVK), alors que les threads
+  llvmpipe et WSI sont inactifs. Reproductible d'un run à l'autre, à des étapes différentes. Cause non trouvée.
+  Piste : options de présentation DXVK (intervalle, latence de trame), ou un mode de présentation sans attente.
+  Tant que ce blocage existe, le sous-état 2 ne peut pas être observé jusqu'à sa fin.
 - **Prochaine étape recommandée** :
-  1. Identifier le thread qui doit faire avancer `[0x71EF8C]` (quel thread appelle `0x440DA0`), vérifier s'il
-     démarre et s'il se bloque (événement, `WaitForSingleObject` avec délai, `timeGetTime`/`QueryPerformanceCounter`).
-     Le blocage n'apparaît que sous trace : il est dépendant du temps, donc probablement lié à une attente temporisée.
-  2. Une fois l'état 7 franchi sous trace, vérifier que le logo et le menu sont redessinés (`CT3_FRAMESTAT`).
+  1. Lever le blocage de présentation (options DXVK ou essai sur `DISPLAY=:0` avec RADV, avec accord de
+     l'utilisateur car la fenêtre s'affiche sur son écran).
+  2. Une fois le sous-état 2 terminé, vérifier si le menu est dessiné (`CT3_FRAMESTAT=1`, `CT3_SHOT_FROM`).
   3. Pistes annexes : `CreateFontA` reçoit un nom de police illisible ; `GetObjectA`, `GetDIBits`, `SetDIBits`
      non implémentés ; BitBlt absent ; sortie son (SDL, D-008).
-- **Piège de mesure** : `CT3_TEXHASH` (empreintes de textures par `LockRect` en lecture seule) donnait des valeurs
-  qui changeaient sans raison : la lecture renvoie de la mémoire de transit de dxvk. Ne pas s'y fier.
-- **Dépôt** : un fichier `index.html` non suivi (contenu : une réponse JSON d'erreur d'un serveur) est apparu dans le
-  dépôt pendant la session, sans origine connue. Il n'a pas été supprimé : à vérifier avec l'utilisateur.
+- **Diagnostic utile** : `CT3_TRACE_FROM=N CT3_TRACE_TO=M` active la trace d'imports seulement entre deux
+  présentations (évite les journaux géants). `CT3_WATCH=42e140` affiche maintenant l'horodatage, la longueur de
+  file du chargeur (`file=`, `[0x71650C]`) et le drapeau du travailleur (`travail=`, `[0x716504]`).
+- **Piège** : `pkill -f <motif>` tue aussi le shell qui contient le motif. Utiliser `pgrep -x ct3_run` puis `kill`
+  par PID.
+- **Dépôt** : un fichier `index.html` non suivi (une réponse JSON d'erreur) est présent depuis la session
+  précédente, origine inconnue ; non supprimé, à confirmer avec l'utilisateur.
 
 ## 8. Pièges connus
 

@@ -368,6 +368,13 @@ Outils ajoutés (build de traçage) : `CT3_MEMWATCH=lo-hi` (écritures dans une 
   6. **Piste écartée** : empreintes de texture par `LockRect` en lecture seule (`CT3_TEXHASH`, retiré) : résultat non fiable, la lecture renvoie une mémoire de transit de dxvk.
 - **État** : le menu n'apparaît pas. Prochaine étape recommandée : identifier pourquoi `[0x71EF8C]` reste à 0 (quel thread doit le faire avancer, et pourquoi il ne tourne pas à temps), puis vérifier que le logo et le menu sont redessinés.
 
+### Blocage de l'état 7 : boucle FPREM, durée des sous-états (2 nov. 2026, D-055 à D-056)
+
+- **D-055 : `FPREM` et `FPREM1` traités par un helper exact** (`runtime/include/rt_fp.h`, `rt_fprem`). Cause réelle du blocage : la `fmod` du runtime C de MSVC (fonction `0x518904`) est une boucle `FPREM ; FSTSW ; SAHF ; JP`, qui recommence tant que C2 vaut 1. La p-code de Ghidra ne modélise pas les bits C0 à C3 de `FPREM` : C2 n'était jamais remis à 0, et la boucle tournait sans fin dès qu'un calcul précédent avait laissé C2 à 1. Le traducteur (`tools/recomp/ct3rc.py`) remplace désormais ces deux instructions par `rt_fprem`, qui calcule le reste exact (`fmodl`, `remainderl`), met C2 à 0 et renseigne les bits de quotient. Effet observé : le blocage à la 935e image de l'état 3 sous-état 2 disparaît.
+- **D-056 : durées des sous-états du titre en temps réel.** `[0x7C3C34]` est recalculé à chaque image à partir de `timeGetTime` (fonction `0x47A5C0`, facteur 0,06 unité par milliseconde). La table `0x53DD84` donne donc des durées en unités : 5 099 (≈ 85 s), 4 738 (≈ 79 s), 5 509 (≈ 92 s). Un appui sur Entrée force la fin du sous-état (le compteur reçoit durée + 2). Conséquence : les durées ne dépendent pas du nombre d'images, et un ralentissement ne bloque pas le titre.
+- **Constat, ouvert** : sous-état 2, le jeu finit par bloquer dans un `LockBuffer` (tampon de sommets) qui attend une fence DXVK. Les threads llvmpipe sont inactifs : le GPU ne termine pas un travail déjà soumis. Blocage reproductible à la même étape (environ 1 900 images dans le sous-état 2), dans l'environnement de test (Xvfb, llvmpipe). Non résolu.
+- **Constat, écarté** : le `sched_yield` ajouté dans `rt_unlock` pour favoriser le travailleur de chargement n'a rien changé (même durée, 10 s pour 8 tâches) ; annulé.
+
 ## Environnement (31 oct. 2026)
 
 - KWin (session Plasma/Wayland) ne mappe plus les fenêtres X11 nouvelles : constaté sur G1, glxgears et CT3. Une commande de rechargement de KWin (`org.kde.KWin.reconfigure`) a été lancée par erreur, sans effet visible. Non traité : redémarrer la session graphique (déconnexion/reconnexion) devrait suffire, à confirmer par l'utilisateur.

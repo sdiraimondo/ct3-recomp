@@ -469,6 +469,11 @@ class FunctionTranslator:
             self.cur_targets = [int(t, 16) for t in ins.get("targets", []) if is_hex_addr(t)]
             self.cur_next = int(ins["addr"], 16) + int(ins["len"])
             self.cur_is_last = n == last
+            mnem = ins["text"].split(" ")[0]
+            if mnem in ("FPREM", "FPREM1"):
+                # Remplacé par un helper exact (rt_fp.h) : la p-code de Ghidra ne met pas à jour C0-C3.
+                body.append((self.cur_addr, ins, [(0, "rt_fprem(c, %d);" % (mnem == "FPREM1"))]))
+                continue
             ops = []
             for idx, op in enumerate(ins["pcode"]):
                 self.cur_op_index = idx

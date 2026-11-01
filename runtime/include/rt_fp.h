@@ -72,6 +72,26 @@ static inline uint64_t rt_load_bytes(const uint8_t *p, unsigned size)
     return v;
 }
 
+/* FPREM (troncature, ieee = 0) et FPREM1 (arrondi, ieee = 1) : reste exact (fmodl / remainderl), réduction
+ * complète (C2 = 0) et bits de quotient C0, C1, C3. La p-code de Ghidra ne modélise pas ces bits : la boucle
+ * « FPREM ; FSTSW ; JP » du jeu ne se terminait pas quand C2 restait à 1. */
+static inline void rt_fprem(cpu_t *c, int ieee)
+{
+    long double a = rt_fget(c->reg + 4352, 10);
+    long double b = rt_fget(c->reg + 4368, 10);
+    long double r = ieee ? remainderl(a, b) : fmodl(a, b);
+    long double q = ieee ? rintl(a / b) : truncl(a / b);
+    unsigned sw = (unsigned)cpu_rd(c, 4258, 2) & ~0x4700u;
+    if (isfinite(q) && fabsl(q) < 9.0e18L) {
+        uint64_t qi = (uint64_t)fabsl(q);
+        if (qi & 4) sw |= 0x0100u;
+        if (qi & 2) sw |= 0x4000u;
+        if (qi & 1) sw |= 0x0200u;
+    }
+    cpu_wr(c, 4258, 2, sw);
+    rt_fput(c->reg + 4352, 10, r);
+}
+
 static inline int rt_fcmp_lt(long double a, long double b) { return a < b; }
 static inline int rt_fcmp_le(long double a, long double b) { return a <= b; }
 static inline int rt_fcmp_eq(long double a, long double b) { return a == b; }

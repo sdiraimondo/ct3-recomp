@@ -13,6 +13,8 @@
 #include <map>
 #include <vector>
 
+extern int rt_trace_imports;  /* rt_shims.c : trace des imports (CT3_IMPORTS, CT3_TRACE_FROM) */
+
 namespace {
 
 struct lock_rec {
@@ -593,6 +595,19 @@ void dump_backbuffer(IDirect3DDevice9 *dev, uint32_t frame)
 extern "C" uint32_t custom_IDirect3DDevice9_Present(cpu_t *c, const uint32_t *a)
 {
     rt_probe_present();
+    {
+        /* CT3_TRACE_FROM=N, CT3_TRACE_TO=M : trace des imports seulement entre les présentations N et M. */
+        static long tr_from = -2, tr_to = -1;
+        if (tr_from == -2) {
+            const char *f = getenv("CT3_TRACE_FROM"), *t = getenv("CT3_TRACE_TO");
+            tr_from = f ? atol(f) : -1;
+            tr_to = t ? atol(t) : -1;
+        }
+        if (tr_from >= 0) {
+            if ((long)present_count + 1 == tr_from) rt_trace_imports = 1;
+            if ((long)present_count + 1 == tr_to) rt_trace_imports = 0;
+        }
+    }
     /* CT3_SHOT_PRE=1 : capture avant Present (le contenu du back buffer n'est pas garanti après Present). */
     if (getenv("CT3_SHOT_PRE")) {
         const char *every0 = getenv("CT3_SHOT_EVERY");

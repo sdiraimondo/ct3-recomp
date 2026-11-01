@@ -604,6 +604,9 @@ extern "C" uint32_t custom_IDirect3DDevice9_Present(cpu_t *c, const uint32_t *a)
     present_count++;
     const char *shot = getenv("CT3_SHOT");
     if (shot && present_count == (uint32_t)atoi(shot)) dump_backbuffer(self, present_count);
+    /* CT3_SHOT_EVERY=N : une capture toutes les N présentations (suivi des écrans, diagnostic). */
+    const char *every = getenv("CT3_SHOT_EVERY");
+    if (every && atoi(every) > 0 && present_count % (uint32_t)atoi(every) == 0) dump_backbuffer(self, present_count);
     return (uint32_t)hr;
 }
 

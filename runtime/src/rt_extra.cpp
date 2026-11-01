@@ -6,8 +6,10 @@
 
 #include "rt_proc.h"
 #include "rt_shim.h"
+#include "rt_font.h"
 #include "rt_win.h"
 
+#include <map>
 #include <string>
 
 #include <cctype>
@@ -62,17 +64,125 @@ uint32_t new_obj()
 }
 
 // ---- GDI ------------------------------------------------------------------
+// Texte : polices hôte (rt_font.c) dessinées dans la mémoire du DIB sélectionné dans le DC. Les pinceaux et
+// le reste restent des handles fictifs.
+
+struct GdiFont {
+    int font;   // index dans rt_font
+    float px;   // taille em en pixels
+};
+struct GdiBitmap {
+    uint32_t bits;  // adresse invitée des pixels (DIB section)
+    int32_t w, h;
+    uint16_t bpp;
+};
+struct GdiDc {
+    uint32_t bitmap, font, text_color, bk_color, text_align;
+};
+std::map<uint32_t, GdiFont> gdi_fonts;
+std::map<uint32_t, GdiBitmap> gdi_bitmaps;
+std::map<uint32_t, GdiDc> gdi_dcs;
+
+GdiFont default_font()
+{
+    static GdiFont f = {-1, 16.0f};
+    if (f.font < 0) f.font = rt_font_open("Arial", 0, 0);
+    return f;
+}
+
+GdiFont font_of(uint32_t hfont)
+{
+    auto it = gdi_fonts.find(hfont);
+    if (it != gdi_fonts.end() && it->second.font >= 0) return it->second;
+    return default_font();
+}
+
+GdiDc dc_of(uint32_t hdc)
+{
+    auto it = gdi_dcs.find(hdc);
+    if (it != gdi_dcs.end()) return it->second;
+    return GdiDc{0, 0, 0x000000u, 0xFFFFFFu, 0};
+}
 
 uint32_t sh_GetStockObject(cpu_t *c, const uint32_t *a) { (void)c; return kStockBase + a[0]; }
-uint32_t sh_CreateCompatibleDC(cpu_t *c, const uint32_t *a) { (void)c; (void)a; return new_obj(); }
-uint32_t sh_DeleteDC(cpu_t *c, const uint32_t *a) { (void)c; (void)a; return 1; }
-uint32_t sh_DeleteObject(cpu_t *c, const uint32_t *a) { (void)c; (void)a; return 1; }
-uint32_t sh_SelectObject(cpu_t *c, const uint32_t *a) { (void)c; (void)a; return kObjBase; }
-uint32_t sh_SetBkColor(cpu_t *c, const uint32_t *a) { (void)c; (void)a; return 0; }
-uint32_t sh_SetTextColor(cpu_t *c, const uint32_t *a) { (void)c; (void)a; return 0; }
-uint32_t sh_SetTextAlign(cpu_t *c, const uint32_t *a) { (void)c; (void)a; return 0; }
+uint32_t sh_CreateCompatibleDC(cpu_t *c, const uint32_t *a)
+{
+    (void)c;
+    (void)a;
+    uint32_t h = new_obj();
+    gdi_dcs[h] = GdiDc{0, 0, 0x000000u, 0xFFFFFFu, 0};
+    return h;
+}
+uint32_t sh_DeleteDC(cpu_t *c, const uint32_t *a) { (void)c; gdi_dcs.erase(a[0]); return 1; }
+uint32_t sh_DeleteObject(cpu_t *c, const uint32_t *a)
+{
+    (void)c;
+    gdi_fonts.erase(a[0]);
+    gdi_bitmaps.erase(a[0]);
+    return 1;
+}
+uint32_t sh_SelectObject(cpu_t *c, const uint32_t *a)
+{
+    (void)c;
+    GdiDc &dc = gdi_dcs[a[0]];
+    if (gdi_bitmaps.count(a[1])) {
+        uint32_t old = dc.bitmap;
+        dc.bitmap = a[1];
+        return old ? old : kObjBase;
+    }
+    if (gdi_fonts.count(a[1])) {
+        uint32_t old = dc.font;
+        dc.font = a[1];
+        return old ? old : kObjBase;
+    }
+    return kObjBase;
+}
+uint32_t sh_SetBkColor(cpu_t *c, const uint32_t *a)
+{
+    (void)c;
+    GdiDc &dc = gdi_dcs[a[0]];
+    uint32_t old = dc.bk_color;
+    dc.bk_color = a[1];
+    return old;
+}
+uint32_t sh_SetTextColor(cpu_t *c, const uint32_t *a)
+{
+    (void)c;
+    GdiDc &dc = gdi_dcs[a[0]];
+    uint32_t old = dc.text_color;
+    dc.text_color = a[1];
+    return old;
+}
+uint32_t sh_SetTextAlign(cpu_t *c, const uint32_t *a)
+{
+    (void)c;
+    GdiDc &dc = gdi_dcs[a[0]];
+    uint32_t old = dc.text_align;
+    dc.text_align = a[1];
+    return old;
+}
 uint32_t sh_SetMapMode(cpu_t *c, const uint32_t *a) { (void)c; (void)a; return 1; }
-uint32_t sh_CreateFontA(cpu_t *c, const uint32_t *a) { (void)c; (void)a; return new_obj(); }
+
+// CreateFontA(nHeight, nWidth, nEscapement, nOrientation, fnWeight, fdwItalic, fdwUnderline, fdwStrikeOut,
+//             fdwCharSet, fdwOutputPrecision, fdwClipPrecision, fdwQuality, fdwPitchAndFamily, lpszFace)
+uint32_t sh_CreateFontA(cpu_t *c, const uint32_t *a)
+{
+    (void)c;
+    int32_t height = (int32_t)a[0];
+    float px = height < 0 ? (float)-height : (height > 0 ? (float)height : 16.0f);
+    int bold = (int32_t)a[4] >= 600;
+    int italic = a[5] != 0;
+    std::string face = cstr(a[13], 32);
+    bool readable = !face.empty();
+    for (unsigned char ch : face) {
+        if (!isprint(ch)) readable = false;
+    }
+    if (!readable) face = "Arial";
+    GdiFont f = {rt_font_open(face.c_str(), bold, italic), px};
+    uint32_t h = new_obj();
+    gdi_fonts[h] = f;
+    return h;
+}
 
 uint32_t sh_GetDeviceCaps(cpu_t *c, const uint32_t *a)
 {
@@ -89,22 +199,131 @@ uint32_t sh_GetDeviceCaps(cpu_t *c, const uint32_t *a)
     }
 }
 
+// Largeur d'une chaîne (lpDx facultatif : distances par caractère).
+float text_width(const std::string &text, GdiFont gf, uint32_t dx)
+{
+    float total = 0;
+    for (size_t i = 0; i < text.size(); i++) {
+        total += dx ? (float)(int32_t)get32(dx + 4 * (uint32_t)i)
+                    : rt_font_advance(gf.font, gf.px, (unsigned char)text[i]);
+    }
+    return total;
+}
+
+std::string read_text(uint32_t addr, uint32_t count)
+{
+    std::string s;
+    if (!addr) return s;
+    if (count > 1024) count = 1024;
+    s.assign((const char *)rt_mem_base + addr, count);
+    return s;
+}
+
 uint32_t sh_GetTextExtentPoint32A(cpu_t *c, const uint32_t *a)
 {
     (void)c;
-    // (hdc, lpString, c, lpSize) : largeur approchée, à remplacer par la métrique réelle de la police.
-    put32(a[3] + 0, a[2] * 8);
-    put32(a[3] + 4, 16);
+    // (hdc, lpString, c, lpSize)
+    GdiDc dc = dc_of(a[0]);
+    GdiFont gf = font_of(dc.font);
+    int asc = 0, desc = 0;
+    rt_font_metrics(gf.font, gf.px, &asc, &desc);
+    std::string text = read_text(a[1], a[2]);
+    put32(a[3] + 0, (uint32_t)(int32_t)(text_width(text, gf, 0) + 0.5f));
+    put32(a[3] + 4, (uint32_t)(asc + desc));
     return 1;
+}
+
+// Écrit un pixel (fond opaque ou couverture de glyphe) dans un DIB 32 ou 24 bits.
+void dib_blend(const GdiBitmap &bm, int x, int y, uint32_t color, unsigned alpha)
+{
+    int h = bm.h < 0 ? -bm.h : bm.h;
+    if (x < 0 || y < 0 || x >= bm.w || y >= h || alpha == 0) return;
+    uint32_t row = bm.h > 0 ? (uint32_t)(h - 1 - y) : (uint32_t)y;
+    uint8_t src[3] = {(uint8_t)(color >> 16), (uint8_t)(color >> 8), (uint8_t)color};  // BGR
+    if (bm.bpp == 32) {
+        uint8_t *p = rt_mem_base + bm.bits + row * (uint32_t)bm.w * 4u + (uint32_t)x * 4u;
+        for (int k = 0; k < 3; k++) p[k] = (uint8_t)((p[k] * (255 - alpha) + src[k] * alpha + 127) / 255);
+    } else if (bm.bpp == 24) {
+        uint32_t pitch = ((uint32_t)bm.w * 3u + 3u) & ~3u;
+        uint8_t *p = rt_mem_base + bm.bits + row * pitch + (uint32_t)x * 3u;
+        for (int k = 0; k < 3; k++) p[k] = (uint8_t)((p[k] * (255 - alpha) + src[k] * alpha + 127) / 255);
+    } else if (bm.bpp == 1) {
+        /* DIB monochrome (atlas de police) : le bit est allumé si la couleur est claire, sur les pixels couverts
+         * à plus de 50 %. Lignes alignées sur 32 bits, bit de poids fort en premier. */
+        if (alpha < 128) return;
+        uint32_t pitch = (((uint32_t)bm.w + 31u) / 32u) * 4u;
+        uint8_t *p = rt_mem_base + bm.bits + row * pitch + ((uint32_t)x >> 3);
+        uint8_t mask = (uint8_t)(0x80u >> ((uint32_t)x & 7u));
+        uint32_t lum = (src[2] * 299u + src[1] * 587u + src[0] * 114u) / 1000u;
+        if (lum >= 128) *p |= mask;
+        else *p &= (uint8_t)~mask;
+    }
 }
 
 uint32_t sh_ExtTextOutA(cpu_t *c, const uint32_t *a)
 {
     (void)c;
-    (void)a;
-    if (!warned_text) {
-        warned_text = true;
-        fprintf(stderr, "rt: ExtTextOutA : texte non rendu (pas encore pris en charge)\n");
+    static unsigned ext_count;
+    static const char *dump = getenv("CT3_ATLAS_DUMP");
+    ext_count++;
+    // (hdc, x, y, fuOptions, lprect, lpString, c, lpDx)
+    GdiDc dc = dc_of(a[0]);
+    auto bit = gdi_bitmaps.find(dc.bitmap);
+    if (bit == gdi_bitmaps.end()) return 1;  // rien à dessiner : aucun DIB sélectionné
+    const GdiBitmap &bm = bit->second;
+    GdiFont gf = font_of(dc.font);
+    int asc = 0, desc = 0;
+    rt_font_metrics(gf.font, gf.px, &asc, &desc);
+    std::string text = read_text(a[5], a[6]);
+    int32_t x = (int32_t)a[1], y = (int32_t)a[2];
+    if (getenv("CT3_GDIDBG")) fprintf(stderr, "[gdi] texte '%s' x=%d y=%d opts=0x%x dib=%dx%d bpp=%u\n", text.c_str(), x, y, a[3], bm.w, bm.h, bm.bpp);
+    static bool dumped;
+    static unsigned atlas_draws;
+    atlas_draws++;
+    if (dump && !dumped && atlas_draws >= (unsigned)atoi(getenv("CT3_ATLAS_N") ? getenv("CT3_ATLAS_N") : "95") && bm.bpp == 1) {
+        dumped = true;
+        /* Diagnostic : atlas monochrome écrit en PGM (P5) pour contrôle visuel. */
+        int h = bm.h < 0 ? -bm.h : bm.h;
+        if (FILE *f = fopen(dump, "wb")) {
+            fprintf(f, "P5\n%d %d\n255\n", bm.w, h);
+            uint32_t pitch = (((uint32_t)bm.w + 31u) / 32u) * 4u;
+            for (int y2 = 0; y2 < h; y2++) {
+                uint32_t row = bm.h > 0 ? (uint32_t)(h - 1 - y2) : (uint32_t)y2;
+                for (int x2 = 0; x2 < bm.w; x2++) {
+                    uint8_t byte = rt_mem_base[bm.bits + row * pitch + ((uint32_t)x2 >> 3)];
+                    uint8_t v = (byte >> (7 - (x2 & 7))) & 1 ? 255 : 0;
+                    fputc(v, f);
+                }
+            }
+            fclose(f);
+        }
+    }
+    float width = text_width(text, gf, a[7]);
+    int left = x;
+    if ((dc.text_align & 6) == 6) left = x - (int)(width / 2 + 0.5f);       // TA_CENTER
+    else if ((dc.text_align & 6) == 2) left = x - (int)(width + 0.5f);      // TA_RIGHT
+    int baseline = y + asc;
+    if (dc.text_align & 24) baseline = y;                                    // TA_BASELINE
+    else if (dc.text_align & 8) baseline = y - desc;                        // TA_BOTTOM
+    if ((a[3] & 2) && a[4]) {                                               // ETO_OPAQUE
+        int32_t r[4];
+        for (int k = 0; k < 4; k++) r[k] = (int32_t)get32(a[4] + 4 * k);
+        for (int32_t py = r[1]; py < r[3]; py++)
+            for (int32_t px = r[0]; px < r[2]; px++) dib_blend(bm, px, py, dc.bk_color, 255);
+    }
+    float pen = (float)left;
+    for (size_t i = 0; i < text.size(); i++) {
+        unsigned cp = (unsigned char)text[i];
+        int gw = 0, gh = 0, xo = 0, yo = 0;
+        unsigned char *cov = rt_font_glyph(gf.font, gf.px, cp, &gw, &gh, &xo, &yo);
+        int ox = (int)(pen + 0.5f);
+        if (cov) {
+            for (int gy = 0; gy < gh; gy++)
+                for (int gx = 0; gx < gw; gx++)
+                    dib_blend(bm, ox + xo + gx, baseline + yo + gy, dc.text_color, cov[gy * gw + gx]);
+            rt_font_glyph_free(cov);
+        }
+        pen += a[7] ? (float)(int32_t)get32(a[7] + 4 * (uint32_t)i) : rt_font_advance(gf.font, gf.px, cp);
     }
     return 1;
 }
@@ -134,7 +353,9 @@ uint32_t sh_CreateDIBSection(cpu_t *c, const uint32_t *a)
     uint32_t size = (uint32_t)(w < 0 ? -w : w) * (uint32_t)(h < 0 ? -h : h) * ((bpp + 7) / 8);
     uint32_t bits = rt_heap_alloc(size ? size : 1, 1);
     if (a[3]) put32(a[3], bits);
-    return new_obj();
+    uint32_t hbm = new_obj();
+    gdi_bitmaps[hbm] = GdiBitmap{bits, w, h, bpp};
+    return hbm;
 }
 
 // ---- ADVAPI32 / ole32 -----------------------------------------------------

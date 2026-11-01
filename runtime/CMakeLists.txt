@@ -21,6 +21,7 @@ add_library(ct3_rt STATIC
   "${CMAKE_CURRENT_SOURCE_DIR}/src/rt_d3d9_gen.cpp"
   "${CMAKE_CURRENT_SOURCE_DIR}/src/rt_win.cpp"
   "${CMAKE_CURRENT_SOURCE_DIR}/src/rt_extra.cpp"
+  "${CMAKE_CURRENT_SOURCE_DIR}/src/rt_font.c"
   "${CMAKE_CURRENT_SOURCE_DIR}/src/rt_fs.cpp")
 target_include_directories(ct3_rt PUBLIC
   "${CMAKE_CURRENT_SOURCE_DIR}/include"

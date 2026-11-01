@@ -347,6 +347,13 @@ Outils ajoutés (build de traçage) : `CT3_MEMWATCH=lo-hi` (écritures dans une 
 - **Limite actuelle** : les menus écrivent leur texte avec GDI (`ExtTextOutA`, 190 appels) ; notre bridge ne rend pas ce texte. L'écran à 3 800 images est noir.
 - **Audio** : le jeu ouvre des `.aif`, `.ogg` ; la sortie son reste muette (DirectSound stub).
 
+### Texte GDI : polices et atlas (1er nov. 2026, D-050)
+
+- **Implémentation** : polices hôte rendues par stb_truetype v1.26 (`runtime/third_party/stb_truetype.h`, domaine public) ; le fichier de police est choisi par `fc-match` (fontconfig), avec repli sur Liberation Sans (`runtime/src/rt_font.c`). DC, polices et DIB deviennent des objets suivis (`runtime/src/rt_extra.cpp`) ; `ExtTextOutA` dessine les glyphes dans le DIB sélectionné (32, 24 et 1 bit ; le 1 bit sert aux atlas de police).
+- **Constat** : le jeu construit un atlas de police monochrome 256×256 au démarrage (95 dessins avec DIB). L'atlas est correct (`captures/gdi_atlas_police.png`). Les 190 appels `ExtTextOutA` incluent 95 appels sans DIB (ignorés, normal).
+- **Pas encore visible** : aucun texte de menu à l'écran. Après « PRESS START », l'écran reste noir avec « PRESS START » seul ; le menu qui utiliserait l'atlas n'apparaît pas encore. Cause non identifiée (état du jeu à suivre).
+- **Diagnostic** : `CT3_GDIDBG=1` (chaque texte), `CT3_ATLAS_DUMP=<fichier.pgm>` (atlas), `CT3_SHOT_EVERY=N` (capture périodique des écrans).
+
 ## Environnement (31 oct. 2026)
 
 - KWin (session Plasma/Wayland) ne mappe plus les fenêtres X11 nouvelles : constaté sur G1, glxgears et CT3. Une commande de rechargement de KWin (`org.kde.KWin.reconfigure`) a été lancée par erreur, sans effet visible. Non traité : redémarrer la session graphique (déconnexion/reconnexion) devrait suffire, à confirmer par l'utilisateur.

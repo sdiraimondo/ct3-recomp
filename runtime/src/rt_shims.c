@@ -21,7 +21,7 @@ unsigned rt_shim_calls;
 uint32_t rt_shim_last_arg0;
 
 /* Trace des imports : 1 = écrit chaque appel sur stderr. */
-int rt_trace_imports = 1;
+int rt_trace_imports = 0;  /* CT3_IMPORTS=1 : trace des imports (volumineuse) */
 
 
 static uint32_t now_ms(void)
@@ -727,6 +727,16 @@ void rt_shim_call(cpu_t *c, uint32_t addr)
     if (rt_trace_imports) {
         fprintf(stderr, "[retour] %s -> 0x%x\n", e->name, ret);
     }
+    if (getenv("CT3_FRAMESTAT")) {
+        static uint32_t draws, tex, texnull, clears, prims;
+        if (strstr(e->name, "DrawPrimitive")) { draws++; prims += args[3]; }
+        else if (strstr(e->name, "::Clear")) clears++;
+        else if (strstr(e->name, "::SetTexture") && args[1] == 0) { if (args[2]) tex++; else texnull++; }
+        else if (strstr(e->name, "::Present")) {
+            fprintf(stderr, "[frame] draws=%u prims=%u clears=%u tex0=%u tex0null=%u\n", draws, prims, clears, tex, texnull);
+            draws = prims = clears = tex = texnull = 0;
+        }
+    }
     cpu_wr(c, 0, 4, ret);
     /* stdcall : l'appelé dépile l'adresse de retour et les arguments. */
     cpu_wr(c, 16, 4, esp + 4 + 4 * e->nargs);
@@ -781,6 +791,12 @@ void rt_unresolved(cpu_t *c, uint32_t addr)
     uint32_t ret = (uint32_t)guest_ld(c, esp, 4);
     fprintf(stderr, "rt: appel vers une adresse non traduite 0x%08x (retour invité 0x%08x)\n", addr, ret);
     rt_probe_dump();
+    if (getenv("CT3_UNRESDBG")) {
+        uint32_t obj = (uint32_t)guest_ld(c, 0x724e10u, 4);
+        uint32_t vt = obj ? (uint32_t)guest_ld(c, obj, 4) : 0;
+        fprintf(stderr, "rt: [724e10]=0x%08x vtable=0x%08x [vt+0x18]=0x%08x [vt+0x0]=0x%08x\n", obj, vt,
+                vt ? (uint32_t)guest_ld(c, vt + 0x18, 4) : 0, vt ? (uint32_t)guest_ld(c, vt, 4) : 0);
+    }
     exit(3);
 }
 

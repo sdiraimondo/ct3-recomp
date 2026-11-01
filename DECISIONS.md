@@ -354,6 +354,20 @@ Outils ajoutés (build de traçage) : `CT3_MEMWATCH=lo-hi` (écritures dans une 
 - **Pas encore visible** : aucun texte de menu à l'écran. Après « PRESS START », l'écran reste noir avec « PRESS START » seul ; le menu qui utiliserait l'atlas n'apparaît pas encore. Cause non identifiée (état du jeu à suivre).
 - **Diagnostic** : `CT3_GDIDBG=1` (chaque texte), `CT3_ATLAS_DUMP=<fichier.pgm>` (atlas), `CT3_SHOT_EVERY=N` (capture périodique des écrans).
 
+### Menu toujours absent : décisions et constats (1er nov. 2026, D-051 à D-054)
+
+- **D-051 : curseur de lecture DirectSound modélisé sur l'horloge** (`runtime/src/rt_extra.cpp`). Avant : `GetCurrentPosition` renvoyait toujours 0, `GetStatus` toujours « arrêté », `Play`/`Stop`/`SetCurrentPosition` ne faisaient rien. Le thread audio du jeu (`0x413560`, qui appelle `GetCurrentPosition` toutes les 250 ms) ne voyait donc jamais progresser la lecture. Après : `Play` démarre un curseur (176 400 octets/s, horloge monotone, bouclage si `DSBPLAY_LOOPING`), `Stop` et `SetCurrentPosition` le modifient, `GetStatus` renvoie `DSBSTATUS_PLAYING`/`LOOPING`. Le blocage en état 7 n'est pas levé pour autant (voir D-054), mais le comportement est plus proche d'un vrai périphérique. Choix retenu : modèle à horloge, sans sortie son encore (SDL reste prévu, D-008).
+- **D-052 : export Ghidra, fonctions après remplissage `int3`** (`tools/ghidra/ExportFunctions.java`). Un point aligné sur 16 octets, précédé d'un `int3` et sans fonction, devient candidat (convention MSVC). Cas réel : `0x4519D0`, atteint par appel indirect depuis une table, n'était pas une fonction. Les entrées créées pendant le traitement sont aussi exportées (sinon elles étaient perdues). Résultat : 5 743 fonctions traduites, compilation sans erreur. Les candidats rejetés sont comptés dans `export.log`.
+- **D-053 : trace des imports désactivée par défaut** (`CT3_IMPORTS=1` pour l'activer). Elle produisait des journaux de plusieurs Go (saturation de `/tmp`). `CT3_FRAMESTAT=1` donne un résumé par image (dessins, primitives, `Clear`, textures liées), léger.
+- **D-054 : constats sur le noir et le logo** (conclusions, pas une correction) :
+  1. Les images noires ne viennent pas d'une texture corrompue : les textures du logo sont en DXT1 et copiées telles quelles (`o->dxt = 0`, aucun déverrouillage ne les touche).
+  2. Les images noires viennent du jeu lui-même : il ne dessine pas le logo (1 seul dessin de 2 primitives au lieu de 3 ou 4). Corrélation vérifiée image par image : 3 dessins (6 primitives) ou 4 (28, avec « PRESS START ») = logo visible ; 1 dessin = écran noir ou « PRESS START » seul.
+  3. En sous-état 2 de l'état 3, le jeu ne dessine plus le logo et aucun menu : hypothèse non vérifiée : des ressources de menu non chargées (le chargeur n'a pas fini), plutôt qu'un problème de rendu.
+  4. Le fondu (`[0x7178A8+0x54]`, valeur 255 puis 0) explique seulement l'état 7 ; il ne rend pas le titre noir (il vaut 0 pendant tout le titre visible).
+  5. **Blocage de l'état 7** : reproductible seulement avec la trace d'imports (timing). L'état 7 attend `[0x717889]`, mis à 1 par `0x42D930` quand le chargeur (`[0x71EF8C]`, piloté par `0x440DA0`/`0x440280`) avance. Le chargeur reste à 0. Piste : un thread de chargement (`0x413E10`) ou un événement qui dépend du temps réel.
+  6. **Piste écartée** : empreintes de texture par `LockRect` en lecture seule (`CT3_TEXHASH`, retiré) : résultat non fiable, la lecture renvoie une mémoire de transit de dxvk.
+- **État** : le menu n'apparaît pas. Prochaine étape recommandée : identifier pourquoi `[0x71EF8C]` reste à 0 (quel thread doit le faire avancer, et pourquoi il ne tourne pas à temps), puis vérifier que le logo et le menu sont redessinés.
+
 ## Environnement (31 oct. 2026)
 
 - KWin (session Plasma/Wayland) ne mappe plus les fenêtres X11 nouvelles : constaté sur G1, glxgears et CT3. Une commande de rechargement de KWin (`org.kde.KWin.reconfigure`) a été lancée par erreur, sans effet visible. Non traité : redémarrer la session graphique (déconnexion/reconnexion) devrait suffire, à confirmer par l'utilisateur.

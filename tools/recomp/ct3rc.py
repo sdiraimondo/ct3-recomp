@@ -670,8 +670,7 @@ def main():
         f.write("    if (addr >= RT_STUB_BASE && addr < RT_STUB_END) {\n")
         f.write("        rt_shim_call(c, addr);\n        return;\n    }\n")
         f.write("    rt_jmp_try(c, addr);\n")
-        if TRACE_INSN:
-            f.write("    rt_watch_entry(c, addr);\n")
+        f.write("    rt_watch_entry(c, addr);\n")  # CT3_WATCH : sans effet si la variable est absente
         f.write("    switch (addr) {\n")
         for entry, cname in sorted(entries):
             f.write("    case 0x%08x: %s(c); return;\n" % (entry, cname))

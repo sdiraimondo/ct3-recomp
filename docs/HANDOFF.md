@@ -79,6 +79,14 @@ au dernier commit (`0df49a9`).
 | `CT3_FILELOG=1` | Journalise ouvertures de fichiers et lectures |
 | `CT3_GDIDBG=1` | Journalise chaque texte GDI |
 | `CT3_ATLAS_DUMP=f.pgm` | Exporte l'atlas de police (DIB monochrome) |
+| `CT3_KEY_AT2=N` | Second appui sur Entrée à la N-ième présentation (sous-état 1 vers 2 de l'état 3) |
+| `CT3_SHOT_FROM=N` | Avec `CT3_SHOT_EVERY`, ne capture qu'à partir de la N-ième présentation |
+| `CT3_SHOT_PRE=1` | Capture avant `Present` (au lieu d'après) |
+| `CT3_IMPORTS=1` | Trace de chaque import Win32 (très volumineuse : plusieurs Go ; **ralentit le jeu et peut bloquer l'état 7**) |
+| `CT3_FRAMESTAT=1` | Une ligne par présentation : dessins, primitives, `Clear`, textures liées (léger) |
+| `CT3_WATCH=42e140` | Une ligne par appel du dispatcher : état, sous-état, trame, alpha de fondu, état du chargeur (`[0x71EF8C]`), drapeau `[0x717889]` |
+| `CT3_LOCKDBG=1` | Une ligne par déverrouillage de surface ou texture (objet, hôte, nombre d'octets non nuls) |
+| `CT3_UNRESDBG=1` | À un appel non traduit, affiche l'objet `[0x724E10]` et sa vtable |
 | `CT3_ALLOCLOG=1` | Journal des allocations et libérations avec appelants du jeu |
 | `CT3_HEAPCHK=1` | Vérification de cohérence du tas après chaque opération (lent) |
 | `CT3_COMDBG=1` | Signale la réutilisation d'un wrapper COM pour une autre interface |
@@ -183,19 +191,34 @@ Pour compter les images, utiliser `grep -c "retour\] d3d9com::IDirect3DDevice9::
 
 ## 7. État actuel et prochaine étape
 
-- Dernier commit : `0df49a9`. Arbre de travail propre à la fin de la session précédente.
-- Le jeu tourne au-delà de 4 000 images sans erreur (build normal, Xvfb, llvmpipe).
-- **Ce qui manque pour voir le menu** : après « PRESS START » (état 3 → 6 → 7 → 2 → 3), l'écran devient noir avec
-  seul « PRESS START » visible. Le menu n'apparaît pas. Hypothèses à vérifier, dans l'ordre :
-  1. Un état attend un résultat (audio terminé, fichier chargé, timer) qui ne vient jamais. Suivre
-     `[0x7BC334]` et `[0x717884]` après la touche (`CT3_WATCH=42e140` sur un build `-O0` ; l'état 3 dure
-     environ 1 000 images).
-  2. Le menu est dessiné avec des textures issues de l'atlas ou de DIB que notre pont ne restitue pas
-     (vérifier `CreateTexture`/`LockRect` pour les formats du jeu, et l'upload depuis un DIB).
-  3. La transition attend un événement (fin de vidéo, de son) : vérifier les `Sleep` et les appels
-     `GetCurrentPosition`/`GetStatus` de DirectSound.
-- Pistes de travail déjà repérées : `CreateFontA` reçoit un nom de police illisible (vérifier l'argument) ;
-  `GetObjectA`, `GetDIBits`, `SetDIBits` non implémentés ; BitBlt absent.
+- Commits : dernier commit du travail `0df49a9` puis `f91405d` (ce document). Les modifications de la session
+  « menu » (décrites ci-dessous et dans `DECISIONS.md` D-051 à D-054) sont **non commitées à la rédaction** ; les
+  tests (`test_cpu`, `test_vec`, `test_g2`, `test_x87`, `g1_d3d9_triangle`) passent avec elles.
+- Le jeu tourne sans erreur au-delà de 5 000 images (build normal, Xvfb, llvmpipe). Enchaînement observé, sans
+  trace d'imports : intros, titre (logo + « PRESS START »), appui (`CT3_KEY_AT=2400`), état 6, état 7 (fondu 255
+  vers 0), état 2, état 3 sous-état 1, second appui (`CT3_KEY_AT2=3700`), état 3 sous-état 2.
+- **Le menu n'apparaît toujours pas.** Constats établis (détail dans `DECISIONS.md`, D-054) :
+  1. Les images noires viennent du **jeu** : il ne dessine pas le logo ce jour-là. `CT3_FRAMESTAT=1` donne 1 dessin
+     (2 primitives) quand l'écran est noir ou ne montre que « PRESS START », contre 3 ou 4 dessins quand le logo est
+     visible. Les textures du logo sont copiées telles quelles (DXT1), sans corruption détectée.
+  2. En sous-état 2 de l'état 3, aucun logo ni menu n'est dessiné. Hypothèse non vérifiée : les ressources du menu
+     ne sont pas chargées.
+  3. **Blocage de l'état 7** : avec `CT3_IMPORTS=1`, le jeu reste à l'état 7 (sous-état 0) pendant plus de 30 000
+     images, avec `chargeur=0` et `flag=0` (`CT3_WATCH=42e140`). L'état 7 attend le drapeau `[0x717889]`, mis à 1
+     par `0x42D930` quand le chargeur `[0x71EF8C]` avance. Ce dernier est piloté par `0x440DA0`/`0x440280`, dans un
+     thread de chargement. Le thread audio (`0x413560`, appelle `GetCurrentPosition` toutes les 250 ms) a été rendu
+     réaliste (D-051) mais le blocage persiste : la cause est ailleurs.
+- **Prochaine étape recommandée** :
+  1. Identifier le thread qui doit faire avancer `[0x71EF8C]` (quel thread appelle `0x440DA0`), vérifier s'il
+     démarre et s'il se bloque (événement, `WaitForSingleObject` avec délai, `timeGetTime`/`QueryPerformanceCounter`).
+     Le blocage n'apparaît que sous trace : il est dépendant du temps, donc probablement lié à une attente temporisée.
+  2. Une fois l'état 7 franchi sous trace, vérifier que le logo et le menu sont redessinés (`CT3_FRAMESTAT`).
+  3. Pistes annexes : `CreateFontA` reçoit un nom de police illisible ; `GetObjectA`, `GetDIBits`, `SetDIBits`
+     non implémentés ; BitBlt absent ; sortie son (SDL, D-008).
+- **Piège de mesure** : `CT3_TEXHASH` (empreintes de textures par `LockRect` en lecture seule) donnait des valeurs
+  qui changeaient sans raison : la lecture renvoie de la mémoire de transit de dxvk. Ne pas s'y fier.
+- **Dépôt** : un fichier `index.html` non suivi (contenu : une réponse JSON d'erreur d'un serveur) est apparu dans le
+  dépôt pendant la session, sans origine connue. Il n'a pas été supprimé : à vérifier avec l'utilisateur.
 
 ## 8. Pièges connus
 

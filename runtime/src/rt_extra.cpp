@@ -16,6 +16,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <ctime>
 #include <string>
 
 namespace {
@@ -736,18 +737,90 @@ uint32_t sh_dsb_Lock(cpu_t *c, const uint32_t *a)
     return 0;
 }
 
+// Curseur de lecture : horloge monotone, 44,1 kHz 16 bits stéréo (176 400 octets/s, comme GetFormat).
+// Le jeu attend la progression de ce curseur (thread de streaming) : un curseur figé bloque le chargement.
+struct dsb_play {
+    bool playing = false;
+    bool looping = false;
+    double start = 0;
+    uint32_t base = 0;
+};
+std::map<uint32_t, dsb_play> dsb_plays;
+
+double mono_now()
+{
+    timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return ts.tv_sec + ts.tv_nsec * 1e-9;
+}
+
+uint32_t dsb_cursor(uint32_t obj)
+{
+    uint32_t size = get32(obj + 8);
+    dsb_play &p = dsb_plays[obj];
+    if (!p.playing || size == 0) return p.base < size ? p.base : size;
+    uint64_t pos = p.base + (uint64_t)((mono_now() - p.start) * 176400.0);
+    if (p.looping) return (uint32_t)(pos % size);
+    if (pos >= size) {
+        p.playing = false;
+        p.base = size;
+        return size;
+    }
+    return (uint32_t)pos;
+}
+
 uint32_t sh_dsb_GetCurrentPosition(cpu_t *c, const uint32_t *a)
 {
     (void)c;
-    if (a[1]) put32(a[1], 0);
-    if (a[2]) put32(a[2], 0);
+    uint32_t cur = dsb_cursor(a[0]);
+    if (a[1]) put32(a[1], cur);
+    if (a[2]) put32(a[2], cur);
     return 0;
 }
 
 uint32_t sh_dsb_GetStatus(cpu_t *c, const uint32_t *a)
 {
     (void)c;
-    if (a[1]) put32(a[1], 0);
+    dsb_cursor(a[0]);
+    const dsb_play &p = dsb_plays[a[0]];
+    uint32_t st = p.playing ? (1u | (p.looping ? 4u : 0u)) : 0u;  // DSBSTATUS_PLAYING, DSBSTATUS_LOOPING
+    if (a[1]) put32(a[1], st);
+    return 0;
+}
+
+// Play(this, dwReserved1, dwPriority, dwFlags) : DSBPLAY_LOOPING = 1. Reprend au curseur courant.
+uint32_t sh_dsb_Play(cpu_t *c, const uint32_t *a)
+{
+    (void)c;
+    uint32_t cur = dsb_cursor(a[0]);
+    uint32_t size = get32(a[0] + 8);
+    bool looping = (a[3] & 1) != 0;
+    if (!looping && size && cur >= size) cur = 0;
+    dsb_play &p = dsb_plays[a[0]];
+    p.base = cur;
+    p.looping = looping;
+    p.start = mono_now();
+    p.playing = true;
+    return 0;
+}
+
+uint32_t sh_dsb_Stop(cpu_t *c, const uint32_t *a)
+{
+    (void)c;
+    uint32_t cur = dsb_cursor(a[0]);
+    dsb_play &p = dsb_plays[a[0]];
+    p.base = cur;
+    p.playing = false;
+    return 0;
+}
+
+// SetCurrentPosition(this, dwNewPosition)
+uint32_t sh_dsb_SetCurrentPosition(cpu_t *c, const uint32_t *a)
+{
+    (void)c;
+    dsb_play &p = dsb_plays[a[0]];
+    p.base = a[1];
+    if (p.playing) p.start = mono_now();
     return 0;
 }
 
@@ -1093,13 +1166,13 @@ extern "C" const rt_shim_entry rt_extra_table[] = {
     {"dsoundcom::IDirectSoundBuffer::GetStatus", 2, sh_dsb_GetStatus},
     {"dsoundcom::IDirectSoundBuffer::Initialize", 3, sh_ds_ok},
     {"dsoundcom::IDirectSoundBuffer::Lock", 8, sh_dsb_Lock},
-    {"dsoundcom::IDirectSoundBuffer::Play", 4, sh_ds_ok},
-    {"dsoundcom::IDirectSoundBuffer::SetCurrentPosition", 2, sh_ds_ok},
+    {"dsoundcom::IDirectSoundBuffer::Play", 4, sh_dsb_Play},
+    {"dsoundcom::IDirectSoundBuffer::SetCurrentPosition", 2, sh_dsb_SetCurrentPosition},
     {"dsoundcom::IDirectSoundBuffer::SetFormat", 2, sh_ds_ok},
     {"dsoundcom::IDirectSoundBuffer::SetVolume", 2, sh_ds_ok},
     {"dsoundcom::IDirectSoundBuffer::SetPan", 2, sh_ds_ok},
     {"dsoundcom::IDirectSoundBuffer::SetFrequency", 2, sh_ds_ok},
-    {"dsoundcom::IDirectSoundBuffer::Stop", 1, sh_ds_ok},
+    {"dsoundcom::IDirectSoundBuffer::Stop", 1, sh_dsb_Stop},
     {"dsoundcom::IDirectSoundBuffer::Unlock", 5, sh_ds_ok},
     {"dsoundcom::IDirectSoundBuffer::Restore", 1, sh_ds_ok},
     {"dsoundcom::IDirectSoundBuffer::SetFX", 4, sh_ds_ok},

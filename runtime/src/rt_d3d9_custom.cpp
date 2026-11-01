@@ -407,6 +407,11 @@ static uint32_t lock_image(cpu_t *c, rt_com_obj *o, uint32_t sub, D3DFORMAT fmt,
 static uint32_t unlock_image(rt_com_obj *o, uint32_t sub)
 {
     lock_rec *r = find_lock(o, sub);
+    if (getenv("CT3_LOCKDBG") && r) {
+        uint32_t nz = 0;
+        for (uint32_t k = 0; k < r->rows * r->pitch; k += 4) nz += rt_mem_base[r->buf + k] != 0;
+        fprintf(stderr, "[unlock] o=%p host=%p sub=%u buf=0x%x pitch=%u rows=%u nz=%u dxt=%u\n", (void *)o, (void *)o->host, sub, r->buf, r->pitch, r->rows, nz, r->dxt);
+    }
     if (r) {
         if (r->dxt) {
             decode_dxt(r);
@@ -588,6 +593,12 @@ void dump_backbuffer(IDirect3DDevice9 *dev, uint32_t frame)
 extern "C" uint32_t custom_IDirect3DDevice9_Present(cpu_t *c, const uint32_t *a)
 {
     rt_probe_present();
+    /* CT3_SHOT_PRE=1 : capture avant Present (le contenu du back buffer n'est pas garanti après Present). */
+    if (getenv("CT3_SHOT_PRE")) {
+        const char *every0 = getenv("CT3_SHOT_EVERY");
+        uint32_t next = present_count + 1;
+        if (every0 && atoi(every0) > 0 && next % (uint32_t)atoi(every0) == 0) dump_backbuffer(rt_self<IDirect3DDevice9>(a[0]), next);
+    }
     {
         static long key_at = -2;
         if (key_at == -2) {
@@ -596,6 +607,13 @@ extern "C" uint32_t custom_IDirect3DDevice9_Present(cpu_t *c, const uint32_t *a)
         }
         if (key_at >= 0 && present_count == key_at) rt_win_test_key(1);
         if (key_at >= 0 && present_count == key_at + 20) rt_win_test_key(0);
+        static long key_at2 = -2;
+        if (key_at2 == -2) {
+            const char *k = getenv("CT3_KEY_AT2");
+            key_at2 = k ? atol(k) : -1;
+        }
+        if (key_at2 >= 0 && present_count == key_at2) rt_win_test_key(1);
+        if (key_at2 >= 0 && present_count == key_at2 + 20) rt_win_test_key(0);
     }
     (void)c;
     IDirect3DDevice9 *self = rt_self<IDirect3DDevice9>(a[0]);
@@ -606,7 +624,10 @@ extern "C" uint32_t custom_IDirect3DDevice9_Present(cpu_t *c, const uint32_t *a)
     if (shot && present_count == (uint32_t)atoi(shot)) dump_backbuffer(self, present_count);
     /* CT3_SHOT_EVERY=N : une capture toutes les N présentations (suivi des écrans, diagnostic). */
     const char *every = getenv("CT3_SHOT_EVERY");
-    if (every && atoi(every) > 0 && present_count % (uint32_t)atoi(every) == 0) dump_backbuffer(self, present_count);
+    const char *every_from = getenv("CT3_SHOT_FROM");
+    if (every && atoi(every) > 0 && present_count % (uint32_t)atoi(every) == 0
+        && present_count >= (uint32_t)(every_from ? atoi(every_from) : 0))
+        dump_backbuffer(self, present_count);
     return (uint32_t)hr;
 }
 

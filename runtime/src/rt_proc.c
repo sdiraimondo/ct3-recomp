@@ -265,7 +265,7 @@ void rt_watch_entry(cpu_t *c, uint32_t addr)
         watch = w ? (uint32_t)strtoul(w, NULL, 16) : 0;
         init = 1;
     }
-    if (!watch || addr != watch || shown >= 5000) return;
+    if (!watch || addr != watch || shown >= 50000) return;
     shown++;
     uint32_t ecx = (uint32_t)cpu_rd(c, 4, 4);
     uint32_t esp = (uint32_t)cpu_rd(c, 16, 4);
@@ -279,6 +279,7 @@ void rt_watch_entry(cpu_t *c, uint32_t addr)
             w18 = watch_rd(e0 + 0x18, 2);
         }
     }
-    fprintf(stderr, "[watch 0x%08x] ecx=0x%08x arg=0x%08x n8c=%u tbl=0x%08x e0=0x%08x w18=%u etat=%u\n",
-            addr, ecx, arg, n8c, n88, t0, w18, watch_rd(0x7bc334u, 4));
+    fprintf(stderr, "[watch 0x%08x] etat=%u sous=%u trame=%u fondu=%u chargeur=%u flag=%u\n", addr,
+            watch_rd(0x7bc334u, 4), watch_rd(0x7bc354u, 4), watch_rd(0x717884u, 4), watch_rd(0x7178fcu, 4),
+            watch_rd(0x71ef8cu, 4), watch_rd(0x717889u, 1));
 }

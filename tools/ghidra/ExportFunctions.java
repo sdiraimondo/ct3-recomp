@@ -126,6 +126,24 @@ public class ExportFunctions extends GhidraScript {
                 }
             }
         }
+        /* Débuts de fonction après un remplissage int3 (convention MSVC : alignement sur 16 octets). Ghidra ne
+         * crée pas toujours ces fonctions quand elles ne sont atteintes que par des appels indirects. */
+        for (ghidra.program.model.mem.MemoryBlock block : mem.getBlocks()) {
+            if (!block.isInitialized() || !block.isExecute()) {
+                continue;
+            }
+            long start = block.getStart().getOffset();
+            long end = block.getEnd().getOffset();
+            for (long v = (start + 15) & ~15L; v < end; v += 16) {
+                Address a = program.getAddressFactory().getDefaultAddressSpace().getAddress(v);
+                if (fm.getFunctionAt(a) != null) {
+                    continue;
+                }
+                if (mem.getByte(a.subtract(1)) == (byte) 0xCC && mem.getByte(a) != (byte) 0xCC) {
+                    candidates.add(v);
+                }
+            }
+        }
         /* Cibles de branchement ou d'appel direct hors de la fonction courante, sans fonction connue. */
         for (Function f : fm.getFunctions(true)) {
             if (f.isExternal()) {
@@ -173,9 +191,14 @@ public class ExportFunctions extends GhidraScript {
         }
         int created = 0, rejected = 0;
         List<Address> interior = new java.util.ArrayList<>();
+        java.util.Set<String> listed = new java.util.HashSet<>(addrs);
         for (long v : candidates) {
             Address target = program.getAddressFactory().getDefaultAddressSpace().getAddress(v);
             if (fm.getFunctionAt(target) != null) {
+                /* Créée par Ghidra pendant ce traitement (désassemblage d'un candidat voisin) : à exporter aussi. */
+                if (listed.add(target.toString())) {
+                    addrs.add(target.toString());
+                }
                 continue;
             }
             /* Adresse située dans une fonction connue : créer une fonction la découperait. Entrée intérieure. */

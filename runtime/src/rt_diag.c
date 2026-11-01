@@ -13,6 +13,7 @@
 #include <stdlib.h>
 #include <string.h>
 
+extern int rt_trace_imports;
 uint32_t rt_probe_lo, rt_probe_span;
 
 /* CT3_RING=<n presents> : après ce nombre de présentations, les 256 dernières instructions sont gardées
@@ -113,6 +114,7 @@ static void parse_range(const char *v, uint32_t *lo, uint32_t *span)
 
 void rt_diag_init(void)
 {
+    rt_trace_imports = getenv("CT3_IMPORTS") != NULL;
     const char *mw = getenv("CT3_MEMWATCH");
     if (mw) parse_range(mw, &rt_memwatch_lo, &rt_memwatch_span);
     const char *mv = getenv("CT3_MEMWATCH_VAL");

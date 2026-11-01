@@ -45,23 +45,18 @@ void rt_regs_check(cpu_t *c, const uint32_t s[4], uint32_t site, uint32_t target
     }
 }
 
-/* Tas : allocateur à croissance monotone, avec réutilisation des blocs libérés (listes par taille).
- * Chaque bloc a un en-tête de 8 octets (taille demandée). */
+/* Tas : allocateur à classes de taille (puissances de deux). Chaque bloc a un en-tête de 8 octets : taille
+ * demandée (ou taille restante pour un bloc libre) et marque d'état. La taille totale d'un bloc se déduit de
+ * l'en-tête (block_total). Un bloc libre est mis dans la liste de sa classe ; son premier mot de charge utile
+ * est le lien. Les blocs libres sont découpés pour les demandes plus petites et fusionnés avec le bloc
+ * physiquement suivant ; le bloc de tête revient au pointeur de croissance. */
 static uint32_t heap_next = RT_HEAP_BASE;
-
-#define RT_HEAP_CLASSES 512
-#define RT_HEAP_FREE_MAX 4096
 
 #define RT_BLOCK_USED 0x5A110CEDu
 #define RT_BLOCK_FREE 0xF4EEF4EEu
+#define RT_HEAP_BINS 32
 
-typedef struct rt_free_block {
-    uint32_t block;   /* adresse invitée de l'en-tête */
-    uint32_t total;   /* taille totale du bloc */
-} rt_free_block;
-
-static rt_free_block free_blocks[RT_HEAP_FREE_MAX];
-static unsigned free_count;
+static uint32_t heap_bins[RT_HEAP_BINS];
 
 static void put32(uint32_t addr, uint32_t v)
 {
@@ -80,28 +75,69 @@ static uint32_t block_total(uint32_t size)
     return (size + 8 + 15) & ~15u;
 }
 
+static unsigned bin_of(uint32_t total)
+{
+    return 31u - (unsigned)__builtin_clz(total);
+}
+
+static void bin_insert(uint32_t block, uint32_t total)
+{
+    unsigned b = bin_of(total);
+    put32(block + 4, RT_BLOCK_FREE);
+    put32(block + 8, heap_bins[b]);
+    heap_bins[b] = block;
+}
+
+static void bin_remove(uint32_t block, uint32_t total)
+{
+    unsigned b = bin_of(total);
+    uint32_t prev = 0;
+    for (uint32_t cur = heap_bins[b]; cur; prev = cur, cur = get32(cur + 8)) {
+        if (cur == block) {
+            if (prev) put32(prev + 8, get32(block + 8));
+            else heap_bins[b] = get32(block + 8);
+            return;
+        }
+    }
+}
+
 uint32_t rt_heap_alloc(uint32_t size, int zero)
 {
     uint32_t total = block_total(size);
     uint32_t block = 0;
-    for (unsigned i = 0; i < free_count; i++) {
-        if (free_blocks[i].total == total) {
-            block = free_blocks[i].block;
-            free_blocks[i] = free_blocks[--free_count];
-            break;
+    for (unsigned b = bin_of(total); b < RT_HEAP_BINS && !block; b++) {
+        uint32_t prev = 0;
+        for (uint32_t cur = heap_bins[b]; cur; prev = cur, cur = get32(cur + 8)) {
+            uint32_t have = block_total(get32(cur));
+            if (have >= total) {
+                if (prev) put32(prev + 8, get32(cur + 8));
+                else heap_bins[b] = get32(cur + 8);
+                block = cur;
+                break;
+            }
         }
     }
-    if (!block) {
+    if (block) {
+        uint32_t have = block_total(get32(block));
+        if (have - total >= 32) {
+            uint32_t rest = block + total;
+            put32(rest, have - total - 8);
+            bin_insert(rest, have - total);
+        } else {
+            total = have;
+        }
+    } else {
         if (heap_next + total > RT_HEAP_BASE + RT_HEAP_SIZE) {
             rt_fatal("tas invité épuisé");
         }
         block = heap_next;
         heap_next += total;
     }
-    put32(block, size);
+    uint32_t cap = total - 8;
+    put32(block, cap);
     put32(block + 4, RT_BLOCK_USED);
     if (zero) {
-        memset(rt_mem_base + block + 8, 0, size);
+        memset(rt_mem_base + block + 8, 0, cap);
     }
     return block + 8;
 }
@@ -112,12 +148,20 @@ void rt_heap_free(uint32_t p)
     uint32_t block = p - 8;
     /* Seuls les blocs alloués sont libérables : double libération et pointeurs intérieurs sont ignorés. */
     if (block < RT_HEAP_BASE || block >= heap_next || get32(block + 4) != RT_BLOCK_USED) return;
-    put32(block + 4, RT_BLOCK_FREE);
-    if (free_count < RT_HEAP_FREE_MAX) {
-        free_blocks[free_count].block = block;
-        free_blocks[free_count].total = block_total(get32(block));
-        free_count++;
+    uint32_t total = block_total(get32(block));
+    uint32_t next = block + total;
+    while (next < heap_next && get32(next + 4) == RT_BLOCK_FREE) {
+        uint32_t nt = block_total(get32(next));
+        bin_remove(next, nt);
+        total += nt;
+        next = block + total;
     }
+    if (next == heap_next) {
+        heap_next = block;
+        return;
+    }
+    put32(block, total - 8);
+    bin_insert(block, total);
 }
 
 uint32_t rt_heap_size(uint32_t p)

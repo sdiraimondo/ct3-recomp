@@ -316,6 +316,14 @@ Outils ajoutés (build de traçage) : `CT3_MEMWATCH=lo-hi` (écritures dans une 
 - **Limite actuelle** : le tas invité (192 Mio) est épuisé vers 1 400 images (`tas invité épuisé`). 17 651 allocations pour 2 897 libérations, presque toutes depuis un même point du CRT (`0x516F74`). Fuite ou libération manquante à identifier.
 - **Attention** : `/tmp` est un tmpfs de 4,8 Go. Les journaux de trace l'ont saturé et ont fait échouer une compilation et Xvfb. Garder les journaux de trace petits.
 
+### Fuite mémoire : cause et correction (1er nov. 2026)
+
+- **Pas une fuite du jeu.** À la fin de l'épuisement, 189 Mo avaient été demandés, 109,5 Mo libérés, et 79,5 Mo restaient vivants (sur 192 Mio). Le défaut était l'allocateur : un bloc libéré n'était réutilisé que pour une taille exactement égale, et la liste de libres était plafonnée à 4 096 entrées.
+- **Correction (D-043)** : allocateur à classes de puissances de deux, avec découpe des blocs libres et fusion avec le bloc physiquement suivant ; le bloc de tête revient au pointeur de croissance. Les tailles restent déduites de l'en-tête (`block_total`).
+- **Résultat** : le jeu passe 2 154 présentations (au lieu de 1 399), et l'écran titre reste correct.
+- **Diagnostic ajouté** : `CT3_ALLOCLOG=1` journalise les allocations et libérations avec les appelants du jeu (hors plage CRT).
+- **Plantage suivant** (non résolu) : vers la 2 154e présentation, `FUN_00425F90` appelle `[ECX+0x48]` sur `[EAX]`, où `EAX` est le tampon renvoyé par `FUN_00425810` (conversion de pixels). Cette fonction ne renvoie jamais d'objet COM, donc le chemin pris n'est probablement pas celui de la version d'origine : un indicateur (`[ESP+0x38]`) diffère, probablement à cause des formats ou des capacités annoncées par notre pont D3D (voir D-034).
+
 ## Environnement (31 oct. 2026)
 
 - KWin (session Plasma/Wayland) ne mappe plus les fenêtres X11 nouvelles : constaté sur G1, glxgears et CT3. Une commande de rechargement de KWin (`org.kde.KWin.reconfigure`) a été lancée par erreur, sans effet visible. Non traité : redémarrer la session graphique (déconnexion/reconnexion) devrait suffire, à confirmer par l'utilisateur.

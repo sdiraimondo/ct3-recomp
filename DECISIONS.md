@@ -331,6 +331,13 @@ Outils ajoutés (build de traçage) : `CT3_MEMWATCH=lo-hi` (écritures dans une 
 - **Divergence identifiée (non résolue)** : dans `FUN_00425F90`, entre `LEA EAX,[ESP+0x18]` (0x426251, sortie ppTexture) et la lecture `MOV EAX,[ESP+0x1c]` (0x42643A), l'équilibre de pile ou les registres diffèrent du natif. `FUN_004C8B84` a un chemin d'erreur (`D3DERR_INVALIDCALL`, `RET 0x20`) qui n'est pris que si `[EBP+8]` ou `[EBP+0x24]` vaut 0. Notre exécution le prend ; le natif prend `RET 0x24`. Le premier argument vient d'un registre (`EDX`) qui n'est pas couvert par la vérification des registres préservés (caller-saved). Prochaine étape : tracer la valeur de `EDX` à l'entrée de `FUN_004C8B84`, puis remonter sa source.
 - **Fichiers de diagnostic** : `CT3_FILELOG=1` journalise aussi les ouvertures de fichiers ; `CT3_HEAPCHK=1` vérifie le tas ; sonde `CT3_PROBE` avec `[esp]` et `[esp+0x40]`.
 
+### Plantage texture résolu : wrappers COM réutilisés (1er nov. 2026, D-045)
+
+- **Cause** : `rt_com_wrap` renvoyait le wrapper existant pour une adresse hôte sans vérifier l'interface. L'adresse hôte d'une texture libérée sans passer par `Release` a été réutilisée pour une autre interface : le jeu appelait la vtable d'une autre interface (`[vtable+0x48]` hors table, valeur 0x58).
+- **Correctif** : si l'interface demandée diffère du wrapper existant, un nouveau wrapper est créé avec la bonne vtable (`runtime/src/rt_d3d9.cpp`). `CT3_COMDBG=1` signale ce cas.
+- **Résultat** : le jeu dépasse 3 100 images sans erreur. Écran titre avec « PRESS START » (texte dessiné). Capture : `captures/frame_2000_press_start.png`.
+- **Reste à faire** : le son est toujours muet ; la suite (menus, vidéo) demande une entrée (« PRESS START ») : DirectInput est un stub, l'entrée passe par les messages de fenêtre.
+
 ## Environnement (31 oct. 2026)
 
 - KWin (session Plasma/Wayland) ne mappe plus les fenêtres X11 nouvelles : constaté sur G1, glxgears et CT3. Une commande de rechargement de KWin (`org.kde.KWin.reconfigure`) a été lancée par erreur, sans effet visible. Non traité : redémarrer la session graphique (déconnexion/reconnexion) devrait suffire, à confirmer par l'utilisateur.

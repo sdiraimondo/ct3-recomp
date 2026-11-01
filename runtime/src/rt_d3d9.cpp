@@ -58,7 +58,10 @@ uint32_t rt_com_wrap(void *host, int ifidx)
 {
     if (!host) return 0;
     auto it = by_host.find(host);
-    if (it != by_host.end()) return it->second->guest;
+    /* Un objet hôte peut être libéré sans passer par Release (adresse réutilisée) : un wrapper d'une autre
+     * interface ne doit pas être renvoyé, sa vtable serait fausse. */
+    if (it != by_host.end() && it->second->ifidx == ifidx) return it->second->guest;
+    if (it != by_host.end()) it->second->host = nullptr;
     rt_com_obj *o = new rt_com_obj{host, ifidx, 0, 0, 0};
     o->guest = rt_heap_alloc(8, 1);
     put32(o->guest, vtable_of(ifidx));

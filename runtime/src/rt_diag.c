@@ -57,6 +57,12 @@ void rt_probe_hit(cpu_t *c, uint32_t addr)
         fprintf(stderr, "    funclet: esp=0x%08x [esp]=0x%08x [esp+4]=0x%08x ebp=0x%08x [ebp-0x10]=0x%08x (insn precedente 0x%08x)\n",
                 (uint32_t)cpu_rd(c, 16, 4), probe_rd((uint32_t)cpu_rd(c, 16, 4)), probe_rd((uint32_t)cpu_rd(c, 16, 4) + 4), ebp, probe_rd(ebp - 0x10), rt_cur_insn);
     }
+    if (addr == 0x004c8b84u) {
+        uint32_t sp = (uint32_t)cpu_rd(c, 16, 4);
+        fprintf(stderr, "    args 4c8b84: edx=0x%08x ecx=0x%08x ebx=0x%08x", (uint32_t)cpu_rd(c, 8, 4), ecx, (uint32_t)cpu_rd(c, 12, 4));
+        for (unsigned k = 0; k < 9; k++) fprintf(stderr, " a%u=0x%08x", k, probe_rd(sp + 4 + 4 * k));
+        fprintf(stderr, " ret=0x%08x\n", probe_rd(sp));
+    }
     if (addr == 0x00515c71u) {
         uint32_t ebp = (uint32_t)cpu_rd(c, 20, 4);
         fprintf(stderr, "    epilogue: eax=0x%08x ebp=0x%08x [ebp+4]=0x%08x [ebp+8]=0x%08x [ebp+0xc]=0x%08x\n",

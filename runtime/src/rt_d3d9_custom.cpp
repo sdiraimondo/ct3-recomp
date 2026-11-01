@@ -629,6 +629,24 @@ extern "C" uint32_t custom_IDirect3DDevice9_Present(cpu_t *c, const uint32_t *a)
         }
         if (key_at2 >= 0 && present_count == key_at2) rt_win_test_key(1);
         if (key_at2 >= 0 && present_count == key_at2 + 20) rt_win_test_key(0);
+        /* CT3_KEYS=N1,N2,... : appuis sur Entrée aux présentations N1, N2, ... (maintenus 20 présentations). */
+        static std::vector<long> keys;
+        static int keys_init = 0;
+        if (!keys_init) {
+            keys_init = 1;
+            const char *ks = getenv("CT3_KEYS");
+            while (ks && *ks) {
+                char *end = nullptr;
+                long v = strtol(ks, &end, 10);
+                if (end == ks) break;
+                keys.push_back(v);
+                ks = (*end == ',') ? end + 1 : end;
+            }
+        }
+        for (long k : keys) {
+            if ((long)present_count == k) rt_win_test_key(1);
+            if ((long)present_count == k + 20) rt_win_test_key(0);
+        }
     }
     (void)c;
     IDirect3DDevice9 *self = rt_self<IDirect3DDevice9>(a[0]);

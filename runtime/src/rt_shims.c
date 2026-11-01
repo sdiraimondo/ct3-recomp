@@ -756,6 +756,26 @@ void rt_unresolved(cpu_t *c, uint32_t addr)
 {
     /* Retour vers l'hôte (threads, rappels) : dispatch rend la main à l'appelant C. */
     if (addr == RT_HOST_RET) return;
+    /* Trampoline non traduit (ex. thunk isolé « jmp rel32 » que l'export n'a pas reconnu) : un saut direct ne
+     * touche pas la pile, il équivaut à aller à sa cible. Suivi ici, avec signalement ; le reste reste fatal. */
+    if (addr >= 0x400000u && addr < 0x800000u) {
+        uint8_t op = (uint8_t)guest_ld(c, addr, 1);
+        int32_t rel = 0;
+        uint32_t target = 0;
+        if (op == 0xE9) {
+            rel = (int32_t)guest_ld(c, addr + 1, 4);
+            target = addr + 5 + (uint32_t)rel;
+        } else if (op == 0xEB) {
+            rel = (int8_t)guest_ld(c, addr + 1, 1);
+            target = addr + 2 + (uint32_t)rel;
+        }
+        if (target) {
+            static int warned = 0;
+            if (!warned++) fprintf(stderr, "rt: trampoline non traduit 0x%08x -> 0x%08x (suivi)\n", addr, target);
+            dispatch(c, target);
+            return;
+        }
+    }
     /* Le sommet de pile invité contient l'adresse de retour du dernier appel traduit. */
     uint32_t esp = (uint32_t)cpu_rd(c, 16, 4);
     uint32_t ret = (uint32_t)guest_ld(c, esp, 4);

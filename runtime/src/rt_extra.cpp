@@ -6,6 +6,7 @@
 
 #include "rt_proc.h"
 #include "rt_shim.h"
+#include "rt_win.h"
 
 #include <string>
 
@@ -669,8 +670,76 @@ uint32_t sh_DirectInput8Create(cpu_t *c, const uint32_t *a)
 uint32_t sh_di_QueryInterface(cpu_t *c, const uint32_t *a) { (void)c; if (a[2]) put32(a[2], 0); return 0x80004002u; }
 uint32_t sh_di_AddRef(cpu_t *c, const uint32_t *a) { (void)c; (void)a; return 2; }
 uint32_t sh_di_Release(cpu_t *c, const uint32_t *a) { (void)c; (void)a; return 1; }
-uint32_t sh_di_CreateDevice(cpu_t *c, const uint32_t *a) { (void)c; if (a[2]) put32(a[2], 0); return 0x80040154u; }  // DIERR_DEVICENOTREG
-uint32_t sh_di_EnumDevices(cpu_t *c, const uint32_t *a) { (void)c; (void)a; return 0; }
+// Périphérique clavier DirectInput (GUID_SysKeyboard). L'état vient des événements SDL (rt_win).
+// {6F1D2B61-D5A0-11CF-BFC7-444553540000}
+const uint8_t kGuidSysKeyboard[16] = {0x61, 0x2B, 0x1D, 0x6F, 0xA0, 0xD5, 0xCF, 0x11,
+                                      0xBF, 0xC7, 0x44, 0x45, 0x53, 0x54, 0x00, 0x00};
+uint32_t di_dev_vtable;
+const char *const kDiDevMethods[32] = {
+    "QueryInterface", "AddRef", "Release", "GetCapabilities", "EnumObjects", "GetProperty", "SetProperty",
+    "Acquire", "Unacquire", "GetDeviceState", "GetDeviceData", "SetDataFormat", "SetEventNotification",
+    "SetCooperativeLevel", "GetObjectInfo", "GetDeviceInfo", "RunControlPanel", "Initialize", "CreateEffect",
+    "EnumEffects", "GetEffectInfo", "GetForceFeedbackState", "SendForceFeedbackCommand",
+    "EnumCreatedEffectObjects", "Escape", "Poll", "SendDeviceData", "EnumEffectsInFile", "WriteEffectToFile",
+    "BuildActionMap", "SetActionMap", "GetImageInfo"};
+
+// GetDeviceState(this, cbData, lpvData) : clavier = 256 octets (DIK), sinon rien.
+uint32_t sh_dikb_GetDeviceState(cpu_t *c, const uint32_t *a)
+{
+    (void)c;
+    if (a[1] == 256 && a[2]) {
+        uint8_t keys[256];
+        rt_win_key_states(keys);
+        memcpy(rt_mem_base + a[2], keys, 256);
+    }
+    return 0;
+}
+// GetDeviceData(this, cbObjectData, rgdod, pdwInOut, flags) : pas d'événements tamponnés.
+uint32_t sh_dikb_GetDeviceData(cpu_t *c, const uint32_t *a) { (void)c; if (a[3]) put32(a[3], 0); return 0; }
+uint32_t sh_dikb_GetCapabilities(cpu_t *c, const uint32_t *a) { (void)c; (void)a; return 0; }
+uint32_t sh_dikb_zero(cpu_t *c, const uint32_t *a) { (void)c; (void)a; return 0; }
+
+// CreateDevice(this, rguid, lplpDevice, pUnkOuter)
+uint32_t sh_di_CreateDevice(cpu_t *c, const uint32_t *a)
+{
+    (void)c;
+    if (!a[1] || !a[2] || memcmp(rt_mem_base + a[1], kGuidSysKeyboard, 16) != 0) {
+        if (a[2]) put32(a[2], 0);
+        return 0x80040154u;  // DIERR_DEVICENOTREG
+    }
+    if (!di_dev_vtable) {
+        di_dev_vtable = rt_heap_alloc(4 * 32, 1);
+        for (unsigned k = 0; k < 32; k++) {
+            std::string full = std::string("dinput8dev::IDirectInputDevice8A::") + kDiDevMethods[k];
+            uint32_t stub = rt_dyn_stub_addr(full.c_str());
+            memcpy(rt_mem_base + di_dev_vtable + 4 * k, &stub, 4);
+        }
+    }
+    uint32_t dev = rt_heap_alloc(8, 1);
+    put32(dev, di_dev_vtable);
+    put32(a[2], dev);
+    return 0;  // DI_OK
+}
+
+// EnumDevices(this, dwDevType, lpCallback, pvRef, dwFlags) : appelle le callback du jeu avec le clavier
+// (types 0 = tous, 1 = périphériques, 3 = clavier). Pas de manette.
+uint32_t sh_di_EnumDevices(cpu_t *c, const uint32_t *a)
+{
+    uint32_t type = a[1], cb = a[2], ref = a[3];
+    if (!cb || (type != 0 && type != 1 && type != 3)) return 0;
+    const uint32_t kSize = 0x244;  // DIDEVICEINSTANCEA (DirectInput 8)
+    uint32_t inst = rt_heap_alloc(kSize, 1);
+    put32(inst, kSize);
+    memcpy(rt_mem_base + inst + 4, kGuidSysKeyboard, 16);   // guidInstance
+    memcpy(rt_mem_base + inst + 20, kGuidSysKeyboard, 16); // guidProduct
+    put32(inst + 36, 0x13);                                 // dwDevType : DI8DEVTYPE_KEYBOARD
+    static const char kName[] = "Clavier";
+    memcpy(rt_mem_base + inst + 40, kName, sizeof kName);   // tszInstanceName (ANSI, MAX_PATH)
+    memcpy(rt_mem_base + inst + 300, kName, sizeof kName);  // tszProductName
+    uint32_t args[2] = {inst, ref};
+    rt_call_guest(c, cb, args, 2);
+    return 0;
+}
 uint32_t sh_di_fail(cpu_t *c, const uint32_t *a) { (void)c; (void)a; return 0x80004005u; }
 uint32_t sh_di_ok(cpu_t *c, const uint32_t *a) { (void)c; (void)a; return 0; }
 
@@ -731,6 +800,23 @@ extern "C" const rt_shim_entry rt_extra_table[] = {
     {"dinput8com::IDirectInput8A::AddRef", 1, sh_di_AddRef},
     {"dinput8com::IDirectInput8A::Release", 1, sh_di_Release},
     {"dinput8com::IDirectInput8A::CreateDevice", 4, sh_di_CreateDevice},
+    {"dinput8dev::IDirectInputDevice8A::QueryInterface", 3, sh_di_QueryInterface},
+    {"dinput8dev::IDirectInputDevice8A::AddRef", 1, sh_di_AddRef},
+    {"dinput8dev::IDirectInputDevice8A::Release", 1, sh_di_Release},
+    {"dinput8dev::IDirectInputDevice8A::GetCapabilities", 2, sh_dikb_GetCapabilities},
+    {"dinput8dev::IDirectInputDevice8A::EnumObjects", 4, sh_dikb_zero},
+    {"dinput8dev::IDirectInputDevice8A::GetProperty", 3, sh_dikb_zero},
+    {"dinput8dev::IDirectInputDevice8A::SetProperty", 3, sh_dikb_zero},
+    {"dinput8dev::IDirectInputDevice8A::Acquire", 1, sh_dikb_zero},
+    {"dinput8dev::IDirectInputDevice8A::Unacquire", 1, sh_dikb_zero},
+    {"dinput8dev::IDirectInputDevice8A::GetDeviceState", 3, sh_dikb_GetDeviceState},
+    {"dinput8dev::IDirectInputDevice8A::GetDeviceData", 5, sh_dikb_GetDeviceData},
+    {"dinput8dev::IDirectInputDevice8A::SetDataFormat", 2, sh_dikb_zero},
+    {"dinput8dev::IDirectInputDevice8A::SetEventNotification", 2, sh_dikb_zero},
+    {"dinput8dev::IDirectInputDevice8A::SetCooperativeLevel", 3, sh_dikb_zero},
+    {"dinput8dev::IDirectInputDevice8A::GetObjectInfo", 4, sh_dikb_zero},
+    {"dinput8dev::IDirectInputDevice8A::GetDeviceInfo", 2, sh_dikb_zero},
+    {"dinput8dev::IDirectInputDevice8A::Poll", 1, sh_dikb_zero},
     {"dinput8com::IDirectInput8A::EnumDevices", 5, sh_di_EnumDevices},
     {"dinput8com::IDirectInput8A::GetDeviceStatus", 2, sh_di_fail},
     {"dinput8com::IDirectInput8A::RunControlPanel", 3, sh_di_fail},

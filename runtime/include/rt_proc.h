@@ -12,8 +12,8 @@ extern "C" {
 #define RT_TEB_BASE      0x10090000u
 #define RT_PEB_BASE      0x10091000u
 #define RT_TLS_BASE      0x10092000u   /* emplacements TlsAlloc */
-#define RT_HEAP_BASE     0x20000000u
-#define RT_HEAP_SIZE     0x0C000000u   /* 192 MiB */
+#define RT_HEAP_BASE     0x40000000u
+#define RT_HEAP_SIZE     0x3C000000u   /* 960 MiB (0x40000000-0x7C000000, sous les stubs à 0x7F000000) */
 #define RT_STACK_LIMIT   0x10300000u
 
 int rt_process_init(cpu_t *c);

@@ -338,6 +338,15 @@ Outils ajoutés (build de traçage) : `CT3_MEMWATCH=lo-hi` (écritures dans une 
 - **Résultat** : le jeu dépasse 3 100 images sans erreur. Écran titre avec « PRESS START » (texte dessiné). Capture : `captures/frame_2000_press_start.png`.
 - **Reste à faire** : le son est toujours muet ; la suite (menus, vidéo) demande une entrée (« PRESS START ») : DirectInput est un stub, l'entrée passe par les messages de fenêtre.
 
+### Entrée clavier et progression au-delà de « PRESS START » (1er nov. 2026, D-046 à D-049)
+
+- **Clavier DirectInput (D-046)** : `EnumDevices` appelle le callback du jeu avec le clavier (`GUID_SysKeyboard`) ; `CreateDevice` renvoie un périphérique clavier ; `GetDeviceState` remplit les 256 octets DIK à partir des événements SDL (`runtime/src/rt_win.cpp`, table SDL→DIK). Cause : la fonction de lecture par image (`FUN_004A1790`) ne reçoit aucun périphérique, donc « PRESS START » n'est jamais détecté.
+- **Trampoline non traduit (D-047)** : `0x451000` est un `jmp 0x44DC50` isolé (thunk), non reconnu par l'export ; la vtable de la classe du jeu (`0x5940BC+0x18`) pointe vers lui. Un saut direct ne modifie pas la pile : `rt_unresolved` suit les `jmp rel32/rel8` avec un signalement. Les autres cibles non traduites restent fatales. Cause réelle à corriger plus tard dans l'export Ghidra.
+- **Tas (D-048)** : le tas passe de 192 Mio à 960 Mio, à `0x40000000` (sous les stubs à `0x7F000000`). Le chargement d'un nouvel écran épuisait 192 Mio (les banques sont lues entièrement en mémoire).
+- **Résultat** : après Entrée (`CT3_KEY_AT=N` injecte la touche à la N-ième image, pour les tests), le jeu passe les états 3 puis 6, 7, 2, 3 et ouvre les fichiers de niveau (`fcvdatalv.bin`, `bank11.mdl`). Plus de plantage observé jusqu'à 4 150 images.
+- **Limite actuelle** : les menus écrivent leur texte avec GDI (`ExtTextOutA`, 190 appels) ; notre bridge ne rend pas ce texte. L'écran à 3 800 images est noir.
+- **Audio** : le jeu ouvre des `.aif`, `.ogg` ; la sortie son reste muette (DirectSound stub).
+
 ## Environnement (31 oct. 2026)
 
 - KWin (session Plasma/Wayland) ne mappe plus les fenêtres X11 nouvelles : constaté sur G1, glxgears et CT3. Une commande de rechargement de KWin (`org.kde.KWin.reconfigure`) a été lancée par erreur, sans effet visible. Non traité : redémarrer la session graphique (déconnexion/reconnexion) devrait suffire, à confirmer par l'utilisateur.

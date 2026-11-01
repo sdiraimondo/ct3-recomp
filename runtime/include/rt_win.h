@@ -20,6 +20,8 @@ void *rt_win_host(uint32_t hwnd);
 /* HWND invité associé à une fenêtre hôte, ou 0. */
 uint32_t rt_win_guest(void *host);
 
+void rt_win_test_key(int down);
+void rt_win_key_states(uint8_t out[256]);  /* état clavier par code DIK */  /* diagnostic : touche Entrée poussée dans la file SDL (CT3_KEY_AT) */
 #ifdef __cplusplus
 }
 #endif

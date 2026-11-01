@@ -12,6 +12,8 @@
 #include <cstring>
 #include <deque>
 #include <string>
+
+static void dik_set(int sc, bool down);
 #include <strings.h>
 #include <vector>
 
@@ -224,6 +226,7 @@ void pump_events()
             if (!w) break;
             uint32_t vk = vk_from_sdl(e.key.keysym.sym);
             bool down = e.type == SDL_KEYDOWN;
+            dik_set(e.key.keysym.scancode, down);
             uint32_t lp = 1u | ((uint32_t)e.key.keysym.scancode << 16);
             if (!down) lp |= 0xC0000000u;
             post(w->hwnd, down ? kWmKeyDown : kWmKeyUp, vk, lp);
@@ -777,3 +780,76 @@ extern "C" const rt_shim_entry rt_user32_table[] = {
 };
 
 extern "C" const unsigned rt_user32_count = sizeof rt_user32_table / sizeof rt_user32_table[0];
+
+/* État clavier pour DirectInput : indexé par code DIK (dinput.h), mis à jour par les événements SDL. */
+static uint8_t dik_state[256];
+
+static uint8_t dik_of_sdl(int sc)
+{
+    static const uint8_t letters[26] = {0x1E, 0x30, 0x2E, 0x20, 0x12, 0x21, 0x22, 0x23, 0x17, 0x24, 0x25, 0x26, 0x32,
+                                        0x31, 0x18, 0x19, 0x10, 0x13, 0x1F, 0x14, 0x16, 0x2F, 0x11, 0x2D, 0x15, 0x2C};
+    static const uint8_t digits[10] = {0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0A, 0x0B};  /* 1..9, 0 */
+    if (sc >= SDL_SCANCODE_A && sc <= SDL_SCANCODE_Z) return letters[sc - SDL_SCANCODE_A];
+    if (sc >= SDL_SCANCODE_1 && sc <= SDL_SCANCODE_0) return digits[sc - SDL_SCANCODE_1];
+    if (sc >= SDL_SCANCODE_F1 && sc <= SDL_SCANCODE_F10) return (uint8_t)(0x3B + (sc - SDL_SCANCODE_F1));
+    switch (sc) {
+    case SDL_SCANCODE_RETURN: return 0x1C;
+    case SDL_SCANCODE_ESCAPE: return 0x01;
+    case SDL_SCANCODE_BACKSPACE: return 0x0E;
+    case SDL_SCANCODE_TAB: return 0x0F;
+    case SDL_SCANCODE_SPACE: return 0x39;
+    case SDL_SCANCODE_MINUS: return 0x0C;
+    case SDL_SCANCODE_EQUALS: return 0x0D;
+    case SDL_SCANCODE_LEFTBRACKET: return 0x1A;
+    case SDL_SCANCODE_RIGHTBRACKET: return 0x1B;
+    case SDL_SCANCODE_BACKSLASH: return 0x2B;
+    case SDL_SCANCODE_SEMICOLON: return 0x27;
+    case SDL_SCANCODE_APOSTROPHE: return 0x28;
+    case SDL_SCANCODE_GRAVE: return 0x29;
+    case SDL_SCANCODE_COMMA: return 0x33;
+    case SDL_SCANCODE_PERIOD: return 0x34;
+    case SDL_SCANCODE_SLASH: return 0x35;
+    case SDL_SCANCODE_CAPSLOCK: return 0x3A;
+    case SDL_SCANCODE_F11: return 0x57;
+    case SDL_SCANCODE_F12: return 0x58;
+    case SDL_SCANCODE_HOME: return 0xC7;
+    case SDL_SCANCODE_PAGEUP: return 0xC9;
+    case SDL_SCANCODE_DELETE: return 0xD3;
+    case SDL_SCANCODE_END: return 0xCF;
+    case SDL_SCANCODE_PAGEDOWN: return 0xD1;
+    case SDL_SCANCODE_RIGHT: return 0xCD;
+    case SDL_SCANCODE_LEFT: return 0xCB;
+    case SDL_SCANCODE_DOWN: return 0xD0;
+    case SDL_SCANCODE_UP: return 0xC8;
+    case SDL_SCANCODE_LCTRL: return 0x1D;
+    case SDL_SCANCODE_LSHIFT: return 0x2A;
+    case SDL_SCANCODE_LALT: return 0x38;
+    case SDL_SCANCODE_RCTRL: return 0x9D;
+    case SDL_SCANCODE_RSHIFT: return 0x36;
+    case SDL_SCANCODE_RALT: return 0xB8;
+    default: return 0;
+    }
+}
+
+static void dik_set(int sc, bool down)
+{
+    uint8_t k = dik_of_sdl(sc);
+    if (k) dik_state[k] = down ? 0x80 : 0;
+}
+
+void rt_win_key_states(uint8_t out[256])
+{
+    memcpy(out, dik_state, 256);
+}
+
+void rt_win_test_key(int down)
+{
+    SDL_Event ev;
+    memset(&ev, 0, sizeof ev);
+    ev.type = down ? SDL_KEYDOWN : SDL_KEYUP;
+    ev.key.state = down ? SDL_PRESSED : SDL_RELEASED;
+    ev.key.keysym.sym = SDLK_RETURN;
+    ev.key.keysym.scancode = SDL_SCANCODE_RETURN;
+    SDL_PushEvent(&ev);
+}
+

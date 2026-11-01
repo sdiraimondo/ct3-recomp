@@ -588,6 +588,15 @@ void dump_backbuffer(IDirect3DDevice9 *dev, uint32_t frame)
 extern "C" uint32_t custom_IDirect3DDevice9_Present(cpu_t *c, const uint32_t *a)
 {
     rt_probe_present();
+    {
+        static long key_at = -2;
+        if (key_at == -2) {
+            const char *k = getenv("CT3_KEY_AT");
+            key_at = k ? atol(k) : -1;
+        }
+        if (key_at >= 0 && present_count == key_at) rt_win_test_key(1);
+        if (key_at >= 0 && present_count == key_at + 20) rt_win_test_key(0);
+    }
     (void)c;
     IDirect3DDevice9 *self = rt_self<IDirect3DDevice9>(a[0]);
     HRESULT hr = self->Present(static_cast<const RECT *>(rt_gptr(a[1])), static_cast<const RECT *>(rt_gptr(a[2])),

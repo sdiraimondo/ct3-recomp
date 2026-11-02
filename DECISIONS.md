@@ -516,6 +516,11 @@ Outils ajoutés (build de traçage) : `CT3_MEMWATCH=lo-hi` (écritures dans une 
 - **Diagnostics ajoutés** (variables d'environnement) : `CT3_PRESENT_LOG=1` (instants de démarrage et de présentation, appels `Sleep` avec leur appelant).
 - **Vérification** : tests `cpu`, `vec`, `g2`, `x87`, `g1` verts.
 
+### Mapping Xbox : correction de l'utilisateur (2 nov. 2026, amende D-066)
+
+- **Décision de l'utilisateur** : A = marche arrière (Reverse, touche X), B = marche avant (Drive, touche S), Y = Espace (provisoire, touche à confirmer). Le mapping de D-066 était inversé pour A et B. `Config.ini` et les défauts du code suivent ce mapping.
+- **Vérification** : aucune en jeu à ce jour.
+
 ## Environnement (31 oct. 2026)
 
 - KWin (session Plasma/Wayland) ne mappe plus les fenêtres X11 nouvelles : constaté sur G1, glxgears et CT3. Une commande de rechargement de KWin (`org.kde.KWin.reconfigure`) a été lancée par erreur, sans effet visible. Non traité : redémarrer la session graphique (déconnexion/reconnexion) devrait suffire, à confirmer par l'utilisateur.

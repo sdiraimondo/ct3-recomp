@@ -217,10 +217,10 @@ static const char *const kPadDefaultConfig =
     "[Controller]\n"
     "DeadZone=16000\n"
     "TriggerThreshold=16000\n"
-    "a=s\n"          /* A (croix) : passer en marche avant (Drive) */
-    "b=x\n"          /* B (rond) : marche arrière (Reverse) ; valide aussi dans les menus */
+    "a=x\n"          /* A (croix) : marche arrière (Reverse) ; valide aussi dans les menus */
+    "b=s\n"          /* B (rond) : passer en marche avant (Drive) */
     "x=none\n"       /* X (carré) : klaxon, touche à définir */
-    "y=none\n"       /* Y (triangle) : passagers ou vue, selon la configuration, touche à définir */
+    "y=space\n"      /* Y (triangle) : passagers ou vue, selon la configuration (espace provisoire) */
     "start=enter\n"  /* Start : pause, validation dans les menus */
     "back=escape\n"  /* Select / View : retour dans les menus */
     "lb=none\n"

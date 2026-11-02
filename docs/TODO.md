@@ -60,6 +60,14 @@ de chaque point est dans `DECISIONS.md` ; l'état d'ensemble est dans `docs/HAND
 - Lien possible : les vidéos sont remplacées par le graphe DirectShow factice (D-061) ; la fin immédiate de la
   lecture peut changer le déroulement des intros. À vérifier avant de conclure.
 
+### Démarrage lent : écran noir pendant une bonne minute
+
+- Constat utilisateur (2 nov. 2026) : le jeu ne démarre pas avant une bonne minute, écran noir.
+- Repères déjà relevés : délai d'environ 71 s avant le premier logo chez l'utilisateur, et environ 12 s
+  d'écran noir en état 7 (chargement des banques, thread de textures) : `docs/HANDOFF.md` section 7, D-059.
+- À faire : mesurer le temps jusqu'au premier logo (`CT3_SHOT_EVERY`, journal `CT3_WATCH`) et identifier ce qui
+  occupe le démarrage (chargement des banques, création de la fenêtre, compilation des shaders).
+
 ### Plantage à la sortie du jeu (adresse non traduite 0x005154b5)
 
 - Constat : en quittant le jeu (menu « Exit » ou fermeture), le journal affiche `rt: appel vers une adresse non

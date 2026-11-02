@@ -1,4 +1,4 @@
-# Crazy Taxi 3 for Linux
+# Crazy Taxi 3 Decompilation & Recompilation for Linux
 
 An unofficial effort to decompile and statically recompile **Crazy Taxi 3** (Win32 port) into native x86-64 Linux code, with a small Win32 runtime and Direct3D 9 rendering through [dxvk-native](https://github.com/doitsujin/dxvk).
 

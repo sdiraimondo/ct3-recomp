@@ -533,7 +533,11 @@ Outils ajoutés (build de traçage) : `CT3_MEMWATCH=lo-hi` (écritures dans une 
 - **Pistes écartées** : une conversion `FISTP` faussée (la routine ne contient ni `FIST` ni `FLDCW`) ; une corruption de la structure du tas (les en-têtes restent cohérents).
 - **Diagnostics** : `CT3_ALLOCLOG=1` affiche désormais l'adresse de chaque bloc ; `CT3_HEAPPOISON=1` remplit de `0xDB` les blocs libérés ; l'import non implémenté affiche l'adresse de retour. Dans les deux cas le plantage n'a pas changé de forme : `CT3_HEAPPOISON` n'a pas fait apparaître `0xDBDBDBDB`, car le bloc était réalloué.
 - **Échecs de méthode** : le build `-O0` (`CT3_MEMWATCH`) s'arrête avant la première présentation avec `CT3_NOREGCHK=1`, et s'arrête sur une vérification de registre sans lui ; un point de surveillance `gdb` (matériel) ralentit tant le jeu que la course n'est pas atteinte.
-- **Prochaine étape** : une trace des écritures en course, ou une vérification de la routine de filtre (tailles des tampons, pointeurs de la table `local_c` après libération).
+- **Analyse statique (suite)** : la routine ne libère aucun tampon pendant le traitement. Les tampons d'accumulateurs sont recyclés par une liste (enregistrements de `local_c`, champ `+0`), puis libérés en bloc à la fin par `FUN_004DA5F5` (destructeur de tableau). Pas d'écriture après libération visible dans la routine : l'hypothèse « pointeur périmé dans le filtre » est affaiblie.
+- **Allocateur vérifié** : `CT3_HEAPTRACE=1` (nouveau, `[h+]`/`[h-]` dans `rt_proc.c`) journalise tous les blocs. Sur le démarrage (71 780 allocations, 24 162 libérations) : aucun chevauchement de blocs vivants, aucune libération d'un bloc non vivant. Le tas n'est donc pas la cause directe.
+- **Disposition dépendante de l'audio** : sans son (`CT3_NOAUDIO=1`), le bloc contenant l'objet n'est pas celui de la session de plantage (`0x45183608`, `0x578` au lieu de `0x451839E8`, `0x1D4`). Pour reproduire le plantage, il faut la même configuration que l'utilisateur (son activé).
+- **Hypothèse restante** : une écriture hors bornes d'un tampon vivant voisin (index ≥ taille) ou une écriture périmée tardive, en course. À vérifier avec une trace en course, son activé.
+- **Prochaine étape** : reproduire avec le son activé et `CT3_HEAPTRACE=1`, puis repérer le bloc voisin de l'objet et les index d'accumulateurs (`FUN_004D7A41`).
 
 ## Environnement (31 oct. 2026)
 

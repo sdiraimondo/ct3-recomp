@@ -127,6 +127,14 @@ static void heap_check(const char *where)
     }
 }
 
+/* CT3_HEAPTRACE=1 : une ligne par allocation ([h+]) et libération ([h-]) du tas, pour vérifier les chevauchements. */
+static int heap_trace(void)
+{
+    static int on = -1;
+    if (on < 0) on = getenv("CT3_HEAPTRACE") != NULL;
+    return on;
+}
+
 uint32_t rt_heap_alloc(uint32_t size, int zero)
 {
     uint32_t total = block_total(size);
@@ -165,6 +173,7 @@ uint32_t rt_heap_alloc(uint32_t size, int zero)
     if (zero) {
         memset(rt_mem_base + block + 8, 0, cap);
     }
+    if (heap_trace()) fprintf(stderr, "[h+] 0x%08x 0x%x\n", block + 8, cap);
     heap_check("alloc");
     return block + 8;
 }
@@ -177,6 +186,7 @@ void rt_heap_free(uint32_t p)
     if (block < RT_HEAP_BASE || block >= heap_next || get32(block + 4) != RT_BLOCK_USED) return;
     static int poison = -1;
     if (poison < 0) poison = getenv("CT3_HEAPPOISON") != NULL;
+    if (heap_trace()) fprintf(stderr, "[h-] 0x%08x 0x%x\n", p, get32(block));
     if (poison) memset(rt_mem_base + p, 0xDB, get32(block));
     uint32_t total = block_total(get32(block));
     uint32_t next = block + total;

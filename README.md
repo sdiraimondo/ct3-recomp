@@ -1,6 +1,6 @@
 # Crazy Taxi 3 for Linux
 
-An unofficial effort to statically recompile **Crazy Taxi 3** (the Windows PE32 executable, `CT3.exe`) into native x86-64 Linux code, with a small Win32 runtime and Direct3D 9 rendering through [dxvk-native](https://github.com/doitsujin/dxvk).
+An unofficial effort to decompile and statically recompile **Crazy Taxi 3** (Win32 port) into native x86-64 Linux code, with a small Win32 runtime and Direct3D 9 rendering through [dxvk-native](https://github.com/doitsujin/dxvk).
 
 > [!IMPORTANT]
 > **This repository contains no game code or assets.** You need your own legally obtained copy of Crazy Taxi 3 for PC. Everything derived from the game (the translated C code, the compiled library and the game data) is generated or read locally from your own copy and must never be committed, uploaded or shared here.

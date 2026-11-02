@@ -420,6 +420,13 @@ Outils ajoutés (build de traçage) : `CT3_MEMWATCH=lo-hi` (écritures dans une 
 - **Données** : `RPY_CAR_ADV_*` commencent par un entier (8 pour AC, 4 pour SA, 0 pour LV) puis des positions et angles. Ce mot pourrait être un nombre d'enregistrements : non vérifié.
 - **Non résolu** : la cause de la fin prématurée de la scène SA. Pistes : durées de scène tirées au hasard (`_rand`, 284 appelants), ou valeur initiale du compteur lue dans les données de replay.
 
+### Cinématique SA : chronologie du réalisateur (2 nov. 2026, constat principal)
+
+- **Réalisateur** : la mise à jour de scène de l'état 3 (`FUN_004404E0`) appelle `FUN_00498110` avec `[0x7CA0AC]`. Champs : `+0x18` index courant, `+0x1C` nombre d'entrées, `+0x34` pointeur de chronologie. Les valeurs sont fixées à l'initialisation (`FUN_00496C80`, argument 0 pour les cinématiques) : 80 entrées, chronologie à `0x693C60` (titre), `0x694840` (LV) ou `0x695420` (SA) selon le sous-état. La scène se termine quand l'index atteint 80.
+- **Mesure (une image sur deux de sous-état)** : titre : index 5 pendant 6 806 images (attente de Start) ; LV : index 0 à 21 avec des durées courtes ; SA : index 0 à 4 seulement, avec **3 836 images bloquées à l'index 4**.
+- **Entrée 4** (lecture en mots de 16 bits, entrée de 0x26 octets) : LV et titre ont des champs non nuls aux positions 12 et 14 (valeurs 81/96 et 4/1) ; SA a 0 à ces positions. Hypothèse (non vérifiée) : l'entrée 4 de SA référence une ressource (objet ou personnage) absente, donc l'événement n'est jamais satisfait, et le réalisateur attend. Les données sont statiques dans l'exécutable : la cause est soit dans la lecture que nous en faisons, soit dans une ressource que le jeu charge pour SA et que notre pont ne fournit pas.
+- **Prochaine étape** : identifier ce que signifient les champs 12 à 16 de l'entrée (fonction qui évalue l'entrée 4 dans `FUN_00498110`), et vérifier si la ressource référencée est chargée pour SA (fichiers `SObj_C3.bin`, `PPL_C3.bin`, `PEV_SA.bin` ouverts en état 2).
+
 ## Environnement (31 oct. 2026)
 
 - KWin (session Plasma/Wayland) ne mappe plus les fenêtres X11 nouvelles : constaté sur G1, glxgears et CT3. Une commande de rechargement de KWin (`org.kde.KWin.reconfigure`) a été lancée par erreur, sans effet visible. Non traité : redémarrer la session graphique (déconnexion/reconnexion) devrait suffire, à confirmer par l'utilisateur.

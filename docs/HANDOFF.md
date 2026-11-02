@@ -230,13 +230,14 @@ Pour compter les images, utiliser `grep -c "retour\] d3d9com::IDirect3DDevice9::
 - **Diagnostic de plantage** : les core dumps sont désactivés dans les lancements avec `ulimit -c 0`. Pour une pile,
   lancer sous `gdb -batch -ex run -ex "thread apply all bt 25"`, ou `catch syscall exit_group` pour une sortie.
   Pour une boucle active, attacher un gdb à un processus déjà lancé (`gdb -p PID -batch -ex "thread apply 1 bt 12"`).
-- **Parcours complet, utilisateur (appuis Entrée)** : 1) écran titre « PRESS START » vers le menu principal ;
-  2) menu principal : choix de la ville (première option) ; 3) choix de la durée (première option) ; puis la partie
-  se charge et l'écran de sélection des conducteurs et véhicules apparaît. Reproduit avec
-  `CT3_KEYS=2400,3500,4700` (trois appuis, chacun maintenu 20 présentations ; voir `CT3_KEYS` ci-dessous). Captures :
-  les scènes 3D (rue puis garage, images 6 900 et 7 200 de ce run) apparaissent avec « PRESS START » ; ensuite,
-  l'écran redevient noir avec « PRESS START » seul (image 7 500 et suivantes) : état 3 sous-état 0, processus vivant.
-  Le plantage décrit par l'utilisateur n'est pas encore observé dans ce run.
+- **Séquence de démarrage, corrigée (test manuel de l'utilisateur, `ct3-shots/test_manuel1`)** : logos, écran
+  titre, cinématique si Start n'est pas pressé, retour au titre, en boucle. La cinématique (rendue avec les
+  graphismes du jeu) n'est affichée qu'une fois sur trois, tronquée à une dizaine de secondes. Les images 6 900 et
+  7 200 citées auparavant sont cette cinématique, et non la sélection de voiture : cette étape n'a pas été vérifiée.
+- **Premier appui à la trame 1200 (`CT3_KEYS=1200`)** : passage direct au menu principal « MODE SELECTION » (run
+  `ct3-shots/seq3`), navigable. C'est la voie actuelle pour atteindre le menu. Problèmes ouverts : cinématique
+  tronquée, écran noir après un Start pris pendant la cinématique, délai d'environ 71 s avant le premier logo chez
+  l'utilisateur.
 - **Piège** : `pkill -f <motif>` tue aussi le shell qui contient le motif. Utiliser `pgrep -x ct3_run` puis `kill`
   par PID.
 - **Dépôt** : un fichier `index.html` non suivi (une réponse JSON d'erreur) est présent depuis la session

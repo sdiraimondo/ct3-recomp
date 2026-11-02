@@ -375,6 +375,21 @@ Outils ajoutés (build de traçage) : `CT3_MEMWATCH=lo-hi` (écritures dans une 
 - **Constat, ouvert** : sous-état 2, le jeu finit par bloquer dans un `LockBuffer` (tampon de sommets) qui attend une fence DXVK. Les threads llvmpipe sont inactifs : le GPU ne termine pas un travail déjà soumis. Blocage reproductible à la même étape (environ 1 900 images dans le sous-état 2), dans l'environnement de test (Xvfb, llvmpipe). Non résolu.
 - **Constat, écarté** : le `sched_yield` ajouté dans `rt_unlock` pour favoriser le travailleur de chargement n'a rien changé (même durée, 10 s pour 8 tâches) ; annulé.
 
+### Premier appui à la trame 1200 : accès au menu principal (2 nov. 2026, constat, pas une décision de code)
+
+- Les captures attribuées précédemment à la sélection des voitures (trames 6 900 et 7 200) sont en réalité la
+  cinématique d'introduction, affichée avant le premier appui sur Start (confirmé par l'utilisateur, texte
+  « PRESS START » présent). Ce constat invalide l'étape « sélection des conducteurs » rapportée plus haut.
+- Démarrage observé par l'utilisateur : logos, écran titre, cinématique si Start n'est pas pressé, puis retour au
+  titre, en boucle. La cinématique ne s'affiche qu'à la troisième fois, et seulement une dizaine de secondes. Elle
+  est dessinée avec les graphismes du jeu.
+- **Premier appui à la trame 1200** (`CT3_KEYS=1200`) : le jeu passe au menu principal « MODE SELECTION », qui
+  reste affiché et navigable. Hypothèse (non vérifiée) : l'état 7 démarre vers la trame 1026 (fin de l'état 1 de
+  1025 trames) et appelle le contrôle des touches pendant ses 300 premières trames ; l'appui à 1200 tombe dans
+  cette fenêtre.
+- Non traité : cinématique tronquée, écran noir après un Start pris pendant la cinématique, et délai d'environ
+  71 s avant le premier logo chez l'utilisateur (environ 20 s mesurées ici avant la première trace).
+
 ## Environnement (31 oct. 2026)
 
 - KWin (session Plasma/Wayland) ne mappe plus les fenêtres X11 nouvelles : constaté sur G1, glxgears et CT3. Une commande de rechargement de KWin (`org.kde.KWin.reconfigure`) a été lancée par erreur, sans effet visible. Non traité : redémarrer la session graphique (déconnexion/reconnexion) devrait suffire, à confirmer par l'utilisateur.

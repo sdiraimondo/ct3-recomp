@@ -568,6 +568,7 @@ uint32_t make_vtable(const char *prefix, const char *const *names, unsigned coun
         std::string full = std::string(prefix) + names[k];
         uint32_t stub = rt_dyn_stub_addr(full.c_str());
         memcpy(rt_mem_base + vt + 4 * k, &stub, 4);
+        if (k == 8 && getenv("CT3_SONDBG")) fprintf(stderr, "[vt] %s vt=%08x slot8=%08x\n", prefix, vt, stub);
     }
     return vt;
 }

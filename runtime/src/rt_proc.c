@@ -313,6 +313,19 @@ void rt_watch_entry(cpu_t *c, uint32_t addr)
         float px, py, pz; uint32_t bx = watch_rd(0x71ebb4u, 4), by = watch_rd(0x71ebb8u, 4), bz = watch_rd(0x71ebbcu, 4);
         memcpy(&px, &bx, 4); memcpy(&py, &by, 4); memcpy(&pz, &bz, 4);
         fprintf(stderr, "[ref] x=%g y=%g z=%g\n", px, py, pz);
+        /* Lecture du replay : drapeau actif, compteur de temps, pointeur d'enregistrement, indice, base. */
+        fprintf(stderr, "[rep] act=%u t=%u rec=%08x slot=%u base=%08x\n", watch_rd(0x7bd080u, 4), watch_rd(0x7bd078u, 4),
+                watch_rd(0x7bd068u, 4), watch_rd(0x7bc340u, 4), watch_rd(0x7bc368u, 4));
+        {
+            uint32_t sn = watch_rd(0x7164c4u, 4);
+            uint32_t svt = sn ? watch_rd(sn, 4) : 0;
+            fprintf(stderr, "[son] obj=%08x vt=%08x vt+20=%08x vt+24=%08x\n", sn, svt, svt ? watch_rd(svt + 0x20, 4) : 0, svt ? watch_rd(svt + 0x24, 4) : 0);
+        }
+        {
+            uint32_t o = watch_rd(0x7c9f18u, 4), q = watch_rd(0x7ca098u, 4);
+            fprintf(stderr, "[obj] o=%08x o0=%08x o8=%u q=%08x q0=%08x q8=%u\n", o, o ? watch_rd(o, 4) : 0,
+                    o ? watch_rd(o + 8, 4) : 0, q, q ? watch_rd(q, 4) : 0, q ? watch_rd(q + 8, 4) : 0);
+        }
         fprintf(stderr, "[appels]");
         for (unsigned k = 0; k < sizeof call_list / sizeof call_list[0]; k++) {
             fprintf(stderr, " %x=%u", call_list[k], call_cnt[k]);

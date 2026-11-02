@@ -443,6 +443,14 @@ Outils ajoutés (build de traçage) : `CT3_MEMWATCH=lo-hi` (écritures dans une 
 - **Constat sur SA** : l'entrée 4 de la chronologie reste bloquée et la position de référence `0x71EBB4` se fige en SA dans le run où la chronologie stagne. Le cas bloquant n'est pas reproduit à chaque cycle : une comparaison précise doit porter sur le même cycle en LV et en SA (même valeur de `+0x8`, même index de chronologie).
 - **Reprise recommandée** : (1) relever à chaque image, pour LV et SA, `[0x7C9F18]+0x8`, l'index de chronologie `[0x7CA0AC]+0x18`, la position `0x71EBB4`, `[0x7BD080]`, `[0x7BD078]` ; (2) trouver la première image où SA diverge de LV ; (3) remonter la variable fautive.
 
+### Cinématique SA : trajectoire et zone (2 nov. 2026, mesures de reprise)
+
+- **Mesure image par image** (`ref1.err`) : en SA, la position de référence `0x71EBB4` **saute** à chaque changement d'entrée de la chronologie (images 1 100, 1 265, 1 428 : sauts vers `(5593;105;-1220)`, `(5538;3;-479)`, `(2055;0;366)`), puis suit un trajet lent qui s'arrête à `(976;-63;514)` (dernière mesure, image 5 509). La zone de l'entrée 4 n'est jamais atteinte. En LV, la trajectoire continue : 1 260 positions distinctes.
+- **Entrées de la chronologie** : LV et SA ont la même entrée d'attente (identifiant d'événement 2 : valeurs `2` et `20` dans les champs). Donc même zone ; seule la trajectoire diffère.
+- **Zone (événement 2)** : `0x6910A0 + 8·2` donne un couple de pointeurs vers une liste de points de 12 octets, à `0x5B5960`. Les points sont presque tous nuls, avec un arc de 8 points en `(y,z)` autour de `y ≈ −1 900`, `x = 0`. La géométrie de ce test (`0x4452A0` compare des composantes signées) n'est pas encore établie : test de franchissement de plan possible, à vérifier.
+- **Conséquence** : la trajectoire SA n'atteint jamais la région de la zone. Deux causes à départager : (a) la trajectoire SA est bien tronquée par les données (replay `RPY_CAR_ADV_SA`, en-tête à 4 entrées) ; (b) notre lecture (positions interpolées, sauts de l'entrée 3→4) produit une trajectoire fausse.
+- **Test suivant** : comparer les sauts de position aux entrées de chronologie de SA (image exacte du saut et index), et décoder la trajectoire de `RPY_CAR_ADV_SA` au format du jeu pour voir si elle atteint la zone.
+
 ## Environnement (31 oct. 2026)
 
 - KWin (session Plasma/Wayland) ne mappe plus les fenêtres X11 nouvelles : constaté sur G1, glxgears et CT3. Une commande de rechargement de KWin (`org.kde.KWin.reconfigure`) a été lancée par erreur, sans effet visible. Non traité : redémarrer la session graphique (déconnexion/reconnexion) devrait suffire, à confirmer par l'utilisateur.

@@ -772,7 +772,15 @@ void rt_unresolved(cpu_t *c, uint32_t addr)
         uint8_t op = (uint8_t)guest_ld(c, addr, 1);
         int32_t rel = 0;
         uint32_t target = 0;
-        if (op == 0xE9) {
+        uint32_t ecx_set = 0;
+        int set_ecx = 0;
+        /* « mov ecx, imm32 ; jmp » : thunk MSVC (ajustement de « this » pour un destructeur, D-047). */
+        if (op == 0xB9 && (uint8_t)guest_ld(c, addr + 5, 1) == 0xE9) {
+            ecx_set = (uint32_t)guest_ld(c, addr + 1, 4);
+            set_ecx = 1;
+            rel = (int32_t)guest_ld(c, addr + 6, 4);
+            target = addr + 10 + (uint32_t)rel;
+        } else if (op == 0xE9) {
             rel = (int32_t)guest_ld(c, addr + 1, 4);
             target = addr + 5 + (uint32_t)rel;
         } else if (op == 0xEB) {
@@ -782,6 +790,7 @@ void rt_unresolved(cpu_t *c, uint32_t addr)
         if (target) {
             static int warned = 0;
             if (!warned++) fprintf(stderr, "rt: trampoline non traduit 0x%08x -> 0x%08x (suivi)\n", addr, target);
+            if (set_ecx) cpu_wr(c, 4, 4, ecx_set);
             dispatch(c, target);
             return;
         }

@@ -524,6 +524,17 @@ Outils ajoutés (build de traçage) : `CT3_MEMWATCH=lo-hi` (écritures dans une 
 - **Décision de l'utilisateur** : A = marche arrière (Reverse, touche X), B = marche avant (Drive, touche S), Y = Espace (provisoire, touche à confirmer). Le mapping de D-066 était inversé pour A et B. `Config.ini` et les défauts du code suivent ce mapping.
 - **Vérification** : aucune en jeu à ce jour.
 
+### Plantage en course : faute à 0x3F800000 (3 nov. 2026, D-069)
+
+- **Reproduction** : déterministe. Le même plantage (mêmes registres, `EBX = 0x45183AD4`, faute à `0x3F800000`) survient à 22:00 et à 22:53 sur l'écran de l'utilisateur, après environ 5 à 12 min de course.
+- **Objet** : `0x45183AD4` est à l'intérieur d'un bloc vivant de 468 octets (`0x451839E8`, alloué à `0x4152CC` pendant le chargement). Le champ `+4` contient `1.0`.
+- **Écrivain identifié** : la routine de filtre d'image du démarrage (`FUN_004DACC6`) écrit à `0x45183AD8`, dans son tampon d'accumulateurs (`0x45169F78`, `0x1C210` octets, alloué puis libéré pendant le chargement). Les écritures de `1.0` viennent des instructions `0x4DAF1F` et `0x4DB179`. Ces écritures sont faites pendant le chargement, avant l'allocation de l'objet.
+- **Hypothèse retenue** : une écriture périmée (pointeur de tampon libéré, réutilisé ensuite pour l'objet). Non confirmée : l'écriture fautive a lieu en course, et la trace n'a pas pu être obtenue.
+- **Pistes écartées** : une conversion `FISTP` faussée (la routine ne contient ni `FIST` ni `FLDCW`) ; une corruption de la structure du tas (les en-têtes restent cohérents).
+- **Diagnostics** : `CT3_ALLOCLOG=1` affiche désormais l'adresse de chaque bloc ; `CT3_HEAPPOISON=1` remplit de `0xDB` les blocs libérés ; l'import non implémenté affiche l'adresse de retour. Dans les deux cas le plantage n'a pas changé de forme : `CT3_HEAPPOISON` n'a pas fait apparaître `0xDBDBDBDB`, car le bloc était réalloué.
+- **Échecs de méthode** : le build `-O0` (`CT3_MEMWATCH`) s'arrête avant la première présentation avec `CT3_NOREGCHK=1`, et s'arrête sur une vérification de registre sans lui ; un point de surveillance `gdb` (matériel) ralentit tant le jeu que la course n'est pas atteinte.
+- **Prochaine étape** : une trace des écritures en course, ou une vérification de la routine de filtre (tailles des tampons, pointeurs de la table `local_c` après libération).
+
 ## Environnement (31 oct. 2026)
 
 - KWin (session Plasma/Wayland) ne mappe plus les fenêtres X11 nouvelles : constaté sur G1, glxgears et CT3. Une commande de rechargement de KWin (`org.kde.KWin.reconfigure`) a été lancée par erreur, sans effet visible. Non traité : redémarrer la session graphique (déconnexion/reconnexion) devrait suffire, à confirmer par l'utilisateur.

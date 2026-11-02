@@ -64,8 +64,13 @@ de chaque point est dans `DECISIONS.md` ; l'état d'ensemble est dans `docs/HAND
 
 - Constat utilisateur (2 nov. 2026) : le jeu ne démarre pas avant une bonne minute, écran noir.
 - Mesuré (D-068) : premier `Present` à environ 79 s, puis 43 s après le correctif x87 (`truncl` retiré).
-- Reste environ 40 s de calcul au chargement : traitement des maillages (`FUN_004DACC6` et appelants). Suite :
-  remplacement natif ciblé après vérification, ou optimisation générale du code traduit.
+- Reste environ 40 s de calcul au chargement. Analyse (2 nov. 2026) : `FUN_004DACC6` n'est pas un traitement de
+  maillage mais une variante du filtre d'image D3DX embarqué (appelé par `FUN_004DB284`, qui essaie une liste de
+  filtres, pour chaque texture au chargement). Elle applique des poids sparses (tables de `FUN_004D7A41`), des
+  accumulateurs flottants par texel, puis un serrage à [0, 1] selon le filtre. Un remplacement natif demande de
+  reproduire ces tables, les variantes par format, et l'arithmétique x87 (`long double` pour rester bit à bit).
+  Vérification nécessaire contre la version traduite (harnais de comparaison). Pas commencé.
+- Piste en cours : compilation du code généré en `-O2` (au lieu de `-O1`), mesurée sur le démarrage.
 - Piste notée : le thread audio du jeu acquitte les demandes d'arrêt des sons avec une période de 250 ms
   (`0x413350`, `0x412AB0`, `0x4134D0`).
 - Diagnostic : `CT3_PRESENT_LOG=1`.

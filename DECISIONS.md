@@ -403,6 +403,9 @@ Outils ajoutés (build de traçage) : `CT3_MEMWATCH=lo-hi` (écritures dans une 
 - **Résultat** (run sur `:99`, llvmpipe) : titre -> cinématique -> titre. La cinématique montre des scènes du jeu (environ 17 s, images 8 550 à 9 450), sans écran noir pendant la séquence. Restent : environ 12 s d'écran noir de chargement avant la cinématique (état 7, thread de textures), un écran noir après la cinématique (titre en sous-état 2, logo non dessiné), et une cinématique plus courte que prévu.
 - **Diagnostic ajouté** : `CT3_PROBE_AFTER=N` (trace instruction par instruction, build `-O0`, à partir de la présentation N), `[lecture-erreur]` dans `CT3_FILELOG`.
 
+- **Séquence des sous-états du titre (D-059, constat)** : sous-état 0 = titre (replay AC chargé, logo et « PRESS START »), sous-état 1 = cinématique LV (replay `RPY_*_ADV_LV`, scènes 3D rendues : beaucoup de changements de texture par image, dessins indexés non comptés par `CT3_FRAMESTAT`), sous-état 2 = retour au titre avec logo pendant environ 15 s, puis « PRESS START » seul sur fond noir pendant environ 80 s. Les fichiers de la cinématique SA (`RPY_DATA_ADV_SA`, `RPY_CAR_ADV_SA`, banques) sont lus en entier : le problème n'est pas un fichier manquant. Aucun dessin de monde n'est émis en sous-état 2 : la cinématique SA ne démarre pas. Cause non identifiée (condition de démarrage du replay dans l'état 3 ou l'état 7).
+- **Écran noir avant la cinématique** : environ 12 s en état 7 (chargement des banques, thread de textures).
+
 ## Environnement (31 oct. 2026)
 
 - KWin (session Plasma/Wayland) ne mappe plus les fenêtres X11 nouvelles : constaté sur G1, glxgears et CT3. Une commande de rechargement de KWin (`org.kde.KWin.reconfigure`) a été lancée par erreur, sans effet visible. Non traité : redémarrer la session graphique (déconnexion/reconnexion) devrait suffire, à confirmer par l'utilisateur.

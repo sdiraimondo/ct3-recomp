@@ -309,6 +309,10 @@ void rt_watch_entry(cpu_t *c, uint32_t addr)
         /* Réalisateur de cinématique : index courant (+0x18), nombre d'entrées (+0x1c). */
         uint32_t dir = watch_rd(0x7ca0acu, 4);
         fprintf(stderr, "[realis] idx=%u nb=%u\n", dir ? watch_rd(dir + 0x18, 4) : 0, dir ? watch_rd(dir + 0x1c, 4) : 0);
+        /* Position de référence de l'événement (0x71EBB4 : x, y, z en flottants). */
+        float px, py, pz; uint32_t bx = watch_rd(0x71ebb4u, 4), by = watch_rd(0x71ebb8u, 4), bz = watch_rd(0x71ebbcu, 4);
+        memcpy(&px, &bx, 4); memcpy(&py, &by, 4); memcpy(&pz, &bz, 4);
+        fprintf(stderr, "[ref] x=%g y=%g z=%g\n", px, py, pz);
         fprintf(stderr, "[appels]");
         for (unsigned k = 0; k < sizeof call_list / sizeof call_list[0]; k++) {
             fprintf(stderr, " %x=%u", call_list[k], call_cnt[k]);

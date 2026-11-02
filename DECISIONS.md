@@ -412,6 +412,14 @@ Outils ajoutés (build de traçage) : `CT3_MEMWATCH=lo-hi` (écritures dans une 
 - **Cinématique SA (sous-état 2)** : aucun `DrawIndexedPrimitive` n'est émis pendant la fenêtre tracée (6 images), contre environ 1 000 par image pour LV (sous-état 1). Le dessin du monde (`FUN_00421220`, appelé par `FUN_0041ABB0`, lui-même appelé par `FUN_0041E6A0` depuis `FUN_00435570`) n'est donc pas exécuté. Ce n'est pas un défaut de notre pont de rendu : c'est la logique du jeu qui ne lance pas la scène. `FUN_00435570` teste le sous-état (`[0x7BC354]`) : pour un sous-état non nul, la scène est mise en file dans `0x71D820` (compteur `0x71E96C`). Le compteur lu à chaque image reste à 0 y compris en LV : la file est vidée dans la même image, donc ce compteur ne permet pas de conclure.
 - **Prochaine étape** : identifier la condition de `FUN_00435570` / `FUN_004342D0` qui active le rendu de scène pour SA (données de scène `SPL_SA`, `PEV_SA`, `PPL_C3`, `SObj_C3` chargées, mais peut-être non consommées).
 
+### Cinématique SA : durée de scène (2 nov. 2026, constats)
+
+- **Oui, deux cinématiques d'attente sont visibles dans notre run** : LV (sous-état 1) et SA (sous-état 2), entre le titre (sous-état 0) et le retour au titre. LV marche ; SA est noire après une courte phase.
+- **Mesure de rendu de scène** (compteurs par image, `CT3_CALLS=1`) : en sous-état 1, `FUN_0041E6A0` / `FUN_00421220` sont actives pendant 1 389 images ; en sous-état 2, pendant 349 images seulement (sur 4 917). La scène SA s'arrête donc tôt : le noir vient de la fin de la scène, pas d'un rendu qui ne démarre pas (correction de D-060).
+- **Compteur de progression** : `FUN_004342D0` lit un flottant à `[enregistrement+0x74]` (table `0x53F198`, pas `0x94`, indexée par `[objet+0x80]`), comparé à 0 (`0x53BBFC`). Les valeurs mesurées (environ 18 à 41, arrivant à 0 en fin de scène) varient selon l'objet : le compteur de fin de scène n'est pas encore isolé.
+- **Données** : `RPY_CAR_ADV_*` commencent par un entier (8 pour AC, 4 pour SA, 0 pour LV) puis des positions et angles. Ce mot pourrait être un nombre d'enregistrements : non vérifié.
+- **Non résolu** : la cause de la fin prématurée de la scène SA. Pistes : durées de scène tirées au hasard (`_rand`, 284 appelants), ou valeur initiale du compteur lue dans les données de replay.
+
 ## Environnement (31 oct. 2026)
 
 - KWin (session Plasma/Wayland) ne mappe plus les fenêtres X11 nouvelles : constaté sur G1, glxgears et CT3. Une commande de rechargement de KWin (`org.kde.KWin.reconfigure`) a été lancée par erreur, sans effet visible. Non traité : redémarrer la session graphique (déconnexion/reconnexion) devrait suffire, à confirmer par l'utilisateur.

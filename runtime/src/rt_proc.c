@@ -256,10 +256,29 @@ static uint32_t watch_rd(uint32_t g, unsigned n)
     return v;
 }
 
+static const uint32_t call_list[] = {0x41e6a0u, 0x4342d0u, 0x435570u, 0x41abb0u, 0x421220u, 0x423220u, 0x44d9a0u, 0x462fa0u};
+static uint32_t call_cnt[sizeof call_list / sizeof call_list[0]];
+
 void rt_watch_entry(cpu_t *c, uint32_t addr)
 {
     static uint32_t watch = 0;
     static int init = 0, shown = 0;
+    /* CT3_CALLS=1 : compte les entrées des fonctions du rendu de scène entre deux lignes de surveillance. */
+    for (unsigned k = 0; k < sizeof call_list / sizeof call_list[0]; k++)
+        if (addr == call_list[k]) call_cnt[k]++;
+    if (addr == 0x4342d0u && getenv("CT3_CALLS")) {
+        /* Diagnostic : compteur de progression de l'objet de scène (table 0x53F198, pas 0x94, champ +0x74). */
+        static uint32_t n = 0;
+        if (n++ % 60 == 0) {
+            uint32_t obj = (uint32_t)cpu_rd(c, 0, 4);
+            uint32_t idx = watch_rd(obj + 0x80, 4);
+            uint32_t rec = 0x53f198u + idx * 0x94u;
+            uint32_t bits = watch_rd(rec + 0x74, 4);
+            float f; memcpy(&f, &bits, 4);
+            uint32_t fl = watch_rd(obj + 0x8c, 4);
+            fprintf(stderr, "[progres] obj=%08x idx=%u t=%g flags=%08x\n", obj, idx, f, fl);
+        }
+    }
     if (!init) {
         const char *w = getenv("CT3_WATCH");
         watch = w ? (uint32_t)strtoul(w, NULL, 16) : 0;
@@ -286,4 +305,12 @@ void rt_watch_entry(cpu_t *c, uint32_t addr)
             watch_rd(0x7bc334u, 4), watch_rd(0x7bc354u, 4), watch_rd(0x717884u, 4), watch_rd(0x7178fcu, 4),
             watch_rd(0x71ef8cu, 4), watch_rd(0x717889u, 1), watch_rd(0x71650cu, 4), watch_rd(0x716504u, 1),
             watch_rd(0x71e96cu, 4));
+    if (getenv("CT3_CALLS")) {
+        fprintf(stderr, "[appels]");
+        for (unsigned k = 0; k < sizeof call_list / sizeof call_list[0]; k++) {
+            fprintf(stderr, " %x=%u", call_list[k], call_cnt[k]);
+            call_cnt[k] = 0;
+        }
+        fprintf(stderr, "\n");
+    }
 }

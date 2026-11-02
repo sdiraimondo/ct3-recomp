@@ -11,6 +11,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <map>
+#include <string>
 #include <vector>
 
 extern int rt_trace_imports;  /* rt_shims.c : trace des imports (CT3_IMPORTS, CT3_TRACE_FROM) */
@@ -629,6 +630,28 @@ extern "C" uint32_t custom_IDirect3DDevice9_Present(cpu_t *c, const uint32_t *a)
         }
         if (key_at2 >= 0 && present_count == key_at2) rt_win_test_key(1);
         if (key_at2 >= 0 && present_count == key_at2 + 20) rt_win_test_key(0);
+        /* CT3_PAD_SEQ=N:bouton,N:bouton,... : boutons de la manette virtuelle (CT3_PAD_TEST=1), chacun maintenu
+         * 20 présentations. Boutons : start, a, b, x, y, up, down, left, right, lb, rb. */
+        static std::vector<std::pair<long, std::string>> pad_seq;
+        static int pad_seq_init = 0;
+        if (!pad_seq_init) {
+            pad_seq_init = 1;
+            const char *ps = getenv("CT3_PAD_SEQ");
+            while (ps && *ps) {
+                char *end = nullptr;
+                long n = strtol(ps, &end, 10);
+                if (end == ps || *end != ':') break;
+                ps = end + 1;
+                const char *name_end = ps;
+                while (*name_end && *name_end != ',') name_end++;
+                pad_seq.push_back({n, std::string(ps, name_end)});
+                ps = *name_end ? name_end + 1 : name_end;
+            }
+        }
+        for (const auto &pb : pad_seq) {
+            if ((long)present_count == pb.first) rt_win_pad_test(1, pb.second.c_str());
+            if ((long)present_count == pb.first + 20) rt_win_pad_test(0, pb.second.c_str());
+        }
         /* CT3_KEYS=N1,N2,... : appuis sur Entrée aux présentations N1, N2, ... (maintenus 20 présentations). */
         static std::vector<long> keys;
         static int keys_init = 0;

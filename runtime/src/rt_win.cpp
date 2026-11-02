@@ -19,6 +19,8 @@ static void dik_set(int sc, bool down);
 
 namespace {
 
+void pad_test_attach();
+
 constexpr uint32_t kWmCreate = 0x0001;
 constexpr uint32_t kWmDestroy = 0x0002;
 constexpr uint32_t kWmMove = 0x0003;
@@ -137,11 +139,12 @@ void ensure_sdl()
 {
     if (sdl_ready) return;
     setenv("DXVK_WSI_DRIVER", "SDL2", 1);
-    if (SDL_Init(SDL_INIT_VIDEO) != 0) {
+    if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_GAMECONTROLLER) != 0) {
         fprintf(stderr, "rt: SDL_Init : %s\n", SDL_GetError());
         exit(4);
     }
     sdl_ready = true;
+    if (getenv("CT3_PAD_TEST")) pad_test_attach();
 }
 
 const wndclass *find_class(const std::string &name)
@@ -188,12 +191,126 @@ uint32_t vk_from_sdl(SDL_Keycode k)
     }
 }
 
+/* Manette (SDL GameController). Le jeu ne lit que le clavier DirectInput (DIK) : les boutons et le stick
+ * gauche sont donc traduits en touches. Correspondance (contrôles par défaut du jeu, à valider sur une
+ * manette réelle) :
+ *   croix directionnelle et stick gauche : flèches ; A et Start : Entrée ; B : Échap ;
+ *   X : touche X ; Y : touche S ; LB : bas (freinage) ; RB : haut (accélération).
+ * L'état d'une touche est le nombre de sources qui la tiennent (plusieurs boutons peuvent donner la même
+ * touche). Les messages de fenêtre suivent le même schéma que le clavier. */
+static uint8_t pad_count[256];
+static int pad_dir_on[4];  /* gauche, droite, haut, bas (stick gauche) */
+static const int kPadDeadzone = 16000;
+
+struct pad_key {
+    uint8_t dik;
+    uint32_t vk;
+};
+static const pad_key kPadDirKeys[4] = {{0xCB, 0x25}, {0xCD, 0x27}, {0xC8, 0x26}, {0xD0, 0x28}};
+
+static bool pad_key_for_button(int button, pad_key &k)
+{
+    switch (button) {
+    case SDL_CONTROLLER_BUTTON_DPAD_LEFT: k = kPadDirKeys[0]; return true;
+    case SDL_CONTROLLER_BUTTON_DPAD_RIGHT: k = kPadDirKeys[1]; return true;
+    case SDL_CONTROLLER_BUTTON_DPAD_UP: k = kPadDirKeys[2]; return true;
+    case SDL_CONTROLLER_BUTTON_DPAD_DOWN: k = kPadDirKeys[3]; return true;
+    case SDL_CONTROLLER_BUTTON_A: case SDL_CONTROLLER_BUTTON_START: k = {0x1C, 0x0D}; return true;
+    case SDL_CONTROLLER_BUTTON_B: k = {0x01, 0x1B}; return true;
+    case SDL_CONTROLLER_BUTTON_X: k = {0x2D, 0x58}; return true;
+    case SDL_CONTROLLER_BUTTON_Y: k = {0x1F, 0x53}; return true;
+    case SDL_CONTROLLER_BUTTON_LEFTSHOULDER: k = kPadDirKeys[3]; return true;
+    case SDL_CONTROLLER_BUTTON_RIGHTSHOULDER: k = kPadDirKeys[2]; return true;
+    default: return false;
+    }
+}
+
+static void pad_send(const pad_key &k, bool down)
+{
+    if (down) {
+        pad_count[k.dik]++;
+    } else if (pad_count[k.dik]) {
+        pad_count[k.dik]--;
+    }
+    window *w = nullptr;
+    for (window *x : windows) {
+        if (!x->destroyed) w = x;
+    }
+    if (w) post(w->hwnd, down ? kWmKeyDown : kWmKeyUp, k.vk, 1u | ((uint32_t)k.dik << 16) | (down ? 0u : 0xC0000000u));
+}
+
+static void pad_dir(int i, bool on)
+{
+    if ((pad_dir_on[i] != 0) == on) return;
+    pad_dir_on[i] = on;
+    pad_send(kPadDirKeys[i], on);
+}
+
+static void pad_event(const SDL_Event &e)
+{
+    switch (e.type) {
+    case SDL_CONTROLLERDEVICEADDED:
+        SDL_GameControllerOpen((int)e.cdevice.which);
+        break;
+    case SDL_CONTROLLERDEVICEREMOVED:
+        for (int k = 0; k < 256; k++) pad_count[k] = 0;
+        for (int i = 0; i < 4; i++) pad_dir_on[i] = 0;
+        break;
+    case SDL_CONTROLLERBUTTONDOWN:
+    case SDL_CONTROLLERBUTTONUP: {
+        pad_key k;
+        if (pad_key_for_button(e.cbutton.button, k)) pad_send(k, e.type == SDL_CONTROLLERBUTTONDOWN);
+        break;
+    }
+    case SDL_CONTROLLERAXISMOTION:
+        if (e.caxis.axis == SDL_CONTROLLER_AXIS_LEFTX) {
+            pad_dir(0, e.caxis.value < -kPadDeadzone);
+            pad_dir(1, e.caxis.value > kPadDeadzone);
+        } else if (e.caxis.axis == SDL_CONTROLLER_AXIS_LEFTY) {
+            pad_dir(2, e.caxis.value < -kPadDeadzone);
+            pad_dir(3, e.caxis.value > kPadDeadzone);
+        }
+        break;
+    default:
+        break;
+    }
+}
+
+/* Manette virtuelle pour les tests (CT3_PAD_TEST=1) : bouton Start poussé par rt_win_pad_test. */
+static SDL_Joystick *pad_test_js;
+
+void pad_test_attach()
+{
+    SDL_VirtualJoystickDesc desc;
+    memset(&desc, 0, sizeof desc);
+    desc.version = SDL_VIRTUAL_JOYSTICK_DESC_VERSION;
+    desc.type = SDL_JOYSTICK_TYPE_GAMECONTROLLER;
+    desc.naxes = SDL_CONTROLLER_AXIS_MAX;
+    desc.nbuttons = SDL_CONTROLLER_BUTTON_MAX;
+    desc.name = "CT3 pad de test";
+    int idx = SDL_JoystickAttachVirtualEx(&desc);
+    if (idx < 0) {
+        fprintf(stderr, "rt: manette virtuelle indisponible : %s\n", SDL_GetError());
+        return;
+    }
+    if (SDL_IsGameController(idx)) SDL_GameControllerOpen(idx);
+    pad_test_js = SDL_JoystickOpen(idx);
+}
+
+
 // Traduit les événements SDL en messages de fenêtre (appelé avant chaque lecture de la file).
 void pump_events()
 {
     SDL_Event e;
     while (SDL_PollEvent(&e)) {
         switch (e.type) {
+        case SDL_CONTROLLERDEVICEADDED:
+        case SDL_CONTROLLERDEVICEREMOVED:
+        case SDL_CONTROLLERBUTTONDOWN:
+        case SDL_CONTROLLERBUTTONUP:
+        case SDL_CONTROLLERAXISMOTION:
+            pad_event(e);
+            break;
         case SDL_QUIT:
             for (window *w : windows) {
                 if (!w->destroyed) post(w->hwnd, kWmClose, 0, 0);
@@ -840,6 +957,23 @@ static void dik_set(int sc, bool down)
 void rt_win_key_states(uint8_t out[256])
 {
     memcpy(out, dik_state, 256);
+    for (int k = 0; k < 256; k++) {
+        if (pad_count[k]) out[k] = 0x80;
+    }
+}
+
+void rt_win_pad_test(int down, const char *name)
+{
+    static const struct { const char *name; int button; } kNames[] = {
+        {"start", SDL_CONTROLLER_BUTTON_START}, {"a", SDL_CONTROLLER_BUTTON_A}, {"b", SDL_CONTROLLER_BUTTON_B},
+        {"x", SDL_CONTROLLER_BUTTON_X}, {"y", SDL_CONTROLLER_BUTTON_Y}, {"up", SDL_CONTROLLER_BUTTON_DPAD_UP},
+        {"down", SDL_CONTROLLER_BUTTON_DPAD_DOWN}, {"left", SDL_CONTROLLER_BUTTON_DPAD_LEFT},
+        {"right", SDL_CONTROLLER_BUTTON_DPAD_RIGHT}, {"lb", SDL_CONTROLLER_BUTTON_LEFTSHOULDER},
+        {"rb", SDL_CONTROLLER_BUTTON_RIGHTSHOULDER}};
+    if (!pad_test_js) return;
+    for (const auto &n : kNames) {
+        if (strcmp(n.name, name) == 0) SDL_JoystickSetVirtualButton(pad_test_js, n.button, down ? 1 : 0);
+    }
 }
 
 void rt_win_test_key(int down)

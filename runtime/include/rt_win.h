@@ -21,7 +21,9 @@ void *rt_win_host(uint32_t hwnd);
 uint32_t rt_win_guest(void *host);
 
 void rt_win_test_key(int down);
-void rt_win_key_states(uint8_t out[256]);  /* état clavier par code DIK */  /* diagnostic : touche Entrée poussée dans la file SDL (CT3_KEY_AT) */
+void rt_win_key_states(uint8_t out[256]);  /* état clavier et manette par code DIK */
+/* diagnostic : bouton Start de la manette virtuelle (CT3_PAD_TEST, CT3_PAD_SEQ) */
+void rt_win_pad_test(int down, const char *name);
 #ifdef __cplusplus
 }
 #endif

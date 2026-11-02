@@ -477,6 +477,13 @@ Outils ajoutés (build de traçage) : `CT3_MEMWATCH=lo-hi` (écritures dans une 
 - **Vérification** : tests `cpu`, `vec`, `g2`, `x87`, `g1` verts ; `0x4749B4` et `0x474A19` sont désormais des fonctions exportées. Le lancement sur l'écran utilisateur dépasse le point du plantage précédent. Le contrôle complet (cycle entier) reste à faire quand la fenêtre est visible.
 - **Environnement** : la session KWin ne mappe plus les nouvelles fenêtres X11 (un `xmessage` de test est aussi non mappé). Action à faire côté utilisateur : redémarrer la session Plasma.
 
+### Manettes : traduction en touches DIK via SDL (2 nov. 2026, D-064)
+
+- **Constats** : CT3.exe n'importe pas XInput (seul `DirectInput8Create` apparaît). La lecture par image (`FUN_00418860`) n'utilise qu'un périphérique, le clavier (`GetDeviceState`, 256 octets DIK) : il n'existe pas de chemin joystick dans le jeu. Les touches de menu par défaut (`FUN_004046A0`) sont haut 0xC8, bas 0xD0, gauche 0xCB, droite 0xCD, Entrée 0x1C, Espace 0x39, X 0x2D, S 0x1F, Tab 0x0F. Les touches de conduite sont lues depuis `TAXI3.CFG` (`FUN_004039D0`, non déchiffré).
+- **Décision** : les événements de manette SDL (GameController) sont traduits en touches DIK, dans le même état que le clavier, et en messages de fenêtre (`runtime/src/rt_win.cpp`). Correspondance : croix directionnelle et stick gauche = flèches ; A et Start = Entrée ; B = Échap ; X = X ; Y = S ; LB = bas ; RB = haut. Le stick gauche n'est traduit qu'au-delà d'une zone morte de 16 000.
+- **Vérification** : manette virtuelle SDL (`CT3_PAD_TEST=1`, séquence `CT3_PAD_SEQ=1200:start,1500:down,1800:a`) sur `:99`. Start ouvre le menu « MODE SELECTION », la croix directionnelle déplace le curseur, A ouvre le sous-menu « SMALL APPLE ». Tests `cpu`, `vec`, `g2`, `x87`, `g1` verts.
+- **Non vérifié** : une vraie manette (aucune branchée sur la machine de développement), le stick analogique, et la conduite (touches d'accélération et de freinage, à déterminer depuis `TAXI3.CFG`). Un appui semble parfois déplacer le curseur de deux entrées : le même chemin clavier est en cause, à vérifier sur la vraie manette.
+
 ## Environnement (31 oct. 2026)
 
 - KWin (session Plasma/Wayland) ne mappe plus les fenêtres X11 nouvelles : constaté sur G1, glxgears et CT3. Une commande de rechargement de KWin (`org.kde.KWin.reconfigure`) a été lancée par erreur, sans effet visible. Non traité : redémarrer la session graphique (déconnexion/reconnexion) devrait suffire, à confirmer par l'utilisateur.

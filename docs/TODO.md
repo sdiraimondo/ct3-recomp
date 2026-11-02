@@ -3,7 +3,11 @@
 Liste de travail, dans l'ordre de priorité indiqué par l'utilisateur (2 nov. 2026). Le détail technique
 de chaque point est dans `DECISIONS.md` ; l'état d'ensemble est dans `docs/HANDOFF.md`.
 
-## 1. Manettes via SDL (tests plus rapides à la manette)
+## 1. Manettes via SDL (tests plus rapides à la manette) : premier jet fait (D-064)
+
+- Fait : boutons et stick gauche traduits en touches DIK (menus validés avec une manette virtuelle).
+- Reste : test sur une vraie manette, stick analogique, touches de conduite (depuis `TAXI3.CFG`), et l'effet
+  d'un appui qui semble déplacer le curseur de deux entrées.
 
 - Objectif : piloter le jeu à la manette (menus et conduite) pour accélérer les tests.
 - Point de départ : le clavier passe déjà par DirectInput (D-046) et les événements SDL. `EnumDevices` ne

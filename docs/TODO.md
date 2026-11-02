@@ -25,7 +25,11 @@ de chaque point est dans `DECISIONS.md` ; l'état d'ensemble est dans `docs/HAND
 - À faire : étendre `Config.ini` (résolution, autres réglages du jeu).
 - v1.1 : modifier les paramètres des manettes directement dans l'interface du jeu (et écrire `Config.ini`).
 
-## 2. Son (totalement absent)
+## 2. Son (totalement absent) : premier jet fait (D-067)
+
+- Fait : mixage des tampons DirectSound vers SDL, avec format, fréquence, volume et panoramique.
+- Reste : écoute sur la machine de l'utilisateur ; musique (flux DirectShow, `.ogg`) et vidéos, qui restent silencieux ;
+  atténuation 3D ; interpolation du rééchantillonnage.
 
 - Constat : DirectSound est un stub silencieux (D-038). Le curseur de lecture suit l'horloge (D-051), et les
   banques `Media/SE/*.bin` et les fichiers `.aif`, `.ogg` sont lus mais rien n'est joué.

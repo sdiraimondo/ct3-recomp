@@ -498,6 +498,13 @@ Outils ajoutés (build de traçage) : `CT3_MEMWATCH=lo-hi` (écritures dans une 
 - **Menus** : la validation passe par B (« Reverse button to accept » de l'écran de sélection) et par Start. Select (View) sert de retour (Échap).
 - **Vérification** : sur la manette virtuelle, Start ouvre « MODE SELECTION », puis B ouvre le sous-menu « WEST COAST » (`CT3_PAD_SEQ=1200:start,1500:b`).
 
+### Son : mixage DirectSound vers SDL (2 nov. 2026, D-067)
+
+- **Constats** : les tampons créés par le jeu sont surtout en PCM mono 16 bits, à 22 050 ou 44 100 Hz (`CT3_DSLOG=1`) ; certains ont `CTRLFREQUENCY`, `CTRLVOLUME`, ou `CTRL3D`. Le curseur de lecture était un simple horloge (D-051) : aucun son n'était produit.
+- **Décision** : chaque tampon garde son format (`CreateSoundBuffer`, `SetFormat`), sa fréquence (`SetFrequency`), son volume et son panoramique (`SetVolume`, `SetPan`, en centièmes de dB). Un fil SDL mélange les tampons en lecture vers une sortie 44,1 kHz stéréo 16 bits (`runtime/src/rt_extra.cpp`, `ds_mix`). Le mixage fait avancer le curseur de lecture : le jeu voit la progression réelle de la sortie. Sans périphérique audio (ou avec `CT3_NOAUDIO=1`), le curseur revient à l'horloge (repli).
+- **Limites** : rééchantillonnage au plus proche (pas d'interpolation) ; pas d'atténuation par distance pour les tampons 3D ; pas de sortie des flux DirectShow (musique `.ogg`, vidéos, qui restent silencieux, D-061).
+- **Vérification** : sur l'écran virtuel, le mélange produit du signal pendant les lectures du jeu (crêtes de 10 000 à 28 000 pendant les lectures, `CT3_DSLOG=1`). Tests `cpu`, `vec`, `g2`, `x87`, `g1` verts. L'écoute réelle reste à valider sur la machine de l'utilisateur.
+
 ## Environnement (31 oct. 2026)
 
 - KWin (session Plasma/Wayland) ne mappe plus les fenêtres X11 nouvelles : constaté sur G1, glxgears et CT3. Une commande de rechargement de KWin (`org.kde.KWin.reconfigure`) a été lancée par erreur, sans effet visible. Non traité : redémarrer la session graphique (déconnexion/reconnexion) devrait suffire, à confirmer par l'utilisateur.

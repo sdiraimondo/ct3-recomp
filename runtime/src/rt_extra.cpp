@@ -9,8 +9,13 @@
 #include "rt_font.h"
 #include "rt_win.h"
 
+#include <SDL.h>
+
+#include <cmath>
 #include <map>
+#include <mutex>
 #include <string>
+#include <vector>
 
 #include <cctype>
 #include <cstdio>
@@ -695,12 +700,16 @@ uint32_t sh_wsprintfA(cpu_t *c, const uint32_t *a)
     return store_text(out, guest_format(cstr(fmt).c_str(), esp + 12));
 }
 
+bool ds_audio_open();
+void ds_buffer_created(uint32_t obj, uint32_t wfx);
+
 uint32_t sh_DirectSoundCreate(cpu_t *c, const uint32_t *a)
 {
     (void)c;
     if (!ds_vtable) ds_vtable = make_vtable("dsoundcom::IDirectSound::", kDsMethods, 11);
     if (!dsb_vtable) dsb_vtable = make_vtable("dsoundcom::IDirectSoundBuffer::", kDsbMethods, 24);
     if (!ds3d_vtable) ds3d_vtable = make_vtable("dsoundcom3d::IDirectSound3DBuffer::", kDs3dMethods, 21);
+    ds_audio_open();
     uint32_t obj = new_object(ds_vtable, 0);
     if (a[1]) put32(a[1], obj);
     return 0;  // DS_OK
@@ -713,6 +722,20 @@ uint32_t sh_ds_CreateSoundBuffer(cpu_t *c, const uint32_t *a)
     uint32_t bytes = get32(a[1] + 8);
     uint32_t obj = new_object(dsb_vtable, bytes);
     put32(a[2], obj);
+    uint32_t wfx = get32(a[1] + 16);
+    ds_buffer_created(obj, wfx);
+    if (getenv("CT3_DSLOG")) {
+        uint16_t tag = 0, ch = 0, bits = 0;
+        uint32_t rate = 0;
+        if (wfx) {
+            memcpy(&tag, rt_mem_base + wfx, 2);
+            memcpy(&ch, rt_mem_base + wfx + 2, 2);
+            memcpy(&rate, rt_mem_base + wfx + 4, 4);
+            memcpy(&bits, rt_mem_base + wfx + 14, 2);
+        }
+        fprintf(stderr, "[dsound] tampon %08x : %u octets, flags %08x, format tag %u, %u voies, %u Hz, %u bits\n",
+                obj, bytes, get32(a[1] + 4), tag, ch, rate, bits);
+    }
     return 0;
 }
 
@@ -735,15 +758,27 @@ uint32_t sh_dsb_Lock(cpu_t *c, const uint32_t *a)
     return 0;
 }
 
-// Curseur de lecture : horloge monotone, 44,1 kHz 16 bits stéréo (176 400 octets/s, comme GetFormat).
-// Le jeu attend la progression de ce curseur (thread de streaming) : un curseur figé bloque le chargement.
+// ---- Son : mixage des tampons DirectSound vers SDL (D-067) -------------------------------------
+// Chaque tampon garde son format (CreateSoundBuffer, SetFormat), sa fréquence, son volume et son panoramique.
+// Un fil SDL mélange les tampons en lecture vers une sortie 44,1 kHz stéréo 16 bits et fait avancer leur
+// curseur : le jeu lit ainsi la progression réelle de la sortie. Sans périphérique audio, le curseur suit
+// l'horloge comme avant (repli). Les tampons 3D ne reçoivent pas d'atténuation par distance pour l'instant.
 struct dsb_play {
     bool playing = false;
     bool looping = false;
-    double start = 0;
-    uint32_t base = 0;
+    uint32_t pos = 0;                  // position de lecture, en octets (avancée par le mixage)
+    double frac = 0;                   // fraction de trame source (rééchantillonnage)
+    uint32_t rate = 44100;             // fréquence du format (Hz)
+    uint32_t freq = 0;                 // fréquence demandée (SetFrequency) ; 0 = fréquence du format
+    uint16_t channels = 2, bits = 16, align = 4;
+    int32_t volume = 0, pan = 0;       // centièmes de dB, comme DirectSound
+    double start = 0;                  // repli horloge
+    uint32_t base = 0;                 // repli horloge
 };
 std::map<uint32_t, dsb_play> dsb_plays;
+std::mutex ds_mutex;
+SDL_AudioDeviceID ds_dev = 0;
+bool ds_audio_tried = false;
 
 double mono_now()
 {
@@ -752,27 +787,157 @@ double mono_now()
     return ts.tv_sec + ts.tv_nsec * 1e-9;
 }
 
-uint32_t dsb_cursor(uint32_t obj)
+void ds_read_format(uint32_t wfx, dsb_play &p)
+{
+    if (!wfx) return;
+    uint16_t ch = 0, bits = 0;
+    uint32_t rate = 0;
+    memcpy(&ch, rt_mem_base + wfx + 2, 2);
+    memcpy(&rate, rt_mem_base + wfx + 4, 4);
+    memcpy(&bits, rt_mem_base + wfx + 14, 2);
+    if (ch == 0 || ch > 2 || (bits != 8 && bits != 16) || rate == 0) return;  /* format non géré : défauts */
+    p.channels = ch;
+    p.bits = bits;
+    p.rate = rate;
+    p.align = (uint16_t)(ch * bits / 8);
+}
+
+/* Mixage des tampons en lecture vers la sortie (44,1 kHz stéréo). Fil SDL, sous ds_mutex. */
+void ds_mix(void *, Uint8 *stream, int len)
+{
+    int16_t *out = (int16_t *)stream;
+    int frames = len / 4;
+    static std::vector<float> acc;
+    acc.assign((size_t)frames * 2, 0.0f);
+    {
+        std::lock_guard<std::mutex> lk(ds_mutex);
+        for (auto &kv : dsb_plays) {
+            dsb_play &p = kv.second;
+            if (!p.playing) continue;
+            uint32_t storage = get32(kv.first + 4), size = get32(kv.first + 8);
+            if (!storage || !size || p.align == 0) {
+                p.playing = false;
+                continue;
+            }
+            double step = (double)(p.freq ? p.freq : p.rate) / 44100.0;
+            float gain = (float)pow(10.0, p.volume / 2000.0);
+            float gl = gain, gr = gain;
+            if (p.pan > 0) gl *= (float)pow(10.0, -p.pan / 2000.0);
+            if (p.pan < 0) gr *= (float)pow(10.0, p.pan / 2000.0);
+            for (int i = 0; i < frames && p.playing; i++) {
+                const uint8_t *src = rt_mem_base + storage + p.pos;
+                int32_t s0, s1;
+                if (p.bits == 8) {
+                    s0 = ((int32_t)src[0] - 128) << 8;
+                    s1 = p.channels > 1 ? ((int32_t)src[1] - 128) << 8 : s0;
+                } else {
+                    int16_t a16, b16 = 0;
+                    memcpy(&a16, src, 2);
+                    if (p.channels > 1) memcpy(&b16, src + 2, 2);
+                    s0 = a16;
+                    s1 = p.channels > 1 ? b16 : s0;
+                }
+                acc[(size_t)i * 2] += s0 * gl;
+                acc[(size_t)i * 2 + 1] += s1 * gr;
+                p.frac += step;
+                while (p.frac >= 1.0 && p.playing) {
+                    p.frac -= 1.0;
+                    p.pos += p.align;
+                    if (p.pos >= size) {
+                        if (p.looping) {
+                            p.pos = 0;
+                        } else {
+                            p.playing = false;
+                            p.pos = size;
+                        }
+                    }
+                }
+            }
+        }
+    }
+    static double last_log = 0;
+    static int active_last = 0;
+    float peak = 0;
+    for (int i = 0; i < frames * 2; i++) {
+        float v = acc[(size_t)i];
+        if (v > 32767.0f) v = 32767.0f;
+        if (v < -32768.0f) v = -32768.0f;
+        out[i] = (int16_t)v;
+        if (fabsf(v) > peak) peak = fabsf(v);
+    }
+    /* CT3_DSLOG : une ligne par seconde, avec le nombre de tampons en lecture et la crête du mélange. */
+    if (getenv("CT3_DSLOG")) {
+        double now = mono_now();
+        if (now - last_log >= 1.0) {
+            int active = 0;
+            {
+                std::lock_guard<std::mutex> lk(ds_mutex);
+                for (auto &kv : dsb_plays) active += kv.second.playing ? 1 : 0;
+            }
+            fprintf(stderr, "[dsound] mixage : %d tampon(s) en lecture, crête %.0f\n", active, peak);
+            last_log = now;
+            active_last = active;
+        }
+    }
+}
+
+/* Ouvre la sortie audio une fois. Faux si elle n'est pas disponible (repli horloge). */
+bool ds_audio_open()
+{
+    if (ds_audio_tried) return ds_dev != 0;
+    ds_audio_tried = true;
+    if (getenv("CT3_NOAUDIO")) return false;
+    if (SDL_InitSubSystem(SDL_INIT_AUDIO) != 0) {
+        fprintf(stderr, "rt: audio SDL indisponible : %s\n", SDL_GetError());
+        return false;
+    }
+    SDL_AudioSpec want, have;
+    memset(&want, 0, sizeof want);
+    want.freq = 44100;
+    want.format = AUDIO_S16SYS;
+    want.channels = 2;
+    want.samples = 1024;
+    want.callback = ds_mix;
+    ds_dev = SDL_OpenAudioDevice(nullptr, 0, &want, &have, 0);
+    if (!ds_dev) {
+        fprintf(stderr, "rt: sortie audio indisponible : %s\n", SDL_GetError());
+        return false;
+    }
+    SDL_PauseAudioDevice(ds_dev, 0);
+    return true;
+}
+
+/* Position de lecture d'un tampon (octets). Sous ds_mutex. */
+uint32_t ds_cursor_locked(uint32_t obj, dsb_play &p)
 {
     uint32_t size = get32(obj + 8);
-    dsb_play &p = dsb_plays[obj];
+    if (ds_dev) return p.pos;
     if (!p.playing || size == 0) return p.base < size ? p.base : size;
-    uint64_t pos = p.base + (uint64_t)((mono_now() - p.start) * 176400.0);
+    uint64_t pos = p.base + (uint64_t)((mono_now() - p.start) * (double)p.rate * p.align);
     if (p.looping) return (uint32_t)(pos % size);
     if (pos >= size) {
         p.playing = false;
         p.base = size;
+        p.pos = size;
         return size;
     }
     return (uint32_t)pos;
+}
+
+void ds_buffer_created(uint32_t obj, uint32_t wfx)
+{
+    std::lock_guard<std::mutex> lk(ds_mutex);
+    ds_read_format(wfx, dsb_plays[obj]);
 }
 
 uint32_t sh_dsb_GetCurrentPosition(cpu_t *c, const uint32_t *a)
 {
     (void)c;
     const uint32_t kBlock = 4;
+    std::lock_guard<std::mutex> lk(ds_mutex);
+    dsb_play &p = dsb_plays[a[0]];
     uint32_t size = get32(a[0] + 8);
-    uint32_t cur = dsb_cursor(a[0]) / kBlock * kBlock;
+    uint32_t cur = ds_cursor_locked(a[0], p) / kBlock * kBlock;
     uint32_t wr = size ? (cur + 4096) % size / kBlock * kBlock : cur;
     if (a[1]) put32(a[1], cur);
     if (a[2]) put32(a[2], wr);
@@ -782,8 +947,9 @@ uint32_t sh_dsb_GetCurrentPosition(cpu_t *c, const uint32_t *a)
 uint32_t sh_dsb_GetStatus(cpu_t *c, const uint32_t *a)
 {
     (void)c;
-    dsb_cursor(a[0]);
-    const dsb_play &p = dsb_plays[a[0]];
+    std::lock_guard<std::mutex> lk(ds_mutex);
+    dsb_play &p = dsb_plays[a[0]];
+    ds_cursor_locked(a[0], p);
     uint32_t st = p.playing ? (1u | (p.looping ? 4u : 0u)) : 0u;  // DSBSTATUS_PLAYING, DSBSTATUS_LOOPING
     if (a[1]) put32(a[1], st);
     return 0;
@@ -793,25 +959,30 @@ uint32_t sh_dsb_GetStatus(cpu_t *c, const uint32_t *a)
 uint32_t sh_dsb_Play(cpu_t *c, const uint32_t *a)
 {
     (void)c;
-    uint32_t cur = dsb_cursor(a[0]);
+    std::lock_guard<std::mutex> lk(ds_mutex);
+    dsb_play &p = dsb_plays[a[0]];
     uint32_t size = get32(a[0] + 8);
+    uint32_t cur = ds_cursor_locked(a[0], p);
     bool looping = (a[3] & 1) != 0;
     if (!looping && size && cur >= size) cur = 0;
-    dsb_play &p = dsb_plays[a[0]];
+    p.pos = cur;
     p.base = cur;
     p.looping = looping;
     p.start = mono_now();
     p.playing = true;
+    if (getenv("CT3_DSLOG")) fprintf(stderr, "[dsound] Play %08x (boucle %d, curseur %u)\n", a[0], looping, cur);
     return 0;
 }
 
 uint32_t sh_dsb_Stop(cpu_t *c, const uint32_t *a)
 {
     (void)c;
-    uint32_t cur = dsb_cursor(a[0]);
+    std::lock_guard<std::mutex> lk(ds_mutex);
     dsb_play &p = dsb_plays[a[0]];
-    p.base = cur;
+    p.pos = ds_cursor_locked(a[0], p);
+    p.base = p.pos;
     p.playing = false;
+    if (getenv("CT3_DSLOG")) fprintf(stderr, "[dsound] Stop %08x\n", a[0]);
     return 0;
 }
 
@@ -819,19 +990,23 @@ uint32_t sh_dsb_Stop(cpu_t *c, const uint32_t *a)
 uint32_t sh_dsb_SetCurrentPosition(cpu_t *c, const uint32_t *a)
 {
     (void)c;
+    std::lock_guard<std::mutex> lk(ds_mutex);
     dsb_play &p = dsb_plays[a[0]];
+    p.pos = a[1];
     p.base = a[1];
     if (p.playing) p.start = mono_now();
     return 0;
 }
 
-// GetFormat(this, lpwfx, cbwfx, lpdwWritten) : WAVEFORMATEX PCM 44,1 kHz stéréo 16 bits.
+// GetFormat(this, lpwfx, cbwfx, lpdwWritten) : WAVEFORMATEX PCM du tampon (voies, fréquence, bits).
 uint32_t sh_dsb_GetFormat(cpu_t *c, const uint32_t *a)
 {
     (void)c;
+    std::lock_guard<std::mutex> lk(ds_mutex);
+    const dsb_play &p = dsb_plays[a[0]];
     uint8_t wf[18] = {0};
-    uint16_t tag = 1, ch = 2, align = 4, bits = 16, cb = 0;
-    uint32_t rate = 44100, avg = 176400;
+    uint16_t tag = 1, ch = p.channels, align = p.align, bits = p.bits, cb = 0;
+    uint32_t rate = p.rate, avg = p.rate * p.align;
     memcpy(wf + 0, &tag, 2);
     memcpy(wf + 2, &ch, 2);
     memcpy(wf + 4, &rate, 4);
@@ -844,11 +1019,64 @@ uint32_t sh_dsb_GetFormat(cpu_t *c, const uint32_t *a)
     return 0;
 }
 
-// GetFrequency / GetCaps : valeurs constantes (fréquence 44,1 kHz ; DSBCAPS de 96 octets).
+// SetFormat(this, lpwfx) : nouveau format du tampon.
+uint32_t sh_dsb_SetFormat(cpu_t *c, const uint32_t *a)
+{
+    (void)c;
+    std::lock_guard<std::mutex> lk(ds_mutex);
+    ds_read_format(a[1], dsb_plays[a[0]]);
+    return 0;
+}
+
+// SetFrequency(this, dwFrequency) : 0 = fréquence du format.
+uint32_t sh_dsb_SetFrequency(cpu_t *c, const uint32_t *a)
+{
+    (void)c;
+    std::lock_guard<std::mutex> lk(ds_mutex);
+    dsb_plays[a[0]].freq = (a[1] < 100 || a[1] > 200000) ? 0 : a[1];
+    return 0;
+}
+
+// SetVolume / SetPan(this, valeur) : centièmes de dB (volume 0 à -10000 ; pan -10000 à 10000).
+uint32_t sh_dsb_SetVolume(cpu_t *c, const uint32_t *a)
+{
+    (void)c;
+    std::lock_guard<std::mutex> lk(ds_mutex);
+    dsb_plays[a[0]].volume = (int32_t)a[1];
+    return 0;
+}
+
+uint32_t sh_dsb_SetPan(cpu_t *c, const uint32_t *a)
+{
+    (void)c;
+    std::lock_guard<std::mutex> lk(ds_mutex);
+    dsb_plays[a[0]].pan = (int32_t)a[1];
+    return 0;
+}
+
+uint32_t sh_dsb_GetVolume(cpu_t *c, const uint32_t *a)
+{
+    (void)c;
+    std::lock_guard<std::mutex> lk(ds_mutex);
+    if (a[1]) put32(a[1], (uint32_t)dsb_plays[a[0]].volume);
+    return 0;
+}
+
+uint32_t sh_dsb_GetPan(cpu_t *c, const uint32_t *a)
+{
+    (void)c;
+    std::lock_guard<std::mutex> lk(ds_mutex);
+    if (a[1]) put32(a[1], (uint32_t)dsb_plays[a[0]].pan);
+    return 0;
+}
+
+// GetFrequency(this, lpdwFrequency) : fréquence demandée, ou celle du format.
 uint32_t sh_dsb_GetFrequency(cpu_t *c, const uint32_t *a)
 {
     (void)c;
-    if (a[1]) put32(a[1], 44100);
+    std::lock_guard<std::mutex> lk(ds_mutex);
+    const dsb_play &p = dsb_plays[a[0]];
+    if (a[1]) put32(a[1], p.freq ? p.freq : p.rate);
     return 0;
 }
 
@@ -1359,18 +1587,18 @@ extern "C" const rt_shim_entry rt_extra_table[] = {
     {"dsoundcom::IDirectSoundBuffer::GetCaps", 2, sh_dsb_GetCaps},
     {"dsoundcom::IDirectSoundBuffer::GetCurrentPosition", 3, sh_dsb_GetCurrentPosition},
     {"dsoundcom::IDirectSoundBuffer::GetFormat", 4, sh_dsb_GetFormat},
-    {"dsoundcom::IDirectSoundBuffer::GetVolume", 2, sh_ds_zero},
-    {"dsoundcom::IDirectSoundBuffer::GetPan", 2, sh_ds_zero},
+    {"dsoundcom::IDirectSoundBuffer::GetVolume", 2, sh_dsb_GetVolume},
+    {"dsoundcom::IDirectSoundBuffer::GetPan", 2, sh_dsb_GetPan},
     {"dsoundcom::IDirectSoundBuffer::GetFrequency", 2, sh_dsb_GetFrequency},
     {"dsoundcom::IDirectSoundBuffer::GetStatus", 2, sh_dsb_GetStatus},
     {"dsoundcom::IDirectSoundBuffer::Initialize", 3, sh_ds_ok},
     {"dsoundcom::IDirectSoundBuffer::Lock", 8, sh_dsb_Lock},
     {"dsoundcom::IDirectSoundBuffer::Play", 4, sh_dsb_Play},
     {"dsoundcom::IDirectSoundBuffer::SetCurrentPosition", 2, sh_dsb_SetCurrentPosition},
-    {"dsoundcom::IDirectSoundBuffer::SetFormat", 2, sh_ds_ok},
-    {"dsoundcom::IDirectSoundBuffer::SetVolume", 2, sh_ds_ok},
-    {"dsoundcom::IDirectSoundBuffer::SetPan", 2, sh_ds_ok},
-    {"dsoundcom::IDirectSoundBuffer::SetFrequency", 2, sh_ds_ok},
+    {"dsoundcom::IDirectSoundBuffer::SetFormat", 2, sh_dsb_SetFormat},
+    {"dsoundcom::IDirectSoundBuffer::SetVolume", 2, sh_dsb_SetVolume},
+    {"dsoundcom::IDirectSoundBuffer::SetPan", 2, sh_dsb_SetPan},
+    {"dsoundcom::IDirectSoundBuffer::SetFrequency", 2, sh_dsb_SetFrequency},
     {"dsoundcom::IDirectSoundBuffer::Stop", 1, sh_dsb_Stop},
     {"dsoundcom::IDirectSoundBuffer::Unlock", 5, sh_ds_ok},
     {"dsoundcom::IDirectSoundBuffer::Restore", 1, sh_ds_ok},

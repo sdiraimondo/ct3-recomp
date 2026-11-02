@@ -28,8 +28,9 @@ de chaque point est dans `DECISIONS.md` ; l'état d'ensemble est dans `docs/HAND
 ## 2. Son (totalement absent) : premier jet fait (D-067)
 
 - Fait : mixage des tampons DirectSound vers SDL, avec format, fréquence, volume et panoramique.
-- Reste : écoute sur la machine de l'utilisateur ; musique (flux DirectShow, `.ogg`) et vidéos, qui restent silencieux ;
-  atténuation 3D ; interpolation du rééchantillonnage.
+- Confirmé par l'utilisateur : les bruitages fonctionnent, et la musique est jouée en jeu.
+- Reste : les vidéos (cinématiques) restent muettes, faute de flux DirectShow (D-061) ; atténuation 3D ;
+  interpolation du rééchantillonnage.
 
 - Constat : DirectSound est un stub silencieux (D-038). Le curseur de lecture suit l'horloge (D-051), et les
   banques `Media/SE/*.bin` et les fichiers `.aif`, `.ogg` sont lus mais rien n'est joué.
@@ -51,6 +52,13 @@ de chaque point est dans `DECISIONS.md` ; l'état d'ensemble est dans `docs/HAND
 - À mesurer d'abord : temps passé dans la compilation (journal DXVK ou `perf`), pour cibler la piste.
 
 ## Constats à traiter (hors liste de l'utilisateur)
+
+### Cinématiques d'introduction (intros) : encore buggées
+
+- Constat utilisateur (2 nov. 2026) : les cinématiques d'introduction restent défectueuses. À investiguer
+  (détail à relever : quelle intro, quel moment, quel défaut ; capture au moment du bug).
+- Lien possible : les vidéos sont remplacées par le graphe DirectShow factice (D-061) ; la fin immédiate de la
+  lecture peut changer le déroulement des intros. À vérifier avant de conclure.
 
 ### Plantage à la sortie du jeu (adresse non traduite 0x005154b5)
 

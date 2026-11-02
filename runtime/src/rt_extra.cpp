@@ -403,13 +403,6 @@ uint32_t sh_one(cpu_t *c, const uint32_t *a)
     return 1;
 }
 
-uint32_t sh_CoCreateInstance(cpu_t *c, const uint32_t *a)
-{
-    (void)c;
-    (void)a;
-    return 0x80040111u;  // CLASS_E_CLASSNOTAVAILABLE
-}
-
 uint32_t sh_CoTaskMemAlloc(cpu_t *c, const uint32_t *a)
 {
     (void)c;
@@ -1048,6 +1041,137 @@ uint32_t sh_di_ok(cpu_t *c, const uint32_t *a) { (void)c; (void)a; return 0; }
 }  // namespace
 
 // Table des talons (consultée par rt_shims.c).
+// ---- DirectShow : graphe factice pour les vidéos (D-059) ------------------------------------
+// Les vidéos du jeu (Media/avi/*.avi) ne sont pas dans cette copie. Le graphe est créé comme le
+// fait le jeu (CLSID_FilterGraph, IGraphBuilder, IMediaControl, IMediaEvent, source, broche), mais
+// la lecture se termine aussitôt : un seul EC_COMPLETE, posé au premier Run. Le réalisateur attend
+// cet événement après un cue d'arrêt vidéo (pause de l'état 3, sous-état 2) : sans lui, la scène SA
+// reste figée à la position 181 (voir DECISIONS.md).
+const uint8_t kClsidFilterGraph[16] = {0xB3, 0xEB, 0x36, 0xE4, 0x4F, 0x52, 0xCE, 0x11,
+                                       0x9F, 0x53, 0x00, 0x20, 0xAF, 0x0B, 0xA7, 0x70};
+const uint8_t kIidUnknown[16] = {0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+                                 0xC0, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x46};
+// IGraphBuilder, IMediaControl, IMediaPosition, IBasicAudio, IMediaEvent (base 56A868xx-0AD4-11CE-B03A).
+const uint8_t kIidGraphBuilder[16] = {0xA9, 0x68, 0xA8, 0x56, 0xD4, 0x0A, 0xCE, 0x11, 0xB0, 0x3A, 0x00, 0x20, 0xAF, 0x0B, 0xA7, 0x70};
+const uint8_t kIidMediaControl[16] = {0xB1, 0x68, 0xA8, 0x56, 0xD4, 0x0A, 0xCE, 0x11, 0xB0, 0x3A, 0x00, 0x20, 0xAF, 0x0B, 0xA7, 0x70};
+const uint8_t kIidMediaPosition[16] = {0xB2, 0x68, 0xA8, 0x56, 0xD4, 0x0A, 0xCE, 0x11, 0xB0, 0x3A, 0x00, 0x20, 0xAF, 0x0B, 0xA7, 0x70};
+const uint8_t kIidBasicAudio[16] = {0xB3, 0x68, 0xA8, 0x56, 0xD4, 0x0A, 0xCE, 0x11, 0xB0, 0x3A, 0x00, 0x20, 0xAF, 0x0B, 0xA7, 0x70};
+const uint8_t kIidMediaEvent[16] = {0xB6, 0x68, 0xA8, 0x56, 0xD4, 0x0A, 0xCE, 0x11, 0xB0, 0x3A, 0x00, 0x20, 0xAF, 0x0B, 0xA7, 0x70};
+
+bool guest_guid_is(uint32_t p, const uint8_t g[16])
+{
+    return p != 0 && p < 0x7F000000u - 16 && memcmp(rt_mem_base + p, g, 16) == 0;
+}
+
+// Vtables selon l'ordre de DirectShow (IUnknown 0-2, IDispatch 3-6 pour les interfaces IDispatch).
+const char *const kDsgMethods[] = {"QueryInterface", "AddRef", "Release", "AddFilter", "RemoveFilter",
+                                   "EnumFilters", "FindFilterByName", "ConnectDirect", "Reconnect",
+                                   "Disconnect", "SetDefaultSyncSource", "Connect", "Render",
+                                   "RenderFile", "AddSourceFilter", "SetLogFile", "Abort",
+                                   "ShouldOperationContinue"};
+const char *const kDscMethods[] = {"QueryInterface", "AddRef", "Release", "GetTypeInfoCount", "GetTypeInfo",
+                                   "GetIDsOfNames", "Invoke", "Run", "Pause", "Stop"};
+const char *const kDseMethods[] = {"QueryInterface", "AddRef", "Release", "GetTypeInfoCount", "GetTypeInfo",
+                                   "GetIDsOfNames", "Invoke", "GetEventHandle", "GetEvent",
+                                   "WaitForCompletion", "CancelDefaultHandling", "RestoreDefaultHandling",
+                                   "FreeEventParams"};
+const char *const kDsaMethods[] = {"QueryInterface", "AddRef", "Release", "GetTypeInfoCount", "GetTypeInfo",
+                                   "GetIDsOfNames", "Invoke", "put_Volume"};
+const char *const kDsSimpleMethods[] = {"QueryInterface", "AddRef", "Release"};
+const char *const kDssMethods[] = {"QueryInterface", "AddRef", "Release", "GetClassID", "Stop", "Pause",
+                                   "Run", "GetState", "SetSyncSource", "GetSyncSource", "EnumPins", "FindPin"};
+
+uint32_t dsg_vtable, dsc_vtable, dse_vtable, dsa_vtable, dspos_vtable, dssrc_vtable, dspin_vtable;
+uint32_t dsc_obj, dse_obj, dsa_obj, dspos_obj, dssrc_obj, dspin_obj;
+bool ds_ec_posted, ds_ec_pending;
+
+void ds_graph_init()
+{
+    if (dsg_vtable) return;
+    dsg_vtable = make_vtable("dsg::", kDsgMethods, 18);
+    dsc_vtable = make_vtable("dsc::", kDscMethods, 10);
+    dse_vtable = make_vtable("dse::", kDseMethods, 13);
+    dsa_vtable = make_vtable("dsa::", kDsaMethods, 8);
+    dspos_vtable = make_vtable("dspos::", kDsSimpleMethods, 3);
+    dssrc_vtable = make_vtable("dssrc::", kDssMethods, 12);
+    dspin_vtable = make_vtable("dspin::", kDsSimpleMethods, 3);
+    dsc_obj = new_object(dsc_vtable, 0);
+    dse_obj = new_object(dse_vtable, 0);
+    dsa_obj = new_object(dsa_vtable, 0);
+    dspos_obj = new_object(dspos_vtable, 0);
+    dssrc_obj = new_object(dssrc_vtable, 0);
+    dspin_obj = new_object(dspin_vtable, 0);
+}
+
+// CoCreateInstance(rclsid, pUnkOuter, dwClsContext, riid, ppv)
+uint32_t sh_CoCreateInstance(cpu_t *c, const uint32_t *a)
+{
+    (void)c;
+    if (!guest_guid_is(a[0], kClsidFilterGraph)) return 0x80040111u;  // CLASS_E_CLASSNOTAVAILABLE
+    if (!guest_guid_is(a[3], kIidGraphBuilder) && !guest_guid_is(a[3], kIidUnknown)) return 0x80004002u;
+    ds_graph_init();
+    ds_ec_posted = false;
+    ds_ec_pending = false;
+    put32(a[4], new_object(dsg_vtable, 0));
+    return 0;
+}
+
+// IGraphBuilder::QueryInterface : chaque interface a son propre objet (index de vtable différents).
+uint32_t sh_dsg_QueryInterface(cpu_t *c, const uint32_t *a)
+{
+    (void)c;
+    uint32_t obj;
+    if (guest_guid_is(a[1], kIidMediaControl)) obj = dsc_obj;
+    else if (guest_guid_is(a[1], kIidMediaEvent)) obj = dse_obj;
+    else if (guest_guid_is(a[1], kIidMediaPosition)) obj = dspos_obj;
+    else if (guest_guid_is(a[1], kIidBasicAudio)) obj = dsa_obj;
+    else if (guest_guid_is(a[1], kIidGraphBuilder) || guest_guid_is(a[1], kIidUnknown)) obj = a[0];
+    else {
+        put32(a[2], 0);
+        return 0x80004002u;  // E_NOINTERFACE
+    }
+    put32(a[2], obj);
+    return 0;
+}
+
+uint32_t sh_dsg_AddSourceFilter(cpu_t *c, const uint32_t *a)
+{
+    (void)c;
+    put32(a[3], dssrc_obj);
+    return 0;
+}
+
+uint32_t sh_dssrc_FindPin(cpu_t *c, const uint32_t *a)
+{
+    (void)c;
+    put32(a[2], dspin_obj);
+    return 0;
+}
+
+// IMediaControl::Run : première lecture du graphe, fin immédiate (EC_COMPLETE en file).
+uint32_t sh_dsc_Run(cpu_t *c, const uint32_t *a)
+{
+    (void)c;
+    (void)a;
+    if (!ds_ec_posted) {
+        ds_ec_posted = true;
+        ds_ec_pending = true;
+    }
+    return 0;
+}
+
+// IMediaEvent::GetEvent(this, *lEventCode, *lParam1, *lParam2, msTimeout)
+uint32_t sh_dse_GetEvent(cpu_t *c, const uint32_t *a)
+{
+    (void)c;
+    if (!ds_ec_pending) return 0x80004004u;  // E_ABORT : aucun événement
+    ds_ec_pending = false;
+    if (a[1]) put32(a[1], 1);  // EC_COMPLETE
+    if (a[2]) put32(a[2], 0);
+    if (a[3]) put32(a[3], 0);
+    return 0;
+}
+
 extern "C" const rt_shim_entry rt_extra_table[] = {
     {"GDI32.dll::GetStockObject", 1, sh_GetStockObject},
     {"GDI32.dll::CreateCompatibleDC", 1, sh_CreateCompatibleDC},
@@ -1128,6 +1252,73 @@ extern "C" const rt_shim_entry rt_extra_table[] = {
     {"dinput8com::IDirectInput8A::ConfigureDevices", 5, sh_di_fail},
     {"d3d9.dll::DebugSetMute", 0, sh_DebugSetMute},
     {"DSOUND.dll::#11", 3, sh_DirectSoundCreate},
+    {"dsg::QueryInterface", 3, sh_dsg_QueryInterface},
+    {"dsg::AddRef", 1, sh_ds_addref},
+    {"dsg::Release", 1, sh_ds_release},
+    {"dsg::AddFilter", 3, sh_ds_ok},
+    {"dsg::RemoveFilter", 2, sh_ds_ok},
+    {"dsg::EnumFilters", 2, sh_ds_zero},
+    {"dsg::FindFilterByName", 3, sh_ds_zero},
+    {"dsg::ConnectDirect", 4, sh_ds_ok},
+    {"dsg::Reconnect", 2, sh_ds_ok},
+    {"dsg::Disconnect", 2, sh_ds_ok},
+    {"dsg::SetDefaultSyncSource", 1, sh_ds_ok},
+    {"dsg::Connect", 3, sh_ds_ok},
+    {"dsg::Render", 2, sh_ds_ok},
+    {"dsg::RenderFile", 3, sh_ds_ok},
+    {"dsg::AddSourceFilter", 4, sh_dsg_AddSourceFilter},
+    {"dsg::SetLogFile", 2, sh_ds_ok},
+    {"dsg::Abort", 1, sh_ds_ok},
+    {"dsg::ShouldOperationContinue", 1, sh_ds_ok},
+    {"dsc::QueryInterface", 3, sh_ds_qi},
+    {"dsc::AddRef", 1, sh_ds_addref},
+    {"dsc::Release", 1, sh_ds_release},
+    {"dsc::GetTypeInfoCount", 2, sh_ds_zero},
+    {"dsc::GetTypeInfo", 4, sh_ds_zero},
+    {"dsc::GetIDsOfNames", 6, sh_ds_zero},
+    {"dsc::Invoke", 8, sh_ds_zero},
+    {"dsc::Run", 1, sh_dsc_Run},
+    {"dsc::Pause", 1, sh_ds_ok},
+    {"dsc::Stop", 1, sh_ds_ok},
+    {"dse::QueryInterface", 3, sh_ds_qi},
+    {"dse::AddRef", 1, sh_ds_addref},
+    {"dse::Release", 1, sh_ds_release},
+    {"dse::GetTypeInfoCount", 2, sh_ds_zero},
+    {"dse::GetTypeInfo", 4, sh_ds_zero},
+    {"dse::GetIDsOfNames", 6, sh_ds_zero},
+    {"dse::Invoke", 8, sh_ds_zero},
+    {"dse::GetEventHandle", 2, sh_ds_zero},
+    {"dse::GetEvent", 5, sh_dse_GetEvent},
+    {"dse::WaitForCompletion", 3, sh_ds_zero},
+    {"dse::CancelDefaultHandling", 2, sh_ds_ok},
+    {"dse::RestoreDefaultHandling", 1, sh_ds_ok},
+    {"dse::FreeEventParams", 4, sh_ds_ok},
+    {"dsa::QueryInterface", 3, sh_ds_qi},
+    {"dsa::AddRef", 1, sh_ds_addref},
+    {"dsa::Release", 1, sh_ds_release},
+    {"dsa::GetTypeInfoCount", 2, sh_ds_zero},
+    {"dsa::GetTypeInfo", 4, sh_ds_zero},
+    {"dsa::GetIDsOfNames", 6, sh_ds_zero},
+    {"dsa::Invoke", 8, sh_ds_zero},
+    {"dsa::put_Volume", 2, sh_ds_ok},
+    {"dspos::QueryInterface", 3, sh_ds_qi},
+    {"dspos::AddRef", 1, sh_ds_addref},
+    {"dspos::Release", 1, sh_ds_release},
+    {"dspin::QueryInterface", 3, sh_ds_qi},
+    {"dspin::AddRef", 1, sh_ds_addref},
+    {"dspin::Release", 1, sh_ds_release},
+    {"dssrc::QueryInterface", 3, sh_ds_qi},
+    {"dssrc::AddRef", 1, sh_ds_addref},
+    {"dssrc::Release", 1, sh_ds_release},
+    {"dssrc::GetClassID", 2, sh_ds_ok},
+    {"dssrc::Stop", 1, sh_ds_ok},
+    {"dssrc::Pause", 1, sh_ds_ok},
+    {"dssrc::Run", 2, sh_ds_ok},
+    {"dssrc::GetState", 3, sh_ds_ok},
+    {"dssrc::SetSyncSource", 2, sh_ds_ok},
+    {"dssrc::GetSyncSource", 2, sh_ds_zero},
+    {"dssrc::EnumPins", 2, sh_ds_zero},
+    {"dssrc::FindPin", 3, sh_dssrc_FindPin},
     {"USER32.dll::wvsprintfA", 3, sh_wvsprintfA},
     {"USER32.dll::wsprintfA", 0, sh_wsprintfA},
     {"dsoundcom::IDirectSound::QueryInterface", 3, sh_ds_qi},

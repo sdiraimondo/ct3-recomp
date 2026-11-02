@@ -159,6 +159,8 @@ Pour compter les images, utiliser `grep -c "retour\] d3d9com::IDirect3DDevice9::
    que les blocs de taille identique) puis des **wrappers COM réutilisés** pour une autre interface (D-043, D-045).
 5. **Un faux élément factice** (`CT3_HOOK_AUDIO`, retiré) reculait le plantage sans le résoudre : ne pas le réintroduire.
 6. **L'espion de pile** et la sonde pouvaient lire des adresses non mappées (faux plantages). Les lectures sont bornées.
+7. **« FUN_0051551C est le générateur aléatoire »** était faux : c'est `__ftol` (conversion de ST0). La pause de la cinématique SA n'a pas de tirage aléatoire (D-062).
+8. **« Le drapeau [0x7164B4] est écarté »** était faux : c'est le mécanisme de sortie de la pause vidéo de SA (fin de vidéo `EC_COMPLETE`). Sa cause était la vidéo absente de la copie (D-061, D-062).
 
 ## 5. Corrections de bugs réels (commits)
 
@@ -192,6 +194,12 @@ Pour compter les images, utiliser `grep -c "retour\] d3d9com::IDirect3DDevice9::
 
 ## 7. État actuel et prochaine étape
 
+- **Mise à jour (2 nov. 2026, D-061 et D-062)** : la cinématique SA affiche des scènes du jeu et ne bloque plus.
+  Cause : sa vidéo (`avi/sa_ic.avi`) est absente de la copie ; le réalisateur attend sa fin (`EC_COMPLETE`) à t=181.
+  Le runtime fournit maintenant un graphe DirectShow factice, dont la lecture se termine aussitôt (`runtime/src/rt_extra.cpp`).
+  Captures : `ct3-shots/fix1/` (hors dépôt). Le cycle titre / LV / SA / titre est répété sans écran noir. La suite
+  (voir section « Cinématique SA » de `DECISIONS.md`) : vérifier le rendu de la cinématique LV sur l'écran utilisateur, et
+  les vidéos réelles si l'utilisateur les fournit (D-004, D-005).
 - Commits : `4a94650` (session précédente) puis le commit « FPREM » (voir `git log`). Les tests (`test_cpu`,
   `test_vec`, `test_g2`, `test_x87`, `g1_d3d9_triangle`) passent.
 - **Le menu n'apparaît toujours pas.** Enchaînement observé (appuis à 2 400 et 3 700 images) : intros, titre

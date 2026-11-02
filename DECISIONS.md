@@ -469,6 +469,14 @@ Outils ajoutés (build de traçage) : `CT3_MEMWATCH=lo-hi` (écritures dans une 
 - **Décodage des replays (étape 1, partiel)** : `RPY_CAR_ADV_*.bin` (112 Kio) : premier dword = base d'index dans la table statique (0 LV, 4 SA, 8 AC, `FUN_0046C370`) ; blocs de 0x460 octets par segment (`FUN_00497910`, `FUN_004970B0`). Les positions de la caméra sont évaluées par `FUN_004ADFB0` / `FUN_004ADEB0` (cubique par segments). Les segments (`0x68F6D8`, 12 entrées de 7 dwords) pointent vers des blocs statiques de `.data` (ex. `0x68E538` : 150 clés, 6 canaux, durée 300). Le décodage complet de `RPY_CAR_ADV_SA` n'était pas nécessaire : le blocage est résolu sans toucher aux données.
 - **Résultat** : run `ct3-shots/fix1` (`CT3_SHOT_EVERY=250`, captures hors dépôt). SA affiche des scènes de jeu (ville, véhicules, avec « PRESS START » superposé comme dans la démo d'attente) ; deux cycles titre / LV / SA / titre identiques, sans écran noir pendant SA. Tests `cpu`, `vec`, `g2`, `x87`, `g1` verts.
 
+### Plantage « adresse non traduite 0x4749B4 » : tables de saut incomplètes (2 nov. 2026, D-063)
+
+- **Constat** : sur l'écran utilisateur (RADV), le jeu s'arrête vers la 4e-5e minute : `rt: appel vers une adresse non traduite 0x004749b4 (retour invité 0x00000000)`.
+- **Cause** : `FUN_004747C0` (contrôleur de caméra) fait `JMP dword ptr [ECX*4 + 0x474CEC]` après `CMP ECX,3`. La table compte 4 entrées (`0x4749B4`, `0x4749C6`, `0x474A19`, `0x474A4A`), mais Ghidra n'en donne qu'une (`0x4749C6`). Le code de `0x4749B4` n'est pas désassemblé : ni le traducteur ni le runtime ne peuvent l'appeler. Un audit des tables bornées (`CMP R,N` / `JMP [R*4+T]`) signale d'autres cas du même type (`FUN_0044AC80`, `FUN_004692A0`, `FUN_00457BA0`, `FUN_004ADxxx`).
+- **Décision** : `tools/ghidra/ExportFunctions.java` (passe `pcode-all-ptrs`) lit les entrées bornées de chaque table de saut et les ajoute aux candidats : elles sont désassemblées et exportées comme fonctions (ou entrées intérieures). Export : 1 752 pointeurs de code, 919 fonctions créées, 203 entrées intérieures. Traduction : 5 747 fonctions, compilation sans erreur.
+- **Vérification** : tests `cpu`, `vec`, `g2`, `x87`, `g1` verts ; `0x4749B4` et `0x474A19` sont désormais des fonctions exportées. Le lancement sur l'écran utilisateur dépasse le point du plantage précédent. Le contrôle complet (cycle entier) reste à faire quand la fenêtre est visible.
+- **Environnement** : la session KWin ne mappe plus les nouvelles fenêtres X11 (un `xmessage` de test est aussi non mappé). Action à faire côté utilisateur : redémarrer la session Plasma.
+
 ## Environnement (31 oct. 2026)
 
 - KWin (session Plasma/Wayland) ne mappe plus les fenêtres X11 nouvelles : constaté sur G1, glxgears et CT3. Une commande de rechargement de KWin (`org.kde.KWin.reconfigure`) a été lancée par erreur, sans effet visible. Non traité : redémarrer la session graphique (déconnexion/reconnexion) devrait suffire, à confirmer par l'utilisateur.

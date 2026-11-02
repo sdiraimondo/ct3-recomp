@@ -33,6 +33,10 @@ import java.util.Map;
 public class ExportFunctions extends GhidraScript {
 
     private Map<String, String> regNames = new HashMap<>();
+    private static final java.util.regex.Pattern JUMP_TABLE_PATTERN =
+            java.util.regex.Pattern.compile("\\[(\\w+)\\*0x4 \\+ 0x([0-9a-fA-F]+)\\]");
+    private static final java.util.regex.Pattern CMP_PATTERN =
+            java.util.regex.Pattern.compile("CMP (\\w+),0x([0-9a-fA-F]+)");
 
     @Override
     protected void run() throws Exception {
@@ -152,6 +156,39 @@ public class ExportFunctions extends GhidraScript {
             InstructionIterator bi = program.getListing().getInstructions(f.getBody(), true);
             while (bi.hasNext()) {
                 Instruction ins = bi.next();
+                /* Table de saut « JMP [R*4 + table] » : Ghidra ne donne pas toujours toutes ses cibles (cas
+                 * désassemblés nulle part). Lecture des entrées bornées par le « CMP R,N » qui précède. */
+                if (ins.getMnemonicString().equals("JMP")) {
+                    java.util.regex.Matcher jm = JUMP_TABLE_PATTERN.matcher(ins.toString());
+                    if (jm.find()) {
+                        String reg = jm.group(1);
+                        long tbl = Long.parseLong(jm.group(2), 16);
+                        int bound = -1;
+                        Instruction prev = ins;
+                        for (int k = 0; k < 8 && bound < 0; k++) {
+                            prev = program.getListing().getInstructionBefore(prev.getAddress());
+                            if (prev == null) {
+                                break;
+                            }
+                            java.util.regex.Matcher cm = CMP_PATTERN.matcher(prev.toString());
+                            if (cm.find() && cm.group(1).equalsIgnoreCase(reg)) {
+                                bound = (int) Long.parseLong(cm.group(2), 16);
+                            }
+                        }
+                        if (bound >= 0 && bound < 256) {
+                            for (int i = 0; i <= bound; i++) {
+                                long v = mem.getInt(program.getAddressFactory().getDefaultAddressSpace()
+                                        .getAddress(tbl + 4L * i)) & 0xFFFFFFFFL;
+                                Address ta = program.getAddressFactory().getDefaultAddressSpace().getAddress(v);
+                                ghidra.program.model.mem.MemoryBlock tb = mem.getBlock(ta);
+                                if (tb != null && tb.isExecute() && !f.getBody().contains(ta)
+                                        && fm.getFunctionAt(ta) == null) {
+                                    candidates.add(v);
+                                }
+                            }
+                        }
+                    }
+                }
                 /* Adresses de code passées en constante (ex. point d'entrée d'un thread : push imm32). */
                 for (Reference r : program.getReferenceManager().getReferencesFrom(ins.getAddress())) {
                     Address ta = r.getToAddress();

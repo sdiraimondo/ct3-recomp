@@ -1091,6 +1091,8 @@ void rt_win_pad_test(int down, const char *name)
         {"right", SDL_CONTROLLER_BUTTON_DPAD_RIGHT}, {"lb", SDL_CONTROLLER_BUTTON_LEFTSHOULDER},
         {"rb", SDL_CONTROLLER_BUTTON_RIGHTSHOULDER}};
     if (!pad_test_js) return;
+    if (strcmp(name, "lt") == 0) SDL_JoystickSetVirtualAxis(pad_test_js, SDL_CONTROLLER_AXIS_TRIGGERLEFT, down ? 32767 : 0);
+    if (strcmp(name, "rt") == 0) SDL_JoystickSetVirtualAxis(pad_test_js, SDL_CONTROLLER_AXIS_TRIGGERRIGHT, down ? 32767 : 0);
     for (const auto &n : kNames) {
         if (strcmp(n.name, name) == 0) SDL_JoystickSetVirtualButton(pad_test_js, n.button, down ? 1 : 0);
     }

@@ -175,6 +175,9 @@ void rt_heap_free(uint32_t p)
     uint32_t block = p - 8;
     /* Seuls les blocs alloués sont libérables : double libération et pointeurs intérieurs sont ignorés. */
     if (block < RT_HEAP_BASE || block >= heap_next || get32(block + 4) != RT_BLOCK_USED) return;
+    static int poison = -1;
+    if (poison < 0) poison = getenv("CT3_HEAPPOISON") != NULL;
+    if (poison) memset(rt_mem_base + p, 0xDB, get32(block));
     uint32_t total = block_total(get32(block));
     uint32_t next = block + total;
     while (next < heap_next && get32(next + 4) == RT_BLOCK_FREE) {

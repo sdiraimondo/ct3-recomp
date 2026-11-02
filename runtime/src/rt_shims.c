@@ -77,12 +77,12 @@ static uint32_t sh_HeapCreate(cpu_t *c, const uint32_t *a) { (void)c; (void)a; r
 /* CT3_ALLOCLOG=1 : journal des allocations et libérations avec les adresses de retour de code du jeu
  * trouvées sur la pile (diagnostic de fuite). */
 static int alloclog = -1;
-static void log_heap(cpu_t *c, const char *what, uint32_t size)
+static void log_heap(cpu_t *c, const char *what, uint32_t size, uint32_t addr)
 {
     if (alloclog < 0) alloclog = getenv("CT3_ALLOCLOG") != NULL;
     if (!alloclog) return;
     uint32_t esp = (uint32_t)cpu_rd(c, 16, 4);
-    fprintf(stderr, "[%s] taille=0x%x", what, size);
+    fprintf(stderr, "[%s] taille=0x%x adresse=0x%08x", what, size, addr);
     unsigned n = 0;
     for (uint32_t k = 0; k < 160 && n < 2 && esp + 4 * k < 0x103FFF00u; k++) {
         uint32_t v = (uint32_t)guest_ld(c, esp + 4 * k, 4);
@@ -93,8 +93,13 @@ static void log_heap(cpu_t *c, const char *what, uint32_t size)
     }
     fprintf(stderr, "\n");
 }
-static uint32_t sh_HeapAlloc(cpu_t *c, const uint32_t *a) { log_heap(c, "alloc", a[2]); return rt_heap_alloc(a[2], (a[1] & 0x8) != 0); }
-static uint32_t sh_HeapFree(cpu_t *c, const uint32_t *a) { log_heap(c, "libre", a[2] ? rt_heap_size(a[2]) : 0); rt_heap_free(a[2]); return 1; }
+static uint32_t sh_HeapAlloc(cpu_t *c, const uint32_t *a)
+{
+    uint32_t p = rt_heap_alloc(a[2], (a[1] & 0x8) != 0);
+    log_heap(c, "alloc", a[2], p);
+    return p;
+}
+static uint32_t sh_HeapFree(cpu_t *c, const uint32_t *a) { log_heap(c, "libre", a[2] ? rt_heap_size(a[2]) : 0, a[2]); rt_heap_free(a[2]); return 1; }
 static uint32_t sh_HeapSize(cpu_t *c, const uint32_t *a) { (void)c; return rt_heap_size(a[2]); }
 static uint32_t sh_HeapReAlloc(cpu_t *c, const uint32_t *a) { (void)c; return rt_heap_realloc(a[2], a[3]); }
 static uint32_t sh_GetEnvironmentStringsW(cpu_t *c, const uint32_t *a) { (void)c; (void)a; static uint32_t p; if (!p) { p = rt_scratch_alloc(4); memset(rt_mem_base + p, 0, 4); } return p; }
@@ -718,7 +723,8 @@ void rt_shim_call(cpu_t *c, uint32_t addr)
         }
         e = find_entry(name);
         if (!e) {
-            fprintf(stderr, "rt: import non implémenté : %s (appel à 0x%08x)\n", name, addr);
+            fprintf(stderr, "rt: import non implémenté : %s (appel à 0x%08x, retour invité 0x%08x)\n", name, addr,
+                    (uint32_t)guest_ld(c, (uint32_t)cpu_rd(c, 16, 4), 4));
             exit(3);
         }
         if (slot < RT_STUB_SLOTS) shim_cache[slot] = e;

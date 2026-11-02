@@ -491,6 +491,13 @@ Outils ajoutés (build de traçage) : `CT3_MEMWATCH=lo-hi` (écritures dans une 
 - **Fichier de configuration** : `Config.ini` à la racine du dépôt (section `[Controller]`), lu au démarrage depuis le répertoire courant, ou depuis le chemin de `CT3_CONFIG`. Les valeurs absentes gardent les défauts, qui sont les mêmes que le fichier livré. Une entrée ou une touche inconnue est signalée sur la sortie d'erreur. Le fichier est prévu pour d'autres sections (résolution, réglages du jeu).
 - **Vérification** : menu ouvert par Start sur la manette virtuelle, sans avertissement de configuration (`CT3_PAD_TEST=1 CT3_PAD_SEQ=1200:start`). Les touches de conduite n'ont pas été vérifiées en jeu sur cette version : seul le constat de l'utilisateur (sur l'ancien mapping) le confirme.
 
+### Mapping manette Xbox (2 nov. 2026, D-066, remplace D-065 pour le mapping)
+
+- **Décision** : mapping Xbox de Crazy Taxi 3, fourni par l'utilisateur : joystick gauche et croix directionnelle = diriger ; RT = accélérer (flèche haut) ; LT = frein (flèche bas) ; A = marche avant (Drive, touche S) ; B = marche arrière (Reverse, touche X) ; X = klaxon (non attribué, touche inconnue) ; Y = passagers ou vue (non attribué) ; Start = pause (Entrée).
+- **PlayStation** : mapping 1-1, comme demandé (croix = A, rond = B, carré = X, triangle = Y, L2 = LT, R2 = RT). SDL normalise les manettes PlayStation sur les noms Xbox : aucune table séparée.
+- **Menus** : la validation passe par B (« Reverse button to accept » de l'écran de sélection) et par Start. Select (View) sert de retour (Échap).
+- **Vérification** : sur la manette virtuelle, Start ouvre « MODE SELECTION », puis B ouvre le sous-menu « WEST COAST » (`CT3_PAD_SEQ=1200:start,1500:b`).
+
 ## Environnement (31 oct. 2026)
 
 - KWin (session Plasma/Wayland) ne mappe plus les fenêtres X11 nouvelles : constaté sur G1, glxgears et CT3. Une commande de rechargement de KWin (`org.kde.KWin.reconfigure`) a été lancée par erreur, sans effet visible. Non traité : redémarrer la session graphique (déconnexion/reconnexion) devrait suffire, à confirmer par l'utilisateur.

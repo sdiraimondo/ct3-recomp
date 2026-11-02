@@ -194,7 +194,7 @@ uint32_t vk_from_sdl(SDL_Keycode k)
 }
 
 /* Manette (SDL GameController). Le jeu ne lit que le clavier DirectInput (DIK) : chaque entrée de la manette
- * est reliée à une touche du jeu par la section [Controller] de Config.ini (défaut : mapping PS2).
+ * est reliée à une touche du jeu par la section [Controller] de Config.ini (défaut : mapping Xbox).
  * Entrées : a b x y back guide start lstick rstick lb rb dpad_up dpad_down dpad_left dpad_right (boutons SDL,
  * dans l'ordre de SDL_GameControllerButton), puis lt rt (déclencheurs), lstick_left lstick_right lstick_up
  * lstick_down (stick gauche). Touches : up down left right enter escape x s z c space tab, ou none. */
@@ -212,25 +212,26 @@ static const pad_keydef kPadKeys[] = {
     {"up", 0xC8, 0x26}, {"down", 0xD0, 0x28}, {"left", 0xCB, 0x25}, {"right", 0xCD, 0x27},
     {"enter", 0x1C, 0x0D}, {"escape", 0x01, 0x1B}, {"x", 0x2D, 0x58}, {"s", 0x1F, 0x53},
     {"z", 0x2C, 0x5A}, {"c", 0x2E, 0x43}, {"space", 0x39, 0x20}, {"tab", 0x0F, 0x09}};
-/* Mapping PS2 par défaut (voir Config.ini à la racine du dépôt). */
+/* Mapping Xbox par défaut, identique à Config.ini ; les manettes PlayStation suivent ce mapping 1-1 (SDL). */
 static const char *const kPadDefaultConfig =
     "[Controller]\n"
     "DeadZone=16000\n"
     "TriggerThreshold=16000\n"
-    "a=s\n"        /* croix : mode Drive */
-    "b=escape\n"   /* rond : retour (klaxon à définir) */
-    "x=none\n"     /* carré : klaxon à définir */
-    "y=space\n"    /* triangle : Crazy Dash / changement de vitesse (à valider) */
-    "start=enter\n"
-    "lb=x\n"       /* L1 : marche arrière */
-    "rb=up\n"      /* R1 : accélérateur */
-    "lt=none\n"
-    "rt=down\n"    /* R2 : frein */
+    "a=s\n"          /* A (croix) : passer en marche avant (Drive) */
+    "b=x\n"          /* B (rond) : marche arrière (Reverse) ; valide aussi dans les menus */
+    "x=none\n"       /* X (carré) : klaxon, touche à définir */
+    "y=none\n"       /* Y (triangle) : passagers ou vue, selon la configuration, touche à définir */
+    "start=enter\n"  /* Start : pause, validation dans les menus */
+    "back=escape\n"  /* Select / View : retour dans les menus */
+    "lb=none\n"
+    "rb=none\n"
+    "lt=down\n"      /* LT (L2) : frein */
+    "rt=up\n"        /* RT (R2) : accélérateur */
     "dpad_up=up\n"
     "dpad_down=down\n"
     "dpad_left=left\n"
     "dpad_right=right\n"
-    "lstick_left=left\n"
+    "lstick_left=left\n"   /* joystick gauche : diriger */
     "lstick_right=right\n"
     "lstick_up=none\n"
     "lstick_down=none\n";

@@ -248,6 +248,20 @@ static void pad_dir(int i, bool on)
 
 static void pad_event(const SDL_Event &e)
 {
+    static const bool log = getenv("CT3_PAD_LOG") != nullptr;
+    if (log) {
+        switch (e.type) {
+        case SDL_CONTROLLERDEVICEADDED: fprintf(stderr, "[pad] ajoutée (index %d)\n", (int)e.cdevice.which); break;
+        case SDL_CONTROLLERDEVICEREMOVED: fprintf(stderr, "[pad] retirée\n"); break;
+        case SDL_CONTROLLERBUTTONDOWN: case SDL_CONTROLLERBUTTONUP:
+            fprintf(stderr, "[pad] bouton %d %s\n", e.cbutton.button, e.type == SDL_CONTROLLERBUTTONDOWN ? "appuyé" : "relâché");
+            break;
+        case SDL_CONTROLLERAXISMOTION:
+            if (abs(e.caxis.value) > kPadDeadzone) fprintf(stderr, "[pad] axe %d = %d\n", e.caxis.axis, e.caxis.value);
+            break;
+        default: break;
+        }
+    }
     switch (e.type) {
     case SDL_CONTROLLERDEVICEADDED:
         SDL_GameControllerOpen((int)e.cdevice.which);

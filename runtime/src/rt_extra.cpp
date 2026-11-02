@@ -726,14 +726,18 @@ uint32_t sh_ds_CreateSoundBuffer(cpu_t *c, const uint32_t *a)
 uint32_t sh_dsb_Lock(cpu_t *c, const uint32_t *a)
 {
     (void)c;
+    /* Un verrouillage qui dépasse la fin du tampon renvoie deux zones : jusqu'à la fin, puis le début.
+     * DSBLOCK_ENTIREBUFFER (0x2) ignore dwBytes. Sans cela, l'écriture déborde dans le tas. */
     uint32_t storage = get32(a[0] + 4);
     uint32_t size = get32(a[0] + 8);
     uint32_t off = a[1] < size ? a[1] : 0;
-    uint32_t n = a[2] ? a[2] : size - off;
+    uint32_t n = ((a[7] & 2) || !a[2]) ? size - off : a[2];
+    uint32_t first = n < size - off ? n : size - off;
+    uint32_t rest = n - first;
     if (a[3]) put32(a[3], storage + off);
-    if (a[4]) put32(a[4], n);
-    if (a[5]) put32(a[5], 0);
-    if (a[6]) put32(a[6], 0);
+    if (a[4]) put32(a[4], first);
+    if (a[5]) put32(a[5], rest ? storage : 0);
+    if (a[6]) put32(a[6], rest);
     return 0;
 }
 
@@ -772,9 +776,12 @@ uint32_t dsb_cursor(uint32_t obj)
 uint32_t sh_dsb_GetCurrentPosition(cpu_t *c, const uint32_t *a)
 {
     (void)c;
-    uint32_t cur = dsb_cursor(a[0]);
+    const uint32_t kBlock = 4;
+    uint32_t size = get32(a[0] + 8);
+    uint32_t cur = dsb_cursor(a[0]) / kBlock * kBlock;
+    uint32_t wr = size ? (cur + 4096) % size / kBlock * kBlock : cur;
     if (a[1]) put32(a[1], cur);
-    if (a[2]) put32(a[2], cur);
+    if (a[2]) put32(a[2], wr);
     return 0;
 }
 

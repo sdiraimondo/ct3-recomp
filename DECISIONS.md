@@ -390,7 +390,7 @@ Outils ajoutés (build de traçage) : `CT3_MEMWATCH=lo-hi` (écritures dans une 
 - Non traité : cinématique tronquée, écran noir après un Start pris pendant la cinématique, et délai d'environ
   71 s avant le premier logo chez l'utilisateur (environ 20 s mesurées ici avant la première trace).
 
-### Cinématique d'introduction : blocage de la boucle audio (2 nov. 2026, en cours)
+### Cinématique d'introduction : blocage de la boucle audio, corrigé (2 nov. 2026)
 
 - **Constat** : la séquence titre -> cinématique -> titre n'est pas encore fonctionnelle. Le titre (sous-état 0, environ 85 s) se termine vers la présentation 6 500 ; le thread principal attend alors dans `0x412AB0` un acquittement du thread audio (`0x413560`).
 - **Mécanique établie** : le thread audio est bloqué dans la boucle d'écriture `0x412850`, qui appelle le décodeur `0x4BD4A0` jusqu'à remplir la taille demandée. Le décodeur renvoie `-131` (`0xFFFFFF7D`) quand le nombre de trames à écrire vaut 0 (`EBX <= 0`, division de la taille demandée par la taille d'une trame). `0x412850` ne sort pas sur ce code et réessaie immédiatement : boucle sans fin, sans appel système.
@@ -398,7 +398,10 @@ Outils ajoutés (build de traçage) : `CT3_MEMWATCH=lo-hi` (écritures dans une 
 - **Hypothèse retenue** : la taille demandée par la boucle vient de nos curseurs DirectSound (`GetCurrentPosition`, D-051), qui ne sont pas alignés sur un bloc de 4 octets : l'espace libre peut valoir 1 à 3 octets, donc 0 trame.
 - **Essai** : alignement des curseurs sur 4 octets. Résultat : le décodeur progresse, mais le jeu plante ensuite (faute mémoire à l'adresse invitée `0xBC8BD0C3`, pendant l'écriture audio, vers la présentation 2 980). Essai non retenu, retiré du code. Un essai antérieur (curseur d'écriture décalé de 4 096 octets) n'a rien changé.
 - **Diagnostic ajouté** : `CT3_PROBE_AFTER=N` (trace instruction par instruction, build `-O0`, à partir de la présentation N), `[lecture-erreur]` dans `CT3_FILELOG`.
-- **Non résolu** : pourquoi la taille demandée descend sous une trame, et la cause du plantage de l'essai d'alignement.
+- **Cause réelle (D-057)** : l'écrivain en anneau du jeu (`0x412940`) découpe ses écritures aux limites du tampon. Une position non alignée sur une trame de 4 octets donne un morceau de 2 octets : le décodeur (`0x4BD4A0`) calcule alors 0 trame, renvoie `-131`, et la boucle `0x412850` réessaie sans fin. Le curseur de lecture de D-051 n'était pas aligné : corrigé (curseurs arrondis à 4 octets).
+- **Second défaut (D-058)** : `IDirectSoundBuffer::Lock` ne gérait pas le verrouillage qui dépasse la fin du tampon : une seule zone était renvoyée, avec la longueur complète, donc écriture dans le tas (plantage `rt_heap_alloc` observé avec l'alignement). Corrigé : deux zones (jusqu'à la fin, puis le début), `DSBLOCK_ENTIREBUFFER` (0x2) respecté.
+- **Résultat** (run sur `:99`, llvmpipe) : titre -> cinématique -> titre. La cinématique montre des scènes du jeu (environ 17 s, images 8 550 à 9 450), sans écran noir pendant la séquence. Restent : environ 12 s d'écran noir de chargement avant la cinématique (état 7, thread de textures), un écran noir après la cinématique (titre en sous-état 2, logo non dessiné), et une cinématique plus courte que prévu.
+- **Diagnostic ajouté** : `CT3_PROBE_AFTER=N` (trace instruction par instruction, build `-O0`, à partir de la présentation N), `[lecture-erreur]` dans `CT3_FILELOG`.
 
 ## Environnement (31 oct. 2026)
 

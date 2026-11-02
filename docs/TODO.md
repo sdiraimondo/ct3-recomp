@@ -48,6 +48,16 @@ de chaque point est dans `DECISIONS.md` ; l'état d'ensemble est dans `docs/HAND
 
 ## Constats à traiter (hors liste de l'utilisateur)
 
+### Plantage à la sortie du jeu (adresse non traduite 0x005154b5)
+
+- Constat : en quittant le jeu (menu « Exit » ou fermeture), le journal affiche `rt: appel vers une adresse non
+  traduite 0x005154b5 (retour invité 0x00517930)`. Le trampoline `0x53aefb` est désormais suivi (commit `8c3ee82`),
+  mais `0x5154b5` est une fonction pointée par la table `atexit` (`0x7DB7D8`), remplie à l'exécution. Ghidra ne l'a
+  pas désassemblée (la zone `0x5154a0`-`0x5154be` n'est pas dans l'export).
+- Impact : seulement la sortie (pas de nettoyage, code de sortie 3). Sans effet sur le jeu en cours.
+- À faire : repérer les écritures de pointeurs de fonction dans `atexit` / `_onexit`, et exporter les fonctions
+  référencées par constante dans le code (passe `pcode-all-ptrs`).
+
 ### Personnages déformés dans les cinématiques
 
 - Constat utilisateur : dans les cinématiques LV et SA, des polygones des personnages manquent ou sont décalés.

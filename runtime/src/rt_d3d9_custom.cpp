@@ -8,6 +8,7 @@
 #include "rt_win.h"
 
 #include <cstdio>
+#include <ctime>
 #include <cstdlib>
 #include <cstring>
 #include <map>
@@ -675,6 +676,12 @@ extern "C" uint32_t custom_IDirect3DDevice9_Present(cpu_t *c, const uint32_t *a)
     IDirect3DDevice9 *self = rt_self<IDirect3DDevice9>(a[0]);
     HRESULT hr = self->Present(static_cast<const RECT *>(rt_gptr(a[1])), static_cast<const RECT *>(rt_gptr(a[2])),
                                rt_hwnd(a[3]), static_cast<const RGNDATA *>(rt_gptr(a[4])));
+    if (getenv("CT3_PRESENT_LOG")) {
+        /* Diagnostic : instant de chaque présentation (même horloge que CT3_WATCH), pour le temps de démarrage. */
+        struct timespec pts;
+        clock_gettime(CLOCK_MONOTONIC, &pts);
+        fprintf(stderr, "[present] ms=%ld n=%u\n", (long)(pts.tv_sec * 1000 + pts.tv_nsec / 1000000), present_count);
+    }
     present_count++;
     const char *shot = getenv("CT3_SHOT");
     if (shot && present_count == (uint32_t)atoi(shot)) dump_backbuffer(self, present_count);

@@ -4,8 +4,17 @@
 #include "harness.h"
 #include "rt_proc.h"
 
+#include <stdio.h>
+#include <stdlib.h>
+#include <time.h>
+
 int main(int argc, char **argv)
 {
+    if (getenv("CT3_PRESENT_LOG")) {
+        struct timespec ts;
+        clock_gettime(CLOCK_MONOTONIC, &ts);
+        fprintf(stderr, "[start] ms=%ld\n", (long)(ts.tv_sec * 1000 + ts.tv_nsec / 1000000));
+    }
     rt_pe_image *img = harness_load(argc, argv);
     if (!img) {
         return 1;

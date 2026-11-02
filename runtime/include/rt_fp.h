@@ -50,7 +50,9 @@ static inline long double rt_fround(cpu_t *c, long double v)
     case 0: return nearbyintl(v);
     case 1: return floorl(v);
     case 2: return ceill(v);
-    default: return truncl(v);
+    default:
+        /* Troncature : le cast entier tronque déjà vers zéro ; au-delà de 2^63, la valeur est déjà entière. */
+        return fabsl(v) < 9.2e18L ? (long double)(int64_t)v : v;
     }
 }
 
@@ -62,7 +64,7 @@ static inline uint64_t rt_ftrunc(const uint8_t *p, unsigned isize, unsigned osiz
     if (isnan(v) || v >= limit || v < -limit) {
         return 1ULL << (8 * osize - 1);
     }
-    return (uint64_t)(int64_t)truncl(v);
+    return (uint64_t)(int64_t)v;
 }
 
 static inline uint64_t rt_load_bytes(const uint8_t *p, unsigned size)

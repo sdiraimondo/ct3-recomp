@@ -348,7 +348,20 @@ static uint32_t sh_QueryPerformanceFrequency(cpu_t *c, const uint32_t *a)
 }
 
 /* Sleep : attente réelle de l'hôte (la cadence du jeu dépend de ce délai, voir D-017). */
-static uint32_t sh_Sleep(cpu_t *c, const uint32_t *a) { (void)c; rt_sleep_ms(a[0]); return 0; }
+static uint32_t sh_Sleep(cpu_t *c, const uint32_t *a)
+{
+    uint32_t ms = a[0];
+    uint32_t esp = (uint32_t)cpu_rd(c, 16, 4);
+    uint32_t ret = (uint32_t)guest_ld(c, esp, 4);
+    /* CT3_PRESENT_LOG : durée demandée et adresse de retour de l'appelant (diagnostic du démarrage). */
+    if (getenv("CT3_PRESENT_LOG")) {
+        struct timespec sts;
+        clock_gettime(CLOCK_MONOTONIC, &sts);
+        fprintf(stderr, "[sleep] ms=%ld %u ms (retour 0x%08x)\n", (long)(sts.tv_sec * 1000 + sts.tv_nsec / 1000000), ms, ret);
+    }
+    rt_sleep_ms(ms);
+    return 0;
+}
 
 /* Opérations atomiques : un seul fil d'exécution pour l'instant, donc opérations ordinaires. */
 static uint32_t atomic_get(uint32_t p) { uint32_t v; memcpy(&v, rt_mem_base + p, 4); return v; }

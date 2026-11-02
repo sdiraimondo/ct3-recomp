@@ -505,6 +505,17 @@ Outils ajoutés (build de traçage) : `CT3_MEMWATCH=lo-hi` (écritures dans une 
 - **Limites** : rééchantillonnage au plus proche (pas d'interpolation) ; pas d'atténuation par distance pour les tampons 3D ; pas de sortie des flux DirectShow (musique `.ogg`, vidéos, qui restent silencieux, D-061).
 - **Vérification** : sur l'écran virtuel, le mélange produit du signal pendant les lectures du jeu (crêtes de 10 000 à 28 000 pendant les lectures, `CT3_DSLOG=1`). Tests `cpu`, `vec`, `g2`, `x87`, `g1` verts. L'écoute réelle reste à valider sur la machine de l'utilisateur.
 
+### Démarrage lent : cause et premier gain (2 nov. 2026, D-068)
+
+- **Mesure** : sur l'écran virtuel comme sur l'écran utilisateur, le premier `Present` arrive environ 79 s après le lancement, dans l'état 0 (initialisation), sans aucun dispatch du jeu (`CT3_PRESENT_LOG=1` : `[start]`, `[present]`, `[sleep]`).
+- **Causes** :
+  1. Émulation x87 : la conversion flottant vers entier (`FISTP`, `FRNDINT` en troncature) passait par `truncl` sur `long double`, alors que le cast C tronque déjà. C'était l'essentiel des échantillons `gdb` (environ 60 % du temps du thread principal). **Correctif** : `runtime/include/rt_fp.h` (cast entier direct, `truncl` retiré). Gain : 79 s → 43 s.
+  2. Le thread audio du jeu (`0x4134D0`) n'acquitte les demandes du thread principal (`0x412AB0`, appelée par `0x413350` pour arrêter les sons) qu'à chaque tour de sa boucle. Un plafond de l'attente (10 ms) n'a rien changé : la période est imposée par l'attente sur `RDTSC`. Plafond retiré ; piste non traitée.
+  3. Le reste (environ 40 s) est du calcul : traitement des maillages au chargement (`0x4DACC6` et appelants, boucles sur sommets et faces avec `operator_new` et calculs flottants), émulé par le traducteur.
+- **Suite possible** : remplacement natif ciblé de `0x4DACC6` (après vérification de sa sémantique sur des données réelles), ou optimisation générale du code traduit (niveau d'optimisation, chemins rapides pour les opérations flottantes).
+- **Diagnostics ajoutés** (variables d'environnement) : `CT3_PRESENT_LOG=1` (instants de démarrage et de présentation, appels `Sleep` avec leur appelant).
+- **Vérification** : tests `cpu`, `vec`, `g2`, `x87`, `g1` verts.
+
 ## Environnement (31 oct. 2026)
 
 - KWin (session Plasma/Wayland) ne mappe plus les fenêtres X11 nouvelles : constaté sur G1, glxgears et CT3. Une commande de rechargement de KWin (`org.kde.KWin.reconfigure`) a été lancée par erreur, sans effet visible. Non traité : redémarrer la session graphique (déconnexion/reconnexion) devrait suffire, à confirmer par l'utilisateur.

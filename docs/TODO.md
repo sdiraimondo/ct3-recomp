@@ -63,10 +63,12 @@ de chaque point est dans `DECISIONS.md` ; l'état d'ensemble est dans `docs/HAND
 ### Démarrage lent : écran noir pendant une bonne minute
 
 - Constat utilisateur (2 nov. 2026) : le jeu ne démarre pas avant une bonne minute, écran noir.
-- Repères déjà relevés : délai d'environ 71 s avant le premier logo chez l'utilisateur, et environ 12 s
-  d'écran noir en état 7 (chargement des banques, thread de textures) : `docs/HANDOFF.md` section 7, D-059.
-- À faire : mesurer le temps jusqu'au premier logo (`CT3_SHOT_EVERY`, journal `CT3_WATCH`) et identifier ce qui
-  occupe le démarrage (chargement des banques, création de la fenêtre, compilation des shaders).
+- Mesuré (D-068) : premier `Present` à environ 79 s, puis 43 s après le correctif x87 (`truncl` retiré).
+- Reste environ 40 s de calcul au chargement : traitement des maillages (`FUN_004DACC6` et appelants). Suite :
+  remplacement natif ciblé après vérification, ou optimisation générale du code traduit.
+- Piste notée : le thread audio du jeu acquitte les demandes d'arrêt des sons avec une période de 250 ms
+  (`0x413350`, `0x412AB0`, `0x4134D0`).
+- Diagnostic : `CT3_PRESENT_LOG=1`.
 
 ### Plantage à la sortie du jeu (adresse non traduite 0x005154b5)
 

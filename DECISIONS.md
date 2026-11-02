@@ -427,6 +427,12 @@ Outils ajoutés (build de traçage) : `CT3_MEMWATCH=lo-hi` (écritures dans une 
 - **Entrée 4** (lecture en mots de 16 bits, entrée de 0x26 octets) : LV et titre ont des champs non nuls aux positions 12 et 14 (valeurs 81/96 et 4/1) ; SA a 0 à ces positions. Hypothèse (non vérifiée) : l'entrée 4 de SA référence une ressource (objet ou personnage) absente, donc l'événement n'est jamais satisfait, et le réalisateur attend. Les données sont statiques dans l'exécutable : la cause est soit dans la lecture que nous en faisons, soit dans une ressource que le jeu charge pour SA et que notre pont ne fournit pas.
 - **Prochaine étape** : identifier ce que signifient les champs 12 à 16 de l'entrée (fonction qui évalue l'entrée 4 dans `FUN_00498110`), et vérifier si la ressource référencée est chargée pour SA (fichiers `SObj_C3.bin`, `PPL_C3.bin`, `PEV_SA.bin` ouverts en état 2).
 
+### Cinématique SA : nature de l'attente de l'entrée 4 (2 nov. 2026, constat)
+
+- **Logique d'avancement** (`FUN_00498110`) : le compteur `[réalisateur+0x20]` est comparé au temps de l'entrée suivante (`+0x28`). Si le drapeau d'attente `+0x14` n'est pas levé, l'entrée passe à la suivante quand le champ `+0x2C` vaut 1 ; sinon `0x474560` évalue l'événement.
+- **Évaluation d'événement** (`0x474560`, `0x445390`, `0x4452A0`) : une table d'événements par sous-état (`[0x68FF34 + sous-état·4]`) donne une liste d'enregistrements de 12 octets. `0x4452A0` compare des coordonnées (flottants `+0` et `+8`) entre un enregistrement et une position de référence : c'est un test de volume (zone à atteindre), pas un temps.
+- **Conséquence** : l'entrée 4 de SA attend qu'une position atteigne une zone. Hypothèse (non vérifiée) : la voiture ou la position de référence reste immobile chez nous pour SA, parce que la lecture du replay `RPY_CAR_ADV_SA` ne fait pas avancer la position. Le test à faire : suivre la position de référence (`0x71EBB4` ou l'objet passé en argument) dans les 3 800 images bloquées.
+
 ## Environnement (31 oct. 2026)
 
 - KWin (session Plasma/Wayland) ne mappe plus les fenêtres X11 nouvelles : constaté sur G1, glxgears et CT3. Une commande de rechargement de KWin (`org.kde.KWin.reconfigure`) a été lancée par erreur, sans effet visible. Non traité : redémarrer la session graphique (déconnexion/reconnexion) devrait suffire, à confirmer par l'utilisateur.

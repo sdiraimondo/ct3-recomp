@@ -20,6 +20,7 @@ static void dik_set(int sc, bool down);
 namespace {
 
 void pad_test_attach();
+void pad_load_config();
 
 constexpr uint32_t kWmCreate = 0x0001;
 constexpr uint32_t kWmDestroy = 0x0002;
@@ -144,6 +145,7 @@ void ensure_sdl()
         exit(4);
     }
     sdl_ready = true;
+    pad_load_config();
     if (getenv("CT3_PAD_TEST")) pad_test_attach();
 }
 
@@ -191,98 +193,201 @@ uint32_t vk_from_sdl(SDL_Keycode k)
     }
 }
 
-/* Manette (SDL GameController). Le jeu ne lit que le clavier DirectInput (DIK) : les boutons et le stick
- * gauche sont donc traduits en touches. Correspondance (contrôles par défaut du jeu, à valider sur une
- * manette réelle) :
- *   croix directionnelle et stick gauche : flèches ; A et Start : Entrée ; B : Échap ;
- *   X : touche X ; Y : touche S ; LB : bas (freinage) ; RB : haut (accélération).
- * L'état d'une touche est le nombre de sources qui la tiennent (plusieurs boutons peuvent donner la même
- * touche). Les messages de fenêtre suivent le même schéma que le clavier. */
-static uint8_t pad_count[256];
-static int pad_dir_on[4];  /* gauche, droite, haut, bas (stick gauche) */
-static const int kPadDeadzone = 16000;
-
-struct pad_key {
+/* Manette (SDL GameController). Le jeu ne lit que le clavier DirectInput (DIK) : chaque entrée de la manette
+ * est reliée à une touche du jeu par la section [Controller] de Config.ini (défaut : mapping PS2).
+ * Entrées : a b x y back guide start lstick rstick lb rb dpad_up dpad_down dpad_left dpad_right (boutons SDL,
+ * dans l'ordre de SDL_GameControllerButton), puis lt rt (déclencheurs), lstick_left lstick_right lstick_up
+ * lstick_down (stick gauche). Touches : up down left right enter escape x s z c space tab, ou none. */
+enum { kPadInputs = 21, kPadTriggerLt = 15, kPadTriggerRt = 16, kPadStickLeft = 17, kPadStickRight = 18,
+       kPadStickUp = 19, kPadStickDown = 20 };
+static const char *const kPadInputNames[kPadInputs] = {
+    "a", "b", "x", "y", "back", "guide", "start", "lstick", "rstick", "lb", "rb", "dpad_up", "dpad_down",
+    "dpad_left", "dpad_right", "lt", "rt", "lstick_left", "lstick_right", "lstick_up", "lstick_down"};
+struct pad_keydef {
+    const char *name;
     uint8_t dik;
     uint32_t vk;
 };
-static const pad_key kPadDirKeys[4] = {{0xCB, 0x25}, {0xCD, 0x27}, {0xC8, 0x26}, {0xD0, 0x28}};
+static const pad_keydef kPadKeys[] = {
+    {"up", 0xC8, 0x26}, {"down", 0xD0, 0x28}, {"left", 0xCB, 0x25}, {"right", 0xCD, 0x27},
+    {"enter", 0x1C, 0x0D}, {"escape", 0x01, 0x1B}, {"x", 0x2D, 0x58}, {"s", 0x1F, 0x53},
+    {"z", 0x2C, 0x5A}, {"c", 0x2E, 0x43}, {"space", 0x39, 0x20}, {"tab", 0x0F, 0x09}};
+/* Mapping PS2 par défaut (voir Config.ini à la racine du dépôt). */
+static const char *const kPadDefaultConfig =
+    "[Controller]\n"
+    "DeadZone=16000\n"
+    "TriggerThreshold=16000\n"
+    "a=s\n"        /* croix : mode Drive */
+    "b=escape\n"   /* rond : retour (klaxon à définir) */
+    "x=none\n"     /* carré : klaxon à définir */
+    "y=space\n"    /* triangle : Crazy Dash / changement de vitesse (à valider) */
+    "start=enter\n"
+    "lb=x\n"       /* L1 : marche arrière */
+    "rb=up\n"      /* R1 : accélérateur */
+    "lt=none\n"
+    "rt=down\n"    /* R2 : frein */
+    "dpad_up=up\n"
+    "dpad_down=down\n"
+    "dpad_left=left\n"
+    "dpad_right=right\n"
+    "lstick_left=left\n"
+    "lstick_right=right\n"
+    "lstick_up=none\n"
+    "lstick_down=none\n";
+static uint8_t pad_bind_dik[kPadInputs];
+static uint32_t pad_bind_vk[kPadInputs];
+static bool pad_in_on[kPadInputs];
+static uint8_t pad_count[256];
+static int pad_deadzone = 16000;
+static int pad_trigger_threshold = 16000;
 
-static bool pad_key_for_button(int button, pad_key &k)
+static int pad_find_input(const char *name)
 {
-    switch (button) {
-    case SDL_CONTROLLER_BUTTON_DPAD_LEFT: k = kPadDirKeys[0]; return true;
-    case SDL_CONTROLLER_BUTTON_DPAD_RIGHT: k = kPadDirKeys[1]; return true;
-    case SDL_CONTROLLER_BUTTON_DPAD_UP: k = kPadDirKeys[2]; return true;
-    case SDL_CONTROLLER_BUTTON_DPAD_DOWN: k = kPadDirKeys[3]; return true;
-    case SDL_CONTROLLER_BUTTON_A: case SDL_CONTROLLER_BUTTON_START: k = {0x1C, 0x0D}; return true;
-    case SDL_CONTROLLER_BUTTON_B: k = {0x01, 0x1B}; return true;
-    case SDL_CONTROLLER_BUTTON_X: k = {0x2D, 0x58}; return true;
-    case SDL_CONTROLLER_BUTTON_Y: k = {0x1F, 0x53}; return true;
-    case SDL_CONTROLLER_BUTTON_LEFTSHOULDER: k = kPadDirKeys[3]; return true;
-    case SDL_CONTROLLER_BUTTON_RIGHTSHOULDER: k = kPadDirKeys[2]; return true;
-    default: return false;
+    for (int i = 0; i < kPadInputs; i++) {
+        if (strcasecmp(kPadInputNames[i], name) == 0) return i;
+    }
+    return -1;
+}
+
+static bool pad_find_key(const char *name, pad_keydef &out)
+{
+    if (strcasecmp(name, "none") == 0 || *name == '\0') {
+        out = {"none", 0, 0};
+        return true;
+    }
+    for (const pad_keydef &k : kPadKeys) {
+        if (strcasecmp(k.name, name) == 0) {
+            out = k;
+            return true;
+        }
+    }
+    return false;
+}
+
+static void pad_parse_config(const char *text, const char *origin)
+{
+    bool in_controller = false;
+    char line[512];
+    const char *p = text;
+    int lineno = 0;
+    while (*p) {
+        size_t n = 0;
+        while (p[n] && p[n] != '\n' && n < sizeof line - 1) n++;
+        memcpy(line, p, n);
+        line[n] = '\0';
+        p += n;
+        if (*p == '\n') p++;
+        lineno++;
+        char *c = line;
+        while (*c == ' ' || *c == '\t' || *c == '\r') c++;
+        char *cut = strpbrk(c, ";#");
+        if (cut && (cut == c || cut[-1] == ' ' || cut[-1] == '\t')) *cut = '\0';
+        size_t len = strlen(c);
+        while (len && (c[len - 1] == ' ' || c[len - 1] == '\t' || c[len - 1] == '\r')) c[--len] = '\0';
+        if (len == 0) continue;
+        if (c[0] == '[') {
+            in_controller = strcasecmp(c, "[Controller]") == 0;
+            continue;
+        }
+        if (!in_controller) continue;
+        char *eq = strchr(c, '=');
+        if (!eq) {
+            fprintf(stderr, "rt: %s:%d : ligne ignorée\n", origin, lineno);
+            continue;
+        }
+        *eq = '\0';
+        char *key = c, *val = eq + 1;
+        while (*val == ' ' || *val == '\t') val++;
+        size_t vl = strlen(val);
+        while (vl && (val[vl - 1] == ' ' || val[vl - 1] == '\t')) val[--vl] = '\0';
+        for (size_t i = strlen(key); i && (key[i - 1] == ' ' || key[i - 1] == '\t'); i--) key[i - 1] = '\0';
+        if (strcasecmp(key, "DeadZone") == 0) {
+            pad_deadzone = atoi(val);
+            continue;
+        }
+        if (strcasecmp(key, "TriggerThreshold") == 0) {
+            pad_trigger_threshold = atoi(val);
+            continue;
+        }
+        int input = pad_find_input(key);
+        pad_keydef kd;
+        if (input < 0 || !pad_find_key(val, kd)) {
+            fprintf(stderr, "rt: %s:%d : entrée ou touche inconnue (%s = %s)\n", origin, lineno, key, val);
+            continue;
+        }
+        pad_bind_dik[input] = kd.dik;
+        pad_bind_vk[input] = kd.vk;
     }
 }
 
-static void pad_send(const pad_key &k, bool down)
+/* Charge la section [Controller] : fichier CT3_CONFIG, sinon Config.ini (répertoire courant), sinon défauts. */
+void pad_load_config()
 {
+    pad_parse_config(kPadDefaultConfig, "défauts");
+    const char *path = getenv("CT3_CONFIG");
+    if (!path) path = "Config.ini";
+    FILE *f = fopen(path, "rb");
+    if (!f) {
+        if (getenv("CT3_CONFIG")) fprintf(stderr, "rt: fichier de configuration absent : %s\n", path);
+        return;
+    }
+    std::string text;
+    char buf[4096];
+    size_t got;
+    while ((got = fread(buf, 1, sizeof buf, f)) > 0) text.append(buf, got);
+    fclose(f);
+    /* Les réglages du fichier remplacent les défauts entrée par entrée. */
+    pad_parse_config(text.c_str(), path);
+}
+
+static void pad_send(uint8_t dik, uint32_t vk, bool down)
+{
+    if (!dik) return;
     if (down) {
-        pad_count[k.dik]++;
-    } else if (pad_count[k.dik]) {
-        pad_count[k.dik]--;
+        pad_count[dik]++;
+    } else if (pad_count[dik]) {
+        pad_count[dik]--;
     }
     window *w = nullptr;
     for (window *x : windows) {
         if (!x->destroyed) w = x;
     }
-    if (w) post(w->hwnd, down ? kWmKeyDown : kWmKeyUp, k.vk, 1u | ((uint32_t)k.dik << 16) | (down ? 0u : 0xC0000000u));
+    if (w) post(w->hwnd, down ? kWmKeyDown : kWmKeyUp, vk, 1u | ((uint32_t)dik << 16) | (down ? 0u : 0xC0000000u));
 }
 
-static void pad_dir(int i, bool on)
+static void pad_input(int input, bool on)
 {
-    if ((pad_dir_on[i] != 0) == on) return;
-    pad_dir_on[i] = on;
-    pad_send(kPadDirKeys[i], on);
+    if (pad_in_on[input] == on) return;
+    pad_in_on[input] = on;
+    if (getenv("CT3_PAD_LOG")) fprintf(stderr, "[pad] %s %s\n", kPadInputNames[input], on ? "appuyé" : "relâché");
+    pad_send(pad_bind_dik[input], pad_bind_vk[input], on);
 }
 
 static void pad_event(const SDL_Event &e)
 {
-    static const bool log = getenv("CT3_PAD_LOG") != nullptr;
-    if (log) {
-        switch (e.type) {
-        case SDL_CONTROLLERDEVICEADDED: fprintf(stderr, "[pad] ajoutée (index %d)\n", (int)e.cdevice.which); break;
-        case SDL_CONTROLLERDEVICEREMOVED: fprintf(stderr, "[pad] retirée\n"); break;
-        case SDL_CONTROLLERBUTTONDOWN: case SDL_CONTROLLERBUTTONUP:
-            fprintf(stderr, "[pad] bouton %d %s\n", e.cbutton.button, e.type == SDL_CONTROLLERBUTTONDOWN ? "appuyé" : "relâché");
-            break;
-        case SDL_CONTROLLERAXISMOTION:
-            if (abs(e.caxis.value) > kPadDeadzone) fprintf(stderr, "[pad] axe %d = %d\n", e.caxis.axis, e.caxis.value);
-            break;
-        default: break;
-        }
-    }
     switch (e.type) {
     case SDL_CONTROLLERDEVICEADDED:
         SDL_GameControllerOpen((int)e.cdevice.which);
+        if (getenv("CT3_PAD_LOG")) fprintf(stderr, "[pad] ajoutée (index %d)\n", (int)e.cdevice.which);
         break;
     case SDL_CONTROLLERDEVICEREMOVED:
-        for (int k = 0; k < 256; k++) pad_count[k] = 0;
-        for (int i = 0; i < 4; i++) pad_dir_on[i] = 0;
+        for (int i = 0; i < kPadInputs; i++) pad_input(i, false);
         break;
     case SDL_CONTROLLERBUTTONDOWN:
-    case SDL_CONTROLLERBUTTONUP: {
-        pad_key k;
-        if (pad_key_for_button(e.cbutton.button, k)) pad_send(k, e.type == SDL_CONTROLLERBUTTONDOWN);
+    case SDL_CONTROLLERBUTTONUP:
+        if (e.cbutton.button < 15) pad_input(e.cbutton.button, e.type == SDL_CONTROLLERBUTTONDOWN);
         break;
-    }
     case SDL_CONTROLLERAXISMOTION:
-        if (e.caxis.axis == SDL_CONTROLLER_AXIS_LEFTX) {
-            pad_dir(0, e.caxis.value < -kPadDeadzone);
-            pad_dir(1, e.caxis.value > kPadDeadzone);
+        if (e.caxis.axis == SDL_CONTROLLER_AXIS_TRIGGERLEFT) {
+            pad_input(kPadTriggerLt, e.caxis.value > pad_trigger_threshold);
+        } else if (e.caxis.axis == SDL_CONTROLLER_AXIS_TRIGGERRIGHT) {
+            pad_input(kPadTriggerRt, e.caxis.value > pad_trigger_threshold);
+        } else if (e.caxis.axis == SDL_CONTROLLER_AXIS_LEFTX) {
+            pad_input(kPadStickLeft, e.caxis.value < -pad_deadzone);
+            pad_input(kPadStickRight, e.caxis.value > pad_deadzone);
         } else if (e.caxis.axis == SDL_CONTROLLER_AXIS_LEFTY) {
-            pad_dir(2, e.caxis.value < -kPadDeadzone);
-            pad_dir(3, e.caxis.value > kPadDeadzone);
+            pad_input(kPadStickUp, e.caxis.value < -pad_deadzone);
+            pad_input(kPadStickDown, e.caxis.value > pad_deadzone);
         }
         break;
     default:

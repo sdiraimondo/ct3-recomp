@@ -484,6 +484,13 @@ Outils ajoutés (build de traçage) : `CT3_MEMWATCH=lo-hi` (écritures dans une 
 - **Vérification** : manette virtuelle SDL (`CT3_PAD_TEST=1`, séquence `CT3_PAD_SEQ=1200:start,1500:down,1800:a`) sur `:99`. Start ouvre le menu « MODE SELECTION », la croix directionnelle déplace le curseur, A ouvre le sous-menu « SMALL APPLE ». Tests `cpu`, `vec`, `g2`, `x87`, `g1` verts.
 - **Non vérifié** : une vraie manette (aucune branchée sur la machine de développement), le stick analogique, et la conduite (touches d'accélération et de freinage, à déterminer depuis `TAXI3.CFG`). Un appui semble parfois déplacer le curseur de deux entrées : le même chemin clavier est en cause, à vérifier sur la vraie manette.
 
+### Mapping manette PS2 et fichier Config.ini (2 nov. 2026, D-065)
+
+- **Décision** : le mapping des manettes passe au mapping PS2 de Crazy Taxi (demande de l'utilisateur) : croix = Drive (touche S), rond = Échap (retour), carré = non attribué (klaxon à définir), triangle = Espace (Crazy Dash / changement de vitesse, à valider), Start = Entrée, L1 = marche arrière (touche X), R1 = accélérateur (flèche haut), R2 = frein (flèche bas), croix directionnelle et joystick gauche gauche/droite = diriger, joystick haut/bas non attribués (la croix directionnelle sert aux menus).
+- **Constat à l'appui** : l'utilisateur avait déjà la conduite avec le mapping précédent (haut = accélérer, bas = freiner, X = marche arrière, S = marche avant) : ce sont donc les touches du jeu pour ces actions. L'écran de sélection affiche « Reverse button to accept » : dans les menus, la validation passe aussi par la touche de marche arrière (L1), en plus de Start.
+- **Fichier de configuration** : `Config.ini` à la racine du dépôt (section `[Controller]`), lu au démarrage depuis le répertoire courant, ou depuis le chemin de `CT3_CONFIG`. Les valeurs absentes gardent les défauts, qui sont les mêmes que le fichier livré. Une entrée ou une touche inconnue est signalée sur la sortie d'erreur. Le fichier est prévu pour d'autres sections (résolution, réglages du jeu).
+- **Vérification** : menu ouvert par Start sur la manette virtuelle, sans avertissement de configuration (`CT3_PAD_TEST=1 CT3_PAD_SEQ=1200:start`). Les touches de conduite n'ont pas été vérifiées en jeu sur cette version : seul le constat de l'utilisateur (sur l'ancien mapping) le confirme.
+
 ## Environnement (31 oct. 2026)
 
 - KWin (session Plasma/Wayland) ne mappe plus les fenêtres X11 nouvelles : constaté sur G1, glxgears et CT3. Une commande de rechargement de KWin (`org.kde.KWin.reconfigure`) a été lancée par erreur, sans effet visible. Non traité : redémarrer la session graphique (déconnexion/reconnexion) devrait suffire, à confirmer par l'utilisateur.

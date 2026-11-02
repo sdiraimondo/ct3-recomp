@@ -6,8 +6,9 @@ de chaque point est dans `DECISIONS.md` ; l'état d'ensemble est dans `docs/HAND
 ## 1. Manettes via SDL (tests plus rapides à la manette) : premier jet fait (D-064)
 
 - Fait : boutons et stick gauche traduits en touches DIK (menus validés avec une manette virtuelle).
-- Reste : test sur une vraie manette, stick analogique, touches de conduite (depuis `TAXI3.CFG`), et l'effet
-  d'un appui qui semble déplacer le curseur de deux entrées.
+- Mapping PS2 et `Config.ini` : voir D-065. Testé avec une DualShock 4 (boutons et stick) par l'utilisateur.
+- Reste : la vérification complète des touches de conduite en jeu (klaxon, Crazy Dash), la touche de
+  validation des menus (Start ou L1), et l'effet d'un appui qui semble déplacer le curseur de deux entrées.
 
 - Objectif : piloter le jeu à la manette (menus et conduite) pour accélérer les tests.
 - Point de départ : le clavier passe déjà par DirectInput (D-046) et les événements SDL. `EnumDevices` ne
@@ -17,6 +18,12 @@ de chaque point est dans `DECISIONS.md` ; l'état d'ensemble est dans `docs/HAND
     le dossier du jeu, à contrôler dans l'import).
   - Remplir `DIJOYSTATE` (axes, boutons, POV) depuis SDL (GameController ou Joystick).
   - Table de correspondance boutons et axes du jeu vers les contrôles SDL, à valider sur une vraie manette.
+
+### Hors liste : paramètres dans Config.ini et UI (v1.1)
+
+- Fait : le mapping des manettes est lu dans `Config.ini` (D-065).
+- À faire : étendre `Config.ini` (résolution, autres réglages du jeu).
+- v1.1 : modifier les paramètres des manettes directement dans l'interface du jeu (et écrire `Config.ini`).
 
 ## 2. Son (totalement absent)
 

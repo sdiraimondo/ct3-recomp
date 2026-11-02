@@ -53,7 +53,7 @@ cmake -S . -B build -G Ninja \
     -DCT3_EXE="/path/to/your/Crazy Taxi 3/CT3.exe" \
     -DCT3_DEPS_PREFIX="$HOME/.local/ct3-deps/prefix" \
     -DCT3_GHIDRA_DIR="$HOME/.local/share/ghidra_12.1.4_PUBLIC" \
-    -DCT3_JAVA_HOME="/path/to/jdk-21"
+    -DCT3_JAVA_HOME="/path/to/jdk-21"   # optional: the system JDK is used when omitted
 cmake --build build --target ct3_run
 
 ./build/tests/run/ct3_run "/path/to/your/Crazy Taxi 3/CT3.exe"

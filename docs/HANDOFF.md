@@ -11,11 +11,11 @@ décisions est dans `DECISIONS.md` (D-001 à D-050 et notes datées). Ce documen
   reporté (D-011).
 - **Contraintes de l'utilisateur** (à respecter) :
   - Ne jamais modifier `CT3.exe` ni `CT3.original.exe` (lecture seule). Ne pas copier les assets du jeu dans le dépôt :
-    le jeu les lit depuis `/run/media/stephane/BC250_USB/Games/Crazy Taxi 3/`.
+    le jeu les lit depuis le dossier de la copie de l'utilisateur (chemin passé en `CT3_EXE`, jamais versionné).
   - Pas de contournement de protection. Aucune protection n'a été rencontrée à ce jour.
   - Machine Bazzite (immuable) : outils via distrobox, Homebrew ou venv utilisateur ; **jamais `rpm-ostree`**.
-  - Dépôt de travail : `/var/home/stephane/Dev/ct3-linux` (git, un commit par étape). Notes d'analyse :
-    `/var/home/stephane/Dev/ct3/analysis/`. Journal des décisions : `DECISIONS.md`.
+  - Dépôt de travail : la racine du dépôt (git, un commit par étape). Notes d'analyse hors dépôt. Journal des
+    décisions : `DECISIONS.md`.
   - Captures d'écran : dossier `captures/` (ignoré par git).
   - Autonomie accordée : avancer sans demander, prendre la solution la plus proche des règles de l'art (décompilation,
     émulation), consigner les décisions. Ne solliciter l'utilisateur qu'à une étape claire (ici : menu, vidéo ou son).
@@ -51,8 +51,8 @@ Outils système utilisés : Ghidra 12.1.4 (`~/.local/share/ghidra_12.1.4_PUBLIC`
 ### Commandes
 
 ```sh
-cd /var/home/stephane/Dev/ct3-linux
-cmake --build build --target ct3_run          # build normal
+cd <racine du dépôt>
+cmake --build build --target ct3_run          # build normal (CT3_EXE gardé dans build/CMakeCache.txt)
 cmake --build build-o0 --target ct3_run       # build de traçage
 rm -f build/g3/libct3gen.a                    # forcer la retraduction après une modification de ct3rc.py
 ```
@@ -61,7 +61,7 @@ Lancer le jeu (test, Xvfb) :
 ```sh
 Xvfb :99 -screen 0 1280x1024x24 -nolisten tcp &
 DXVK_FILTER_DEVICE_NAME=llvmpipe DISPLAY=:99 timeout -s KILL 280 ./build/tests/run/ct3_run \
-  "/run/media/stephane/BC250_USB/Games/Crazy Taxi 3/CT3.exe" > /dev/null 2> journal.err
+  "$CT3_EXE" > /dev/null 2> journal.err
 ```
 Sur l'écran utilisateur : `DISPLAY=:0`, sans `DXVK_FILTER_DEVICE_NAME` (RADV).
 

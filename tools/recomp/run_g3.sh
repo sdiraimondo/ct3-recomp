@@ -12,17 +12,19 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
-CT3_EXE="${CT3_EXE:-/run/media/stephane/BC250_USB/Games/Crazy Taxi 3/CT3.exe}"
+CT3_EXE="${CT3_EXE:?CT3_EXE doit désigner votre copie de CT3.exe}"
 GHIDRA_DIR="${GHIDRA_DIR:-$HOME/.local/share/ghidra_12.1.4_PUBLIC}"
-JAVA_HOME="${JAVA_HOME:-/var/home/linuxbrew/.linuxbrew/Cellar/openjdk@21/21.0.13.0.3/libexec}"
+JAVA_HOME="${JAVA_HOME:-}"
 CC="${CC:-clang}"
 JOBS="${JOBS:-$(nproc)}"
 ENTRY="0x518a9a"  # point d'entrée de CT3.exe (en-tête PE)
 OUT="${OUT:-$ROOT/build/g3}"
 
 mkdir -p "$OUT/ghidra" "$OUT/gen" "$OUT/obj"
-export JAVA_HOME
-export PATH="$JAVA_HOME/bin:$PATH"
+if [ -n "$JAVA_HOME" ]; then
+  export JAVA_HOME
+  export PATH="$JAVA_HOME/bin:$PATH"
+fi
 
 if [ "${REUSE_EXPORT:-0}" != "1" ] || [ ! -s "$OUT/pcode_all.json" ]; then
   echo "[g3] export p-code (Ghidra headless)"

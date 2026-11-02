@@ -62,18 +62,19 @@ de chaque point est dans `DECISIONS.md` ; l'état d'ensemble est dans `docs/HAND
 
 ### Démarrage lent : écran noir pendant une bonne minute
 
-- Constat utilisateur (2 nov. 2026) : le jeu ne démarre pas avant une bonne minute, écran noir.
-- Mesuré (D-068) : premier `Present` à environ 79 s, puis 43 s après le correctif x87 (`truncl` retiré).
-- Reste environ 40 s de calcul au chargement. Analyse (2 nov. 2026) : `FUN_004DACC6` n'est pas un traitement de
-  maillage mais une variante du filtre d'image D3DX embarqué (appelé par `FUN_004DB284`, qui essaie une liste de
-  filtres, pour chaque texture au chargement). Elle applique des poids sparses (tables de `FUN_004D7A41`), des
-  accumulateurs flottants par texel, puis un serrage à [0, 1] selon le filtre. Un remplacement natif demande de
-  reproduire ces tables, les variantes par format, et l'arithmétique x87 (`long double` pour rester bit à bit).
-  Vérification nécessaire contre la version traduite (harnais de comparaison). Pas commencé.
-- Piste en cours : compilation du code généré en `-O2` (au lieu de `-O1`), mesurée sur le démarrage.
-- Piste notée : le thread audio du jeu acquitte les demandes d'arrêt des sons avec une période de 250 ms
-  (`0x413350`, `0x412AB0`, `0x4134D0`).
+- Mesuré (D-068) : premier `Present` à environ 43 s après le lancement (79 s avant le correctif x87).
+  Constaté par l'utilisateur à 43 s (2 nov. 2026).
+- Reste : voir l'item « Remplacement natif de la routine de filtre » ci-dessous.
 - Diagnostic : `CT3_PRESENT_LOG=1`.
+
+### Remplacement natif de la routine de filtre au démarrage (environ 40 s)
+
+- Routine : `FUN_004DACC6`, variante du filtre d'image D3DX embarqué, appelée par `FUN_004DB284` pour chaque
+  texture au chargement. Elle applique des poids sparses (tables de `FUN_004D7A41`), des accumulateurs flottants
+  par texel, puis un serrage à [0, 1] selon le filtre.
+- À faire : reproduire ces tables, les variantes par format, et l'arithmétique x87 (`long double` pour rester bit
+  à bit) ; vérifier contre la version traduite (harnais de comparaison).
+- Piste mesurée : compilation en `-O2` = 39 s au lieu de 43 s (non retenue, D-068).
 
 ### Plantage à la sortie du jeu (adresse non traduite 0x005154b5)
 

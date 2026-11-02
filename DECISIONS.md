@@ -516,6 +516,9 @@ Outils ajoutés (build de traçage) : `CT3_MEMWATCH=lo-hi` (écritures dans une 
 - **Diagnostics ajoutés** (variables d'environnement) : `CT3_PRESENT_LOG=1` (instants de démarrage et de présentation, appels `Sleep` avec leur appelant).
 - **Vérification** : tests `cpu`, `vec`, `g2`, `x87`, `g1` verts.
 
+- **Piste -O2 mesurée** : code généré compilé en `-O2` au lieu de `-O1` : premier `Present` à 39,2 s contre 43 s. Gain d'environ 9 %, non retenu (compilation nettement plus longue).
+- **Remplacement natif de `FUN_004DACC6`** : non réalisé. Cette routine est une variante du filtre d'image D3DX embarqué (tables de poids de `FUN_004D7A41`, variantes par format, arithmétique x87). Il faut reproduire ces tables, et vérifier le résultat bit à bit contre la version traduite. Analyse dans `docs/TODO.md`.
+
 ### Mapping Xbox : correction de l'utilisateur (2 nov. 2026, amende D-066)
 
 - **Décision de l'utilisateur** : A = marche arrière (Reverse, touche X), B = marche avant (Drive, touche S), Y = Espace (provisoire, touche à confirmer). Le mapping de D-066 était inversé pour A et B. `Config.ini` et les défauts du code suivent ce mapping.

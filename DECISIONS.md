@@ -390,6 +390,16 @@ Outils ajoutés (build de traçage) : `CT3_MEMWATCH=lo-hi` (écritures dans une 
 - Non traité : cinématique tronquée, écran noir après un Start pris pendant la cinématique, et délai d'environ
   71 s avant le premier logo chez l'utilisateur (environ 20 s mesurées ici avant la première trace).
 
+### Cinématique d'introduction : blocage de la boucle audio (2 nov. 2026, en cours)
+
+- **Constat** : la séquence titre -> cinématique -> titre n'est pas encore fonctionnelle. Le titre (sous-état 0, environ 85 s) se termine vers la présentation 6 500 ; le thread principal attend alors dans `0x412AB0` un acquittement du thread audio (`0x413560`).
+- **Mécanique établie** : le thread audio est bloqué dans la boucle d'écriture `0x412850`, qui appelle le décodeur `0x4BD4A0` jusqu'à remplir la taille demandée. Le décodeur renvoie `-131` (`0xFFFFFF7D`) quand le nombre de trames à écrire vaut 0 (`EBX <= 0`, division de la taille demandée par la taille d'une trame). `0x412850` ne sort pas sur ce code et réessaie immédiatement : boucle sans fin, sans appel système.
+- **Observations** : le tampon en anneau du décodeur (`0x52AB20`, `0x52AB80`) reste à lecture 616 / écriture 1 024 sans consommation ; le décodeur ne fait aucun appel au système audio pendant la boucle ; aucune lecture de fichier n'échoue (`CT3_FILELOG`, journal `[lecture-erreur]` ajouté, rien).
+- **Hypothèse retenue** : la taille demandée par la boucle vient de nos curseurs DirectSound (`GetCurrentPosition`, D-051), qui ne sont pas alignés sur un bloc de 4 octets : l'espace libre peut valoir 1 à 3 octets, donc 0 trame.
+- **Essai** : alignement des curseurs sur 4 octets. Résultat : le décodeur progresse, mais le jeu plante ensuite (faute mémoire à l'adresse invitée `0xBC8BD0C3`, pendant l'écriture audio, vers la présentation 2 980). Essai non retenu, retiré du code. Un essai antérieur (curseur d'écriture décalé de 4 096 octets) n'a rien changé.
+- **Diagnostic ajouté** : `CT3_PROBE_AFTER=N` (trace instruction par instruction, build `-O0`, à partir de la présentation N), `[lecture-erreur]` dans `CT3_FILELOG`.
+- **Non résolu** : pourquoi la taille demandée descend sous une trame, et la cause du plantage de l'essai d'alignement.
+
 ## Environnement (31 oct. 2026)
 
 - KWin (session Plasma/Wayland) ne mappe plus les fenêtres X11 nouvelles : constaté sur G1, glxgears et CT3. Une commande de rechargement de KWin (`org.kde.KWin.reconfigure`) a été lancée par erreur, sans effet visible. Non traité : redémarrer la session graphique (déconnexion/reconnexion) devrait suffire, à confirmer par l'utilisateur.

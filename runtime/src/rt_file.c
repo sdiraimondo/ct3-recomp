@@ -125,11 +125,13 @@ int rt_file_read(uint32_t h, uint32_t buf, uint32_t n, uint32_t got_addr)
     int fd = rt_file_fd(h);
     if (fd < 0) {
         rt_error = ERROR_INVALID_HANDLE;
+        if (getenv("CT3_FILELOG")) fprintf(stderr, "[lecture-erreur] h=0x%x : descripteur invalide\n", h);
         return 0;
     }
     ssize_t r = read(fd, rt_mem_base + buf, n);
     if (r < 0) {
         rt_error = ERROR_ACCESS_DENIED;
+        if (getenv("CT3_FILELOG")) fprintf(stderr, "[lecture-erreur] h=0x%x : lecture refusée\n", h);
         return 0;
     }
     if (got_addr) {

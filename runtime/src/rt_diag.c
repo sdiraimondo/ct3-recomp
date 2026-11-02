@@ -74,8 +74,20 @@ void rt_probe_hit(cpu_t *c, uint32_t addr)
                 probe_rd(esp + 0xfc), probe_rd(esp + 0x100), probe_rd(esp + 0x18));
 }
 
+static void parse_range(const char *v, uint32_t *lo, uint32_t *span);
+
 void rt_probe_present(void)
 {
+    /* CT3_PROBE_AFTER=N : active la trace de CT3_PROBE seulement à partir de la N-ième présentation. */
+    static long probe_after = -2;
+    if (probe_after == -2) {
+        const char *pa = getenv("CT3_PROBE_AFTER");
+        probe_after = pa ? atol(pa) : -1;
+    }
+    if (probe_after >= 0 && (long)(presents + 1) == probe_after) {
+        const char *pr = getenv("CT3_PROBE");
+        if (pr) parse_range(pr, &rt_probe_lo, &rt_probe_span);
+    }
     if (!ring_after_set) return;
     if (++presents >= ring_after && !ring_on) {
         ring_on = 1;
@@ -125,5 +137,5 @@ void rt_diag_init(void)
         ring_after_set = 1;
     }
     const char *pr = getenv("CT3_PROBE");
-    if (pr) parse_range(pr, &rt_probe_lo, &rt_probe_span);
+    if (pr && !getenv("CT3_PROBE_AFTER")) parse_range(pr, &rt_probe_lo, &rt_probe_span);
 }

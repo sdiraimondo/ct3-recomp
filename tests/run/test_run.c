@@ -15,6 +15,7 @@ int main(int argc, char **argv)
         clock_gettime(CLOCK_MONOTONIC, &ts);
         fprintf(stderr, "[start] ms=%ld\n", (long)(ts.tv_sec * 1000 + ts.tv_nsec / 1000000));
     }
+    if (argc == 2) rt_splash_start(argv[1]);
     rt_pe_image *img = harness_load(argc, argv);
     if (!img) {
         return 1;

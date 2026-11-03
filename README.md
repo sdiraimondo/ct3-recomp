@@ -43,6 +43,7 @@ Requirements:
 - CMake ≥ 3.20, Ninja, clang, Python 3
 - JDK 21 and [Ghidra 12.1.4](https://github.com/NationalSecurityAgency/ghidra/releases) (used at build time for the export)
 - SDL2 and dxvk-native, installed in a prefix (the build expects `~/.local/ct3-deps/prefix` by default). The dependency recipe is not scripted yet.
+- Optional: FFmpeg (LGPL build), for the loading screen video. `tools/deps/build_ffmpeg.sh` builds it in the same prefix. Without it, the game starts without the loading video.
 - Your own copy of `CT3.exe`
 
 ```sh
@@ -82,6 +83,7 @@ Tests (each one is a program, run from `build/tests`):
 
 - [dxvk-native](https://github.com/doitsujin/dxvk) by doitsujin, the Direct3D 9 to Vulkan layer.
 - [SDL2](https://github.com/libsdl-org/SDL), for the window, input and audio output.
+- [FFmpeg](https://ffmpeg.org), for decoding the loading screen video (LGPL build).
 - [Ghidra](https://github.com/NationalSecurityAgency/ghidra) by the NSA, for the p-code export.
 - [stb_truetype](https://github.com/nothings/stb) by Sean Barrett, for the font rasterization in `runtime/third_party`.
 

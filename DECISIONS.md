@@ -704,6 +704,21 @@ Outils ajoutés (build de traçage) : `CT3_MEMWATCH=lo-hi` (écritures dans une 
 - **Essai à faire** : si le plantage est reproductible, comparer `CT3_FILTER_NATIVE=0` (tout le filtre en traduction) ; une reproduction à l'identique avec la traduction seule écarterait les natifs.
 - **Ralentissements aléatoires** : non étudiés dans cette session, sans trace de cause dans le journal.
 
+### Écran de chargement vidéo (FFmpeg) : couvrir l'écran noir du démarrage (3 nov. 2026, D-070)
+
+- **Décision** : lire `avi/loading.avi` (seule vidéo présente dans la copie) pendant le démarrage, jusqu'au premier `Present` du jeu. FFmpeg (build LGPL, sans composant GPL) pour le décodage, SDL pour l'affichage. Choix confirmé par l'utilisateur.
+- **Constat** : `loading.avi` est une vidéo brute 128×128, 30 images/s, 3 s, sans son. Le jeu la demande via `FUN_00440280`, qui passe l'index `0x11` à `FUN_00457530` → `FUN_00412820` → `FUN_004121D0` (chemin `0x67BCB0`). Le moment exact de cet appel par rapport au premier `Present` n'est pas mesuré.
+- **Implémentation** : `runtime/src/rt_splash.c`. Le décodage (`avformat`/`avcodec`/`swscale`) donne les images en BGRA. L'affichage tourne dans un **processus enfant** (`fork`, avant toute initialisation de SDL), fenêtre SDL sans bordure au-dessus des autres, agrandie ×3, centrée. `rt_probe_present` l'arrête au premier `Present`.
+- **Pourquoi un processus enfant et pas un thread** : une première version en thread (même processus que le jeu) plantait au démarrage (faute hôte). Dans le processus enfant, l'enfant ne partage pas l'état SDL du jeu. Le jeu présente normalement pendant que la fenêtre existe.
+- **Point technique** : SDL installe ses propres gestionnaires de `SIGTERM` dans l'enfant. Un `SIGTERM` ne le tue donc pas, et `waitpid` bloquait le premier `Present` (constaté après plusieurs essais). L'arrêt utilise `SIGKILL`. L'enfant reçoit `PR_SET_PDEATHSIG` pour ne pas survivre au jeu.
+- **Mesures** (Xvfb `:99`, llvmpipe) : fenêtre visible à 6 s, disparue à 28 s, premier `Present` à 9,0 s (binaire de test) et 10,4 s (binaire `build/`). Le jeu tourne après l'arrêt de la fenêtre. Les cinq tests obligatoires sont verts.
+- **Désactivation** : `CT3_SPLASH=0`. Sans FFmpeg, la compilation réussit sans écran de chargement (`CT3_HAVE_FFMPEG=0`).
+- **Build** : `tools/deps/build_ffmpeg.sh` construit FFmpeg 9.0.2 dans le préfixe `~/.local/ct3-deps/prefix` (sans `nasm`, `--disable-x86asm`). CMake le cherche par `pkg-config` (optionnel).
+- **Limites** :
+  - La vidéo ne couvre que le démarrage (jusqu'au premier `Present`). Les images qui suivent sont encore celles du jeu : fondus du logo. Mesure Xvfb (luminance moyenne, images 20 à 600) : 60 à l'image 20, 240 de 80 à 200, 0 à 260, 155 à 300, 246 de 340 à 440, 0 à 17 de 500 à 600. Couvrir ces fondus demande une décision supplémentaire.
+  - Les cinématiques `sa_ic.avi`, `go_bb.avi`, `go_an.avi` restent absentes de la copie (D-005) : seul `loading.avi` est lu.
+  - Le lecteur DirectShow factice (D-061) n'est pas modifié : la vidéo de chargement est une fenêtre séparée, pas une lecture de l'API du jeu.
+
 ## Environnement (31 oct. 2026)
 
 - KWin (session Plasma/Wayland) ne mappe plus les fenêtres X11 nouvelles : constaté sur G1, glxgears et CT3. Une commande de rechargement de KWin (`org.kde.KWin.reconfigure`) a été lancée par erreur, sans effet visible. Non traité : redémarrer la session graphique (déconnexion/reconnexion) devrait suffire, à confirmer par l'utilisateur.

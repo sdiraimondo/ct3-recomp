@@ -696,6 +696,14 @@ Outils ajoutés (build de traçage) : `CT3_MEMWATCH=lo-hi` (écritures dans une 
 - **Tests** (`build-check/`) : `test_cpu`, `test_vec`, `test_x87`, `test_g2`, `g1_d3d9_triangle` : verts.
 - **Reste** : le bloc de couleur `FUN_004F0019` (quantification, diffusion, sélection des indices, empaquetage). Il est encore traduit ; c'est la prochaine routine à porter, avec le même harnais.
 
+### Plantage A, nouvelle occurrence sur le build avec portages natifs (3 nov. 2026, suite de D-069)
+
+- **Contexte** : build `build/` avec le filtre, le tramage, l'encodeur DXT3 (alpha) et l'ajustement des extrémités natifs, lancé sur `DISPLAY=:0`. Premier affichage à 10,6 s, dernier affichage à 301 s après `[start]` (14 653 images), puis plantage.
+- **Signature** : identique à D-069 : faute à `0x3F800000` (`EAX = 0x3F800000`), `EBX = EBP = 0x45183AD4`, fonction `FUN_00414ED0`. Journal : `ct3-shots/portage/user_display0_c.err`.
+- **Lecture** : même famille, même objet, même durée de course (D-069 : 5 à 12 min). Le plantage précède les portages, donc il ne vient pas de leur introduction ; rien ne permet encore d'exclure une écriture native dans ce bloc. Les routines natives ajoutées n'allouent pas et n'écrivent que dans les tampons qu'elles reçoivent, mais l'écrivain de `[rec+4]` reste à identifier (D-069).
+- **Essai à faire** : si le plantage est reproductible, comparer `CT3_FILTER_NATIVE=0` (tout le filtre en traduction) ; une reproduction à l'identique avec la traduction seule écarterait les natifs.
+- **Ralentissements aléatoires** : non étudiés dans cette session, sans trace de cause dans le journal.
+
 ## Environnement (31 oct. 2026)
 
 - KWin (session Plasma/Wayland) ne mappe plus les fenêtres X11 nouvelles : constaté sur G1, glxgears et CT3. Une commande de rechargement de KWin (`org.kde.KWin.reconfigure`) a été lancée par erreur, sans effet visible. Non traité : redémarrer la session graphique (déconnexion/reconnexion) devrait suffire, à confirmer par l'utilisateur.

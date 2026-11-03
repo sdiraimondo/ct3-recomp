@@ -21,7 +21,6 @@
 #include <sys/types.h>
 #include <sys/wait.h>
 
-#define SPLASH_SCALE 3
 #define SPLASH_MAX_FRAMES 1024
 
 static pid_t splash_pid;
@@ -132,6 +131,7 @@ static void splash_child(const char *path)
 {
     splash_clip clip = { 0 };
     SDL_Window *win = NULL;
+    int win_x = 0, win_y = 0, win_w = 0, win_h = 0;
 
     if (clip_decode(path, &clip) != 0) {
         fprintf(stderr, "rt: écran de chargement : lecture de %s impossible\n", path);
@@ -141,8 +141,21 @@ static void splash_child(const char *path)
         fprintf(stderr, "rt: écran de chargement : SDL_InitSubSystem : %s\n", SDL_GetError());
         goto done;
     }
-    win = SDL_CreateWindow("Crazy Taxi 3", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED,
-                           clip.w * SPLASH_SCALE, clip.h * SPLASH_SCALE,
+    /* Plein écran sans bordure, fond noir : la vidéo garde sa taille d'origine, centrée. */
+    {
+        SDL_Rect bounds;
+        if (SDL_GetDisplayBounds(0, &bounds) != 0) {
+            bounds.x = 0;
+            bounds.y = 0;
+            bounds.w = 1280;
+            bounds.h = 720;
+        }
+        win_w = bounds.w;
+        win_h = bounds.h;
+        win_x = bounds.x;
+        win_y = bounds.y;
+    }
+    win = SDL_CreateWindow("Crazy Taxi 3", win_x, win_y, win_w, win_h,
                            SDL_WINDOW_BORDERLESS | SDL_WINDOW_ALWAYS_ON_TOP | SDL_WINDOW_SKIP_TASKBAR);
     if (!win) goto done;
 
@@ -153,8 +166,9 @@ static void splash_child(const char *path)
             SDL_Surface *src = SDL_CreateRGBSurfaceFrom(clip.px[i], clip.w, clip.h, 32, clip.w * 4,
                                                         0x00FF0000u, 0x0000FF00u, 0x000000FFu, 0xFF000000u);
             if (!dst || !src) break;
+            SDL_Rect at = { (dst->w - clip.w) / 2, (dst->h - clip.h) / 2, clip.w, clip.h };
             SDL_FillRect(dst, NULL, 0);
-            SDL_BlitScaled(src, NULL, dst, NULL);
+            SDL_BlitSurface(src, NULL, dst, &at);
             SDL_UpdateWindowSurface(win);
             SDL_FreeSurface(src);
             SDL_Delay((uint32_t)clip.frame_ms);

@@ -182,6 +182,7 @@ extern int rt_native_filter_on;
 void rt_native_filter(cpu_t *c);
 void rt_native_dxt1(cpu_t *c);
 void rt_native_dither(cpu_t *c);
+void rt_native_dxt3(cpu_t *c);
 void rt_fatal(const char *msg);
 void rt_unresolved(cpu_t *c, uint32_t addr);
 void rt_unsupported(const char *what, uint32_t addr);

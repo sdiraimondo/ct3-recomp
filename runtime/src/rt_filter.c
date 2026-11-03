@@ -26,6 +26,8 @@ static int cw_count, cw_track;
 static long dither_calls;
 static int check_dither_only;
 static int dither_native_on = 1;
+static int dxt3_native_on = 1;
+static long dxt3_calls;
 
 /* Traduction de la routine (généré) : présente seulement dans les exécutables qui la lient. */
 extern void sub_004dacc6(cpu_t *c) __attribute__((weak));
@@ -384,9 +386,9 @@ static void check_call(cpu_t *c, uint32_t P)
         fprintf(stderr, "rt: CT3_FILTER_CHECK : arrêt (appel %ld, objet 0x%08x)\n", 1L, P);
         exit(7);
     }
-    fprintf(stderr, "rt: CT3_FILTER_CHECK : appel identique (objet 0x%08x, mode %u, %ux%u -> %ux%u, tas %u octets, tramage natif cumulé %ld)\n",
+    fprintf(stderr, "rt: CT3_FILTER_CHECK : appel identique (objet 0x%08x, mode %u, %ux%u -> %ux%u, tas %u octets, tramage natif cumulé %ld, DXT3 natif cumulé %ld)\n",
             P, rd32(rd32(P) + 8), rd32(rd32(P) + 0x68), rd32(rd32(P) + 0x6C), rd32(rd32(P + 4) + 0x68),
-            rd32(rd32(P + 4) + 0x6C), (unsigned)lent, dither_calls);
+            rd32(rd32(P + 4) + 0x6C), (unsigned)lent, dither_calls, dxt3_calls);
     fprintf(stderr, "rt: CT3_FILTER_CHECK : fourcc S=%08x D=%08x\n", rd32(rd32(P) + 4), rd32(rd32(P + 4) + 4));
     fprintf(stderr, "rt: CT3_FILTER_CHECK : S vt+4=%08x S+10=%u S+54=%u S+5c=%u | D vt+8=%08x D+10=%u D+54=%u D+5c=%u\n",
             rd32(rd32(rd32(P)) + 4), rd32(rd32(P) + 0x10), rd32(rd32(P) + 0x54), rd32(rd32(P) + 0x5C),
@@ -564,6 +566,68 @@ void rt_native_dither(cpu_t *c)
     cpu_wr(c, 644, 4, ret);
 }
 
+/* Encodeur DXT3 (FUN_004F0D8B, stdcall, RET 0xC) : bloc de 16 octets = alpha (8 octets, 16 nibbles) puis couleur.
+ * Alpha : s = (float)(v×15 + 0.5) tronqué (RC=11) ; si dither, v reçoit l'erreur de la diffusion (lignes de 4
+ * texels, poids 7/16, 3/16, 5/16, 1/16), et l'erreur e = v - n×(1/15) reste en extended jusqu'au FSTP.
+ * Couleur : FUN_004F0019 traduite, appelée avec EAX = source (comme la traduction). */
+extern void sub_004f0d8b(cpu_t *c) __attribute__((weak));
+
+static void dxt3_alpha(uint32_t out, uint32_t src, uint32_t dither)
+{
+    float err[16];
+    float k15 = rdf(0x0054169C), half = rdf(0x0053CC68), two32 = rdf(0x0053B7A0), k1s = rdf(0x005A70A4);
+    float c7 = rdf(0x005DD60C), c3 = rdf(0x005D6484), c5 = rdf(0x005D6480), c1 = rdf(0x00541854);
+    uint32_t t;
+
+    wr32(out, 0);
+    wr32(out + 4, 0);
+    memset(err, 0, sizeof err);
+    for (t = 0; t < 16; t++) {
+        float v = rdf(src + 0xC + 16 * t);
+        float s;
+        int32_t n;
+        uint32_t a = out + (t >> 3) * 4;
+        int j = (int)(t & 3);
+
+        if (dither) v = (float)((long double)v + err[t]);
+        s = (float)((long double)v * k15 + half);
+        n = fist_trunc((long double)s);
+        wr32(a, (rd32(a) >> 4) | ((uint32_t)n << 28));
+        if (dither) {
+            long double fn = (long double)n, e;
+            if (n < 0) fn = fn + two32;
+            e = (long double)v - fn * k1s;
+            if (j != 3) err[t + 1] = (float)((long double)c7 * e + err[t + 1]);
+            if (t < 12) {
+                if (j != 0) err[t + 3] = (float)((long double)c3 * e + err[t + 3]);
+                err[t + 4] = (float)((long double)c5 * e + err[t + 4]);
+                if (j != 3) err[t + 5] = (float)((long double)c1 * e + err[t + 5]);
+            }
+        }
+    }
+}
+
+void rt_native_dxt3(cpu_t *c)
+{
+    uint32_t esp = (uint32_t)cpu_rd(c, 16, 4);
+    uint32_t out = (uint32_t)guest_ld(c, esp + 4, 4), src = (uint32_t)guest_ld(c, esp + 8, 4);
+    uint32_t dither = (uint32_t)guest_ld(c, esp + 12, 4), ret = (uint32_t)guest_ld(c, esp, 4);
+
+    if (!dxt3_native_on) {
+        sub_004f0d8b(c);
+        return;
+    }
+    dxt3_calls++;
+    dxt3_alpha(out, src, dither);
+    {
+        uint32_t args[3] = { out + 8, 0, dither };
+        cpu_wr(c, 0, 4, src);
+        gcall(c, 0x004F0019u, 0, 0, args, 3);
+    }
+    cpu_wr(c, 16, 4, esp + 16);
+    cpu_wr(c, 644, 4, ret);
+}
+
 void rt_native_filter(cpu_t *c)
 {
     uint32_t P = (uint32_t)cpu_rd(c, 4, 4);
@@ -593,4 +657,5 @@ __attribute__((constructor)) static void rt_filter_init(void)
     check_left = ck ? atol(ck) : 0;
     check_dither_only = getenv("CT3_FILTER_CHECK_DITHER") != NULL;
     dither_native_on = !(getenv("CT3_DITHER_NATIVE") && strcmp(getenv("CT3_DITHER_NATIVE"), "0") == 0);
+    dxt3_native_on = !(getenv("CT3_DXT3_NATIVE") && strcmp(getenv("CT3_DXT3_NATIVE"), "0") == 0);
 }

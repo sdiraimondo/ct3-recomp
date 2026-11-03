@@ -123,7 +123,8 @@ Modifications liées (non commitées) :
 | `FUN_004DD45C` | Propagation de l'erreur (ajoute `err[t+1]` au tampon, remet l'erreur à zéro). **Porté** (`dither_prop`) |
 | `FUN_004E633F` | Fabrique des lecteurs/écrivains de surface : choisit le record (`0x5D6490 + 16·k`) selon le format D3D |
 | `FUN_004E16E6` | Constructeur du record `0x5D64B0` (format 0x16, X8R8G8B8) : lecteur `FUN_004E3FEE`, écrivain `FUN_004DDB6F` |
-| `FUN_004F0D8B`, `FUN_004F0019`, `FUN_004EFA9B` | Encodeur DXT3 (appelé par l'écrivain DXT `FUN_004E5C16`). **Cible suivante**, environ 40 % du temps restant |
+| `FUN_004F0D8B` | Encodeur DXT3, bloc d'alpha. **Porté** (`rt_native_dxt3`, suite 5) |
+| `FUN_004F0019`, `FUN_004EFA9B` | Encodeur DXT3, bloc de couleur et ajustement des extrémités. **Cible suivante**, traduits |
 | `FUN_004DBE9F`, `FUN_004DD0FC`, `FUN_004DD326`, `FUN_004DD08C` | Drapeaux `+0x54`, `+0x10`, `+0x18` : nuls pour le jeu au démarrage, à garder en repli |
 | `FUN_004E3FEE` | Lecture de ligne 8 bits ARGB vers float (rôle exact à confirmer) |
 | `FUN_004D7A15` | Petit appel vers `FUN_00518930` (arrondi, utilisé par le calcul de poids) |
@@ -219,9 +220,22 @@ Les sorties sont dans `ct3-shots/portage/` (hors dépôt) : `decomp.c` (filtre),
 
 ## 11. Prochaine étape
 
-1. Porter l'encodeur DXT3 (`FUN_004E5C16`, puis `FUN_004F0D8B`, `FUN_004F0019`, `FUN_004EFA9B`) avec le même harnais.
-   Décompiler d'abord (`ct3-shots/portage/`), vérifier les drapeaux de l'objet, puis `CT3_FILTER_CHECK` sur les appels
-   concernés (destination DXT3, `vt+8 = 0x4E5C16`).
+1. **Fait (suite 5)** : bloc d'alpha `FUN_004F0D8B`, porté (`rt_native_dxt3`), 40 appels identiques, gain d'environ
+   0,6 s (à confirmer). **Reste** : le bloc de couleur `FUN_004F0019` (encore traduit, appelé depuis la version native)
+   et `FUN_004EFA9B`. État détaillé ci-dessous (décompilation faite, `ct3-shots/portage/decomp6.c`, asm via
+   `build/g3/pcode_all.json`) :
+   - `FUN_004E5C16` : slot 2 de la classe DXT (écriture d'un bloc). Gère un cache de tuiles (`[+0xF8]`, 8 octets par
+     bloc : état et pointeur de tuile de 256 octets). Appelle `FUN_004F0D8B` pour le bloc d'alpha et `FUN_004F0019`
+     pour le bloc de couleur (chaîne vue dans les piles : `sub_004e5c16` → `sub_004f0d8b` → `sub_004f0019` →
+     `sub_004efa9b`).
+   - `FUN_004F0D8B` (alpha DXT3, 16 texels sur 4 bits, diffusion d'erreur si `param_3 != 0`) : petit, à porter en premier.
+     Vérifier dans l'asm les `FSTP` (arrondis) et `ROUND` (troncature sous `RC=11`, comme `FUN_004DDB6F`).
+   - `FUN_004F0019` (bloc de couleur, `RC=11`, tableau local de 63 floats, appels à `FUN_004EF689` (empaquetage RGB565)
+     et `FUN_004EF58F`) puis `FUN_004EFA9B` (ajustement des extrémités : divisions `1/x` et boucle de convergence à
+     huit itérations maximum). Les deux sont longs : une routine à la fois, avec `CT3_FILTER_CHECK` dès que la
+     dernière est portée.
+   - Vérification : les appels concernés ont `vt+8 = 0x4E5C16` côté destination DXT3 (`CT3_FILTER_CHECK` sans option
+     vérifie les 40 premiers appels, tous DXT3 : c'est le bon jeu).
 2. Ensuite, la boucle native `filter_body` (environ 35 % du temps) : vérifier la part des `long double` et des
    `gcall` avant de l'optimiser.
 3. Piste 3 (traducteur) : non mesurée dans cette session.

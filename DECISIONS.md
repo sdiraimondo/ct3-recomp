@@ -673,6 +673,17 @@ Outils ajoutés (build de traçage) : `CT3_MEMWATCH=lo-hi` (écritures dans une 
 - **Profil après ce portage** (thread de chargement, 17 échantillons utiles sur 40 : petit échantillon) : encodeur DXT3 (`FUN_004E5C16` puis `FUN_004F0D8B`, `FUN_004F0019`, `FUN_004EFA9B`) environ 40 % ; `filter_body` natif lui-même environ 35 % ; tramage natif environ 12 % ; lecteur `FUN_004E3FEE` et table de poids `FUN_004D7A41` quelques échantillons chacun. Le décodeur DXT1 (`FUN_004F096A`) n'apparaît pas : il reste désactivé.
 - **Décisions** : (1) le tramage est porté et gardé actif. (2) La prochaine cible est l'encodeur DXT3 (écrivain DXT de `FUN_004E5C16`), qui est une nouvelle classe, à porter avec le même harnais. (3) Le décodeur DXT1 reste désactivé : il n'est pas dans le profil actuel, sa réactivation n'est pas justifiée. (4) Piste 3 (accélération générale du traducteur) : rien mesuré dans cette session. (5) Les mesures ne couvrent que l'échantillon de démarrage de Xvfb ; la mesure sur l'écran de l'utilisateur reste à faire par lui.
 
+### Portage natif, suite 5 : encodeur DXT3, bloc d'alpha (3 nov. 2026)
+
+- **Porté** : `FUN_004F0D8B` (alpha DXT3, 16 texels sur 4 bits), dans `rt_native_dxt3` (`runtime/src/rt_filter.c`). Appelé par `FUN_004E5C16` via le pointeur `[+0x90]` de la classe DXT (donc via `dispatch`, substitution `NATIVE_OVERRIDES` 0x4F0D8B).
+- **Reste traduit** : le bloc de couleur, `FUN_004F0019` (appelée depuis la version native avec `EAX` = source, arguments et ordre de la traduction). Ses sous-routines `FUN_004EFA9B` (ajustement des extrémités) et `FUN_004EF689` restent aussi traduites.
+- **Arithmétique** (d'après l'asm, pas la décompilation) : `s = (float)(v×15 + 0.5)` tronqué sous `RC=11` ; diffusion d'erreur sur les lignes de 4 texels (7/16 au texel suivant si la colonne n'est pas la dernière, 3/16, 5/16, 1/16 vers la ligne suivante) ; erreur `e = v − n×(1/15)` en extended, un arrondi `float` par cible. Les poids de la ligne suivante ne s'appliquent que pour `t < 12`. Aucun index hors des 16 cases de l'erreur.
+- **Vérification** : `CT3_FILTER_CHECK=40` : 40 appels identiques (tas, listes libres, registres), plus de 250 000 blocs DXT3 encodés natif (`DXT3 natif cumulé` dans le message). Le drapeau de diffusion est actif pour la destination DXT (`+0x5C = 0`), donc la branche avec erreur est couverte ; la branche sans diffusion ne l'est pas.
+- **Interrupteur** : `CT3_DXT3_NATIVE=0` revient à la traduction pour cette routine.
+- **Mesures** (Xvfb `:99`, llvmpipe, premier `Present` après `[start]`, deux paires alternées) : avec `CT3_DXT3_NATIVE=0` : 11,1 s et 10,7 s ; par défaut : 10,4 s et 10,1 s. Gain d'environ 0,6 s, dans le bruit de charge de la machine : à confirmer.
+- **Tests** (`build-check/`) : `test_cpu`, `test_vec`, `test_x87`, `test_g2`, `g1_d3d9_triangle` : verts.
+- **Suite** : porter `FUN_004F0019` (bloc de couleur) puis `FUN_004EFA9B` : c'est là que se trouve le reste du coût de l'encodeur.
+
 ## Environnement (31 oct. 2026)
 
 - KWin (session Plasma/Wayland) ne mappe plus les fenêtres X11 nouvelles : constaté sur G1, glxgears et CT3. Une commande de rechargement de KWin (`org.kde.KWin.reconfigure`) a été lancée par erreur, sans effet visible. Non traité : redémarrer la session graphique (déconnexion/reconnexion) devrait suffire, à confirmer par l'utilisateur.

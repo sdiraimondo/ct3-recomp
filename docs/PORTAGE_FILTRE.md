@@ -248,7 +248,24 @@ Les sorties sont dans `ct3-shots/portage/` (hors dépôt) : `decomp.c` (filtre),
        (`[EBP-0x1E4]`) est mis à zéro seulement si `param_3 != 0` ; le mot de contrôle est écrit dans `[EBP+0xC]` (le
        slot du second argument, écrasé) puis restauré en sortie. Les résultats sont écrits via `param_1` (pointeur
        `ushort*` : deux extrémités en RGB565 et 16 indices sur 2 bits, dans le mot `[+0x4]`) ; le détail reste à lire.
-     - Reste à lire : les boucles de la ligne 0x0F00 à 0x0961 de l'asm (`a0019.txt`, 711 lignes), et `FUN_004EFA9B`.
+     - Structure du chemin `param_2 == 0` (asm lu en entier, `ct3-shots/portage/`, `/tmp/opencode/ct3/a0019.txt`) :
+       1. Boucle des 16 texels (`ECX` = offset 16·t) : `r, g, b` plus l'erreur de diffusion si `param_3 != 0`
+          (zone d'erreur de 64 floats, mise à zéro avant la boucle) ; quantification `i = trunc((float)(x×31+0,5))`
+          (`G` : `×63`) ; reconstruction `i×(1/31)` (`1/63` pour G) stockée dans une zone de travail ; erreur
+          `x − reconstruction` diffusée avec les poids 7/16, 3/16, 5/16, 1/16 (mêmes règles de bord que
+          `FUN_004F0D8B`, mais sur trois canaux).
+       2. Appel `FUN_004EFA9B(&min, &max, zone, 4)` (ajustement des extrémités, voir ci-dessous).
+       3. Extrémités : `FUN_004EF689` sur chaque extrémité (RGB565) ; si égales, sortie directe (`SI`, `DI`) ; sinon
+          `FUN_004EF58F` sur chacune (retour en float), puis palette de 4 couleurs : `c0`, `c1`, et deux
+          interpolations à 1/3 et 2/3 (constantes `0x5A70FC` = 1/3 et `0x5DD5EC` = 2/3, valeurs lues ; tables
+          d'indices `0x5DD5F0` pour 4 couleurs, `0x5DD600` pour 3 couleurs).
+       4. Sélection de l'indice de chaque texel (projection sur l'axe `c0`→`c1`, seuils), avec à nouveau la diffusion
+          d'erreur à partir de la palette (`×0,5` avant le seuil, `0x53CC68`) ; deux bits par texel, écrits dans le
+          mot `[+0x4]` de la sortie (`SHL 30`, `SHR 2`).
+       5. Restauration du mot de contrôle en sortie ; `EAX = 0`.
+       - **Pour le portage** : les chemins `param_2 != 0` restent traduits. Les étapes 1 et 4 sont des copies du
+         motif de diffusion déjà porté (`rt_native_dither`, `rt_native_dxt3`), à transcrire canal par canal.
+         L'étape 2 (`FUN_004EFA9B`, convergence jusqu'à 8 itérations) est la plus délicate : à lire avant de coder.
    - Vérification : les appels concernés ont `vt+8 = 0x4E5C16` côté destination DXT3 (`CT3_FILTER_CHECK` sans option
      vérifie les 40 premiers appels, tous DXT3 : c'est le bon jeu).
 2. Ensuite, la boucle native `filter_body` (environ 35 % du temps) : vérifier la part des `long double` et des

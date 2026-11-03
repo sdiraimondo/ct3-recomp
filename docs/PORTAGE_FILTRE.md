@@ -234,6 +234,21 @@ Les sorties sont dans `ct3-shots/portage/` (hors dépôt) : `decomp.c` (filtre),
      et `FUN_004EF58F`) puis `FUN_004EFA9B` (ajustement des extrémités : divisions `1/x` et boucle de convergence à
      huit itérations maximum). Les deux sont longs : une routine à la fois, avec `CT3_FILTER_CHECK` dès que la
      dernière est portée.
+   - **Constats de lecture (suite 6, pas encore de code)** :
+     - Appel depuis `FUN_004F0D8B` : `FUN_004F0019(EBX+8, 0.0, dither)` avec `EAX` = source. Le chemin utilisé est
+       `param_2 == 0.0` : `local_28 = 4` (4 couleurs, sans transparence). Les autres chemins (`param_2 != 0`) restent
+       sur la traduction.
+     - `FUN_004EF689` (fastcall, `ECX` = pointeur float RGB, renvoie `EAX`) : clamp dans [0, 1] (0 si négatif, 1 si
+       supérieur à 1), puis `R = trunc((float)(r×31 + 0,5))`, `G = trunc((float)(g×63 + 0,5))`,
+       `B = trunc((float)(b×31 + 0,5))`, sortie `(R<<11)|(G<<5)|B`. Le mot de contrôle est mis à `RC=11` pendant
+       le calcul et restauré en sortie (`FLDCW` depuis la sauvegarde).
+     - Constantes : `0x5D6470` = 31,0 ; `0x5D6468` = 63,0 ; `0x53CC68` = 0,5 ; `0x53BB60` = 1,0 ; `0x53BBFC` = 0,0 ;
+       `0x5D646C` = 1/31 ; `0x5D6464` = 1/63 ; `0x5A70A4` = 1/15 ; `0x5DD60C` = 7/16 (float).
+     - `FUN_004F0019`, chemin `param_2 == 0` : zone de travail de 0x2DC octets ; le tableau d'erreur de 64 floats
+       (`[EBP-0x1E4]`) est mis à zéro seulement si `param_3 != 0` ; le mot de contrôle est écrit dans `[EBP+0xC]` (le
+       slot du second argument, écrasé) puis restauré en sortie. Les résultats sont écrits via `param_1` (pointeur
+       `ushort*` : deux extrémités en RGB565 et 16 indices sur 2 bits, dans le mot `[+0x4]`) ; le détail reste à lire.
+     - Reste à lire : les boucles de la ligne 0x0F00 à 0x0961 de l'asm (`a0019.txt`, 711 lignes), et `FUN_004EFA9B`.
    - Vérification : les appels concernés ont `vt+8 = 0x4E5C16` côté destination DXT3 (`CT3_FILTER_CHECK` sans option
      vérifie les 40 premiers appels, tous DXT3 : c'est le bon jeu).
 2. Ensuite, la boucle native `filter_body` (environ 35 % du temps) : vérifier la part des `long double` et des

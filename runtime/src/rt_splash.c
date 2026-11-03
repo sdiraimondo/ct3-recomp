@@ -25,6 +25,7 @@
 #define SPLASH_MAX_FRAMES 1024
 
 static pid_t splash_pid;
+static int splash_held;
 
 typedef struct {
     uint8_t **px;
@@ -193,15 +194,23 @@ void rt_splash_start(const char *ct3_exe)
         _exit(0);
     }
     splash_pid = pid;
+    /* La fenêtre du jeu reste cachée tant que la vidéo tourne (rt_splash_stop l'affiche). */
+    rt_win_hold_visible = 1;
+    splash_held = 1;
 }
 
 void rt_splash_stop(void)
 {
-    if (splash_pid <= 0) return;
-    /* SDL intercepte SIGTERM dans l'enfant : SIGKILL est nécessaire. */
-    kill(splash_pid, SIGKILL);
-    waitpid(splash_pid, NULL, 0);
-    splash_pid = 0;
+    if (splash_pid > 0) {
+        /* SDL intercepte SIGTERM dans l'enfant : SIGKILL est nécessaire. */
+        kill(splash_pid, SIGKILL);
+        waitpid(splash_pid, NULL, 0);
+        splash_pid = 0;
+    }
+    if (splash_held) {
+        splash_held = 0;
+        rt_win_release_visible();
+    }
 }
 
 #else /* sans FFmpeg */

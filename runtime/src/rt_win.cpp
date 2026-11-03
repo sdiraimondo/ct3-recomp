@@ -17,6 +17,8 @@ static void dik_set(int sc, bool down);
 #include <strings.h>
 #include <vector>
 
+int rt_win_hold_visible = 0;   /* écran de chargement en cours (rt.h) */
+
 namespace {
 
 void pad_test_attach();
@@ -605,7 +607,7 @@ uint32_t sh_CreateWindowExA(cpu_t *c, const uint32_t *a)
     std::string title = guest_string(a[2]);
     Uint32 flags = SDL_WINDOW_VULKAN;
     if (a[3] & kWsPopup) flags |= SDL_WINDOW_BORDERLESS;
-    if (!w->visible) flags |= SDL_WINDOW_HIDDEN;
+    if (!w->visible || rt_win_hold_visible) flags |= SDL_WINDOW_HIDDEN;
     w->sdl = SDL_CreateWindow(title.c_str(), w->x, w->y, w->w, w->h, flags);
     if (!w->sdl) {
         fprintf(stderr, "rt: SDL_CreateWindow : %s\n", SDL_GetError());
@@ -649,7 +651,7 @@ uint32_t sh_ShowWindow(cpu_t *c, const uint32_t *a)
     bool was = w->visible;
     w->visible = a[1] != 0;
     if (w->sdl) {
-        if (w->visible) SDL_ShowWindow(w->sdl);
+        if (w->visible && !rt_win_hold_visible) SDL_ShowWindow(w->sdl);
         else SDL_HideWindow(w->sdl);
     }
     return was ? 1 : 0;
@@ -1109,3 +1111,12 @@ void rt_win_test_key(int down)
     SDL_PushEvent(&ev);
 }
 
+
+/* Écran de chargement : les fenêtres du jeu restent cachées jusqu'à la fin de la vidéo (rt_splash_stop). */
+void rt_win_release_visible(void)
+{
+    rt_win_hold_visible = 0;
+    for (window *w : windows) {
+        if (w->sdl && w->visible && !w->destroyed) SDL_ShowWindow(w->sdl);
+    }
+}

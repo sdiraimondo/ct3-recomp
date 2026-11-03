@@ -33,6 +33,9 @@ void rt_probe_present(void);
 /* Écran de chargement (avi/loading.avi, FFmpeg) : démarré au lancement, arrêté à la première présentation. */
 void rt_splash_start(const char *ct3_exe);
 void rt_splash_stop(void);
+/* Fenêtres du jeu cachées pendant l'écran de chargement, affichées ensuite (rt_win.cpp). */
+extern int rt_win_hold_visible;
+void rt_win_release_visible(void);
 void rt_probe_dump(void);
 /* Diagnostic (CT3_MEMWATCH=lo-hi) : affiche chaque écriture invitée dans la plage. */
 extern uint32_t rt_memwatch_lo, rt_memwatch_span, rt_memwatch_val;

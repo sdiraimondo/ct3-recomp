@@ -93,9 +93,13 @@ Tests (each one is a program, run from `build/tests`):
 - Do **not** open issues or pull requests containing game files, recompiled output, or links to where to download the game. Such content will be removed.
 - Please support the official release: buy the game.
 
-## Acknowledgements
+## Credits
 
-This project owes a lot to other work. [dxvk-native](https://github.com/doitsujin/dxvk), by doitsujin, translates Direct3D 9 to Vulkan and renders the game's image. [SDL2](https://github.com/libsdl-org/SDL) handles the window, gamepads and sound. [FFmpeg](https://ffmpeg.org) decodes the loading screen video (LGPL build). [Ghidra](https://github.com/NationalSecurityAgency/ghidra), by the NSA, provides the p-code export. [stb_truetype](https://github.com/nothings/stb), by Sean Barrett, rasterizes the fonts. The `[Patches]`, `[Game]` and `[Distance]` settings are inspired by the documented behaviour of [taxipatch](https://github.com/stashymane/taxipatch) (GPL-3.0), the successor of [CT3Tweaks](https://github.com/stashymane/ct3tweaks) (Apache-2.0). The resolution, frame rate and field of view changes made by CT3Tweaks were used as a reference when analysing the executable. No code from these two projects is reused. Thanks to their authors.
+- [taxipatch](https://github.com/stashymane/taxipatch) by stashymane (GPL-3.0), the successor of CT3Tweaks. Its documented behaviour (settings and addresses) is the reference for the `[Patches]`, `[Game]` and `[Distance]` options.
+
+- [CT3Tweaks](https://github.com/stashymane/ct3tweaks) by stashymane (Apache-2.0), the first tweak tool for Crazy Taxi 3. Its resolution, frame rate and field of view changes were used as a reference when analysing the executable.
+
+No code from these projects is reused. Thanks to their author.
 
 ## License
 

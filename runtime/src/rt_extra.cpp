@@ -369,14 +369,14 @@ uint32_t sh_CreateDIBSection(cpu_t *c, const uint32_t *a)
 uint32_t sh_RegOpenKeyA(cpu_t *c, const uint32_t *a)
 {
     (void)c;
-    (void)a;
+    if (getenv("CT3_PAD_LOG")) fprintf(stderr, "[reg] RegOpenKeyA %s\n", (const char *)(rt_mem_base + a[1]));
     return 2;  // ERROR_FILE_NOT_FOUND : clé absente
 }
 
 uint32_t sh_RegQueryValueExA(cpu_t *c, const uint32_t *a)
 {
     (void)c;
-    (void)a;
+    if (getenv("CT3_PAD_LOG")) fprintf(stderr, "[reg] RegQueryValueExA %s\n", (const char *)(rt_mem_base + a[1]));
     return 2;
 }
 
@@ -1198,6 +1198,21 @@ uint32_t sh_di_Release(cpu_t *c, const uint32_t *a) { (void)c; (void)a; return 1
 const uint8_t kGuidSysKeyboard[16] = {0x61, 0x2B, 0x1D, 0x6F, 0xA0, 0xD5, 0xCF, 0x11,
                                       0xBF, 0xC7, 0x44, 0x45, 0x53, 0x54, 0x00, 0x00};
 uint32_t di_dev_vtable;
+
+// Manette DirectInput : constantes et vtable (voir plus bas).
+// {6F1D2B70-D5A0-11CF-BFC7-444553540000}
+const uint8_t kGuidJoystick[16] = {0x70, 0x2B, 0x1D, 0x6F, 0xA0, 0xD5, 0xCF, 0x11,
+                                   0xBF, 0xC7, 0x44, 0x45, 0x53, 0x54, 0x00, 0x00};
+uint32_t di_joy_vtable;
+/* Plage signée, comme Xidi (kAnalogValueMin/Max) : au repos, les axes valent 0. Une plage 0..65535 faisait
+ * lire le centre (32767) comme une poussée maximale vers le bas (menus bloqués sur « Bas »). */
+int32_t joy_range_min = -32767, joy_range_max = 32767;
+const uint32_t kDi8DevTypeGamepad = 0x15;
+const uint32_t kDiPropRange = 4;   // DIPROP_RANGE = MAKEDIPROP(4)
+const uint32_t kDiErrNotImpl = 0x80004001u;
+
+// Index DirectInput des boutons pour chaque bouton SDL (A, B, X, Y, Back, Guide, Start, LS, RS, LB, RB, croix).
+const uint8_t kJoyDiFromSdl[15] = {0, 1, 2, 3, 6, 10, 7, 8, 9, 4, 5, 11, 12, 13, 14};
 const char *const kDiDevMethods[32] = {
     "QueryInterface", "AddRef", "Release", "GetCapabilities", "EnumObjects", "GetProperty", "SetProperty",
     "Acquire", "Unacquire", "GetDeviceState", "GetDeviceData", "SetDataFormat", "SetEventNotification",
@@ -1226,6 +1241,21 @@ uint32_t sh_dikb_zero(cpu_t *c, const uint32_t *a) { (void)c; (void)a; return 0;
 uint32_t sh_di_CreateDevice(cpu_t *c, const uint32_t *a)
 {
     (void)c;
+    if (a[1] && a[2] && memcmp(rt_mem_base + a[1], rt_joy_config.guid, 16) == 0 && rt_joy_config.enabled) {
+        if (!di_joy_vtable) {
+            di_joy_vtable = rt_heap_alloc(4 * 32, 1);
+            for (unsigned k = 0; k < 32; k++) {
+                std::string full = std::string("dinput8joy::IDirectInputDevice8A::") + kDiDevMethods[k];
+                uint32_t stub = rt_dyn_stub_addr(full.c_str());
+                memcpy(rt_mem_base + di_joy_vtable + 4 * k, &stub, 4);
+            }
+        }
+        uint32_t dev = rt_heap_alloc(8, 1);
+        put32(dev, di_joy_vtable);
+        put32(a[2], dev);
+        if (getenv("CT3_PAD_LOG")) fprintf(stderr, "[dinput] périphérique manette créé\n");
+        return 0;
+    }
     if (!a[1] || !a[2] || memcmp(rt_mem_base + a[1], kGuidSysKeyboard, 16) != 0) {
         if (a[2]) put32(a[2], 0);
         return 0x80040154u;  // DIERR_DEVICENOTREG
@@ -1249,7 +1279,23 @@ uint32_t sh_di_CreateDevice(cpu_t *c, const uint32_t *a)
 uint32_t sh_di_EnumDevices(cpu_t *c, const uint32_t *a)
 {
     uint32_t type = a[1], cb = a[2], ref = a[3];
-    if (!cb || (type != 0 && type != 1 && type != 3)) return 0;
+    if (getenv("CT3_PAD_LOG")) fprintf(stderr, "[dinput] EnumDevices classe=%u manette=%d\n", type, rt_win_joy_connected());
+    if (!cb) return 0;
+    if (rt_joy_config.enabled && (type == 0 || type == 1 || type == 4)) {
+        const uint32_t kSizeJ = 0x244;
+        uint32_t jinst = rt_heap_alloc(kSizeJ, 1);
+        put32(jinst, kSizeJ);
+        memcpy(rt_mem_base + jinst + 4, rt_joy_config.guid, 16);   /* guidInstance */
+        memcpy(rt_mem_base + jinst + 20, kGuidJoystick, 16);  /* guidProduct */
+        put32(jinst + 36, kDi8DevTypeGamepad);
+        static const char kJoyName[] = "Manette";
+        memcpy(rt_mem_base + jinst + 40, kJoyName, sizeof kJoyName);
+        memcpy(rt_mem_base + jinst + 300, kJoyName, sizeof kJoyName);
+        if (getenv("CT3_PAD_LOG")) fprintf(stderr, "[dinput] manette énumérée (classe %u)\n", type);
+        uint32_t jargs[2] = {jinst, ref};
+        rt_call_guest(c, cb, jargs, 2);
+    }
+    if (type != 0 && type != 1 && type != 3) return 0;
     const uint32_t kSize = 0x244;  // DIDEVICEINSTANCEA (DirectInput 8)
     uint32_t inst = rt_heap_alloc(kSize, 1);
     put32(inst, kSize);
@@ -1265,6 +1311,146 @@ uint32_t sh_di_EnumDevices(cpu_t *c, const uint32_t *a)
 }
 uint32_t sh_di_fail(cpu_t *c, const uint32_t *a) { (void)c; (void)a; return 0x80004005u; }
 uint32_t sh_di_ok(cpu_t *c, const uint32_t *a) { (void)c; (void)a; return 0; }
+
+// Manette DirectInput. État DIJOYSTATE (80 octets) rempli depuis SDL (rt_win) ; réglages [Joystick] de Config.ini.
+// Plage des axes : -32767 à 32767 par défaut (centre 0), modifiable par SetProperty(DIPROP_RANGE).
+
+/* Écrit l'état de la manette à l'adresse invitée dst (cb octets, au plus 272 : DIJOYSTATE puis zéros). */
+static void joy_build_state(uint32_t dst, uint32_t cb)
+{
+    int16_t ax[6];
+    uint8_t bt[15];
+    uint8_t buf[272];
+    rt_win_joy_state(ax, bt);
+    const float dzf = rt_joy_config.deadzone / 32767.0f;
+    auto norm = [](int16_t v) { return v / 32767.0f; };
+    auto dz = [dzf](float v) { return (v > -dzf && v < dzf) ? 0.0f : v; };
+    auto clamp1 = [](float v) { return v < -1.0f ? -1.0f : (v > 1.0f ? 1.0f : v); };
+    const int32_t mn = joy_range_min, mx = joy_range_max;
+    const int32_t center = (mn + mx) / 2;
+    const float half = (float)(mx - mn) / 2.0f;
+    auto to_axis = [&](float v) { return (int32_t)(center + clamp1(v) * half); };
+
+    memset(buf, 0, sizeof buf);
+    float sx = dz(norm(ax[0])), sy = dz(norm(ax[1]));
+    float lt = norm(ax[4]), rt = norm(ax[5]);
+    lt = lt < dzf ? 0.0f : lt;
+    rt = rt < dzf ? 0.0f : rt;
+    float trig = lt - rt;                       /* LT vers le haut de l'axe, RT vers le bas (comme Xidi) */
+    int dpx = (int)bt[14] - (int)bt[13];        /* droite - gauche */
+    int dpy = (int)bt[12] - (int)bt[11];        /* bas - haut */
+    const int pov = rt_joy_config.dpad_pov;
+    float vx = (rt_joy_config.stick_x ? sx : 0.0f) + (pov ? 0.0f : (float)dpx);
+    float vy = (rt_joy_config.triggers_z ? 0.0f : trig) + (pov ? 0.0f : (float)dpy) + (rt_joy_config.stick_y ? sy : 0.0f);
+    float vz = rt_joy_config.triggers_z ? trig : 0.0f;
+    int32_t axes[8] = { to_axis(vx), to_axis(vy), to_axis(vz), center, center, center, center, center };
+    memcpy(buf, axes, 32);
+    /* Croix en POV (centièmes de degré, 0 = haut, sens horaire), neutre = 0xFFFFFFFF. */
+    uint32_t pov0 = 0xFFFFFFFFu;
+    if (pov && (dpx != 0 || dpy != 0)) {
+        int ix = dpx + 1, iy = dpy + 1;   /* 0 à 2 */
+        static const int32_t kAngle[3][3] = {
+            { 31500, 0, 4500 },    /* haut : gauche-haut, haut, droite-haut */
+            { 27000, -1, 9000 },   /* milieu : gauche, neutre, droite */
+            { 22500, 18000, 13500 } /* bas : gauche-bas, bas, droite-bas */
+        };
+        if (kAngle[iy][ix] >= 0) pov0 = (uint32_t)kAngle[iy][ix];
+    }
+    for (int k = 0; k < 4; k++) {
+        uint32_t v = (k == 0) ? pov0 : 0xFFFFFFFFu;
+        memcpy(buf + 32 + 4 * k, &v, 4);
+    }
+    for (int i = 0; i < 15; i++) {
+        buf[48 + kJoyDiFromSdl[i]] = bt[i] ? 0x80 : 0;
+    }
+    if (cb > sizeof buf) cb = sizeof buf;
+    memcpy(rt_mem_base + dst, buf, cb);
+    if (getenv("CT3_PAD_LOG")) {
+        static uint8_t last[80];
+        static int first = 1;
+        if (first || memcmp(last, buf, 80) != 0) {
+            int32_t lx, ly, lz;
+            uint32_t p0;
+            memcpy(&lx, buf, 4);
+            memcpy(&ly, buf + 4, 4);
+            memcpy(&lz, buf + 8, 4);
+            memcpy(&p0, buf + 32, 4);
+            int bmask = 0;
+            for (int i = 0; i < 15; i++) if (buf[48 + i]) bmask |= 1 << i;
+            fprintf(stderr, "[dinput] état : X=%d Y=%d Z=%d POV=%08x boutons=%04x (axes SDL LX=%d LY=%d LT=%d RT=%d)\n",
+                    lx, ly, lz, p0, bmask, ax[0], ax[1], ax[4], ax[5]);
+            memcpy(last, buf, 80);
+            first = 0;
+        }
+    }
+}
+
+// GetDeviceState(this, cbData, lpvData) de la manette.
+uint32_t sh_joy_GetDeviceState(cpu_t *c, const uint32_t *a)
+{
+    static int logged;
+    (void)c;
+    if (a[2]) joy_build_state(a[2], a[1]);
+    if (!logged && getenv("CT3_PAD_LOG") && a[2]) {
+        logged = 1;
+        int32_t v[3];
+        memcpy(v, rt_mem_base + a[2], 12);
+        fprintf(stderr, "[dinput] GetDeviceState manette : %u octets, branchée=%d, X=%d Y=%d Z=%d\n", a[1],
+                rt_win_joy_connected(), v[0], v[1], v[2]);
+    }
+    return 0;
+}
+// GetCapabilities(this, lpDIDevCaps) : DIDEVCAPS (dwSize, dwFlags, dwDevType, dwAxes, dwButtons, dwPOVs).
+uint32_t sh_joy_GetCapabilities(cpu_t *c, const uint32_t *a)
+{
+    (void)c;
+    if (a[1]) {
+        put32(a[1] + 8, kDi8DevTypeGamepad);
+        put32(a[1] + 12, 6);
+        put32(a[1] + 16, 32);
+        put32(a[1] + 20, 1);
+    }
+    return 0;
+}
+// SetProperty / GetProperty(this, rguid, pdiph) : seule la plage (DIPROP_RANGE) est gérée.
+static uint32_t guest_u32(uint32_t addr)
+{
+    uint32_t v;
+    memcpy(&v, rt_mem_base + addr, 4);
+    return v;
+}
+uint32_t sh_joy_SetProperty(cpu_t *c, const uint32_t *a)
+{
+    (void)c;
+    if (a[1] == kDiPropRange && a[2]) {
+        joy_range_min = (int32_t)guest_u32(a[2] + 16);
+        joy_range_max = (int32_t)guest_u32(a[2] + 20);
+        if (getenv("CT3_PAD_LOG")) fprintf(stderr, "[dinput] plage des axes : %d à %d\n", joy_range_min, joy_range_max);
+    } else if (getenv("CT3_PAD_LOG")) {
+        fprintf(stderr, "[dinput] SetProperty manette (propriété %08x)\n", a[1]);
+    }
+    return 0;
+}
+uint32_t sh_joy_GetProperty(cpu_t *c, const uint32_t *a)
+{
+    (void)c;
+    if (a[1] == kDiPropRange && a[2]) {
+        put32(a[2] + 16, (uint32_t)joy_range_min);
+        put32(a[2] + 20, (uint32_t)joy_range_max);
+    }
+    return 0;
+}
+// EnumObjects : pas encore d'objets (axes, boutons) énumérés.
+uint32_t sh_joy_EnumObjects(cpu_t *c, const uint32_t *a)
+{
+    (void)c;
+    if (getenv("CT3_PAD_LOG")) fprintf(stderr, "[dinput] EnumObjects manette (indicateurs %08x)\n", a[2]);
+    return 0;
+}
+// GetDeviceData : pas d'événements tamponnés.
+uint32_t sh_joy_GetDeviceData(cpu_t *c, const uint32_t *a) { (void)c; if (a[3]) put32(a[3], 0); return 0; }
+// Effets de force : non gérés pour l'instant.
+uint32_t sh_joy_notimpl(cpu_t *c, const uint32_t *a) { (void)c; (void)a; return kDiErrNotImpl; }
 
 }  // namespace
 
@@ -1454,6 +1640,25 @@ extern "C" const rt_shim_entry rt_extra_table[] = {
     {"dinput8com::IDirectInput8A::AddRef", 1, sh_di_AddRef},
     {"dinput8com::IDirectInput8A::Release", 1, sh_di_Release},
     {"dinput8com::IDirectInput8A::CreateDevice", 4, sh_di_CreateDevice},
+    {"dinput8joy::IDirectInputDevice8A::QueryInterface", 3, sh_di_QueryInterface},
+    {"dinput8joy::IDirectInputDevice8A::AddRef", 1, sh_di_AddRef},
+    {"dinput8joy::IDirectInputDevice8A::Release", 1, sh_di_Release},
+    {"dinput8joy::IDirectInputDevice8A::GetCapabilities", 2, sh_joy_GetCapabilities},
+    {"dinput8joy::IDirectInputDevice8A::EnumObjects", 4, sh_joy_EnumObjects},
+    {"dinput8joy::IDirectInputDevice8A::GetProperty", 3, sh_joy_GetProperty},
+    {"dinput8joy::IDirectInputDevice8A::SetProperty", 3, sh_joy_SetProperty},
+    {"dinput8joy::IDirectInputDevice8A::Acquire", 1, sh_di_ok},
+    {"dinput8joy::IDirectInputDevice8A::Unacquire", 1, sh_di_ok},
+    {"dinput8joy::IDirectInputDevice8A::GetDeviceState", 3, sh_joy_GetDeviceState},
+    {"dinput8joy::IDirectInputDevice8A::GetDeviceData", 5, sh_joy_GetDeviceData},
+    {"dinput8joy::IDirectInputDevice8A::SetDataFormat", 2, sh_di_ok},
+    {"dinput8joy::IDirectInputDevice8A::SetEventNotification", 2, sh_di_ok},
+    {"dinput8joy::IDirectInputDevice8A::SetCooperativeLevel", 3, sh_di_ok},
+    {"dinput8joy::IDirectInputDevice8A::Poll", 1, sh_di_ok},
+    {"dinput8joy::IDirectInputDevice8A::CreateEffect", 4, sh_joy_notimpl},
+    {"dinput8joy::IDirectInputDevice8A::EnumEffects", 4, sh_joy_notimpl},
+    {"dinput8joy::IDirectInputDevice8A::SendForceFeedbackCommand", 2, sh_joy_notimpl},
+    {"dinput8joy::IDirectInputDevice8A::GetForceFeedbackState", 2, sh_joy_notimpl},
     {"dinput8dev::IDirectInputDevice8A::QueryInterface", 3, sh_di_QueryInterface},
     {"dinput8dev::IDirectInputDevice8A::AddRef", 1, sh_di_AddRef},
     {"dinput8dev::IDirectInputDevice8A::Release", 1, sh_di_Release},

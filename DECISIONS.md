@@ -734,6 +734,19 @@ Outils ajoutés (build de traçage) : `CT3_MEMWATCH=lo-hi` (écritures dans une 
   - Distances de la carte (`[Distance] Map=1.0`, défaut 1.0 = valeur d'origine) : crochet **après** `Map::UpdateDrawDistance` (`FUN_00447ED0`, nouveau type `POST_HOOKS` du générateur), qui multiplie rayon (`0x7239D4`), nombre de maillages (`0x7239D8`, plafond 200), LOD (`0x724DF0`) et plan lointain (`0x71C430`, au moins 10 000 et au moins 1,1 × rayon). Valeur 2.0 proposée par taxipatch : décision en attente.
   - Vérification : démarrage avec `Map=2.0` et `UiTexcoord=1` sans faute (1 161 présentations sur 40 s), tests obligatoires verts. Effet visuel non vérifié (scène avec matériau à réflexion pour le point 4, vue lointaine pour le point 5).
 
+### Manette DirectInput analogique (Xidi comme référence) : étape 1 (3 nov. 2026, D-072)
+
+- **Constat** : le jeu lit ses manettes par DirectInput (périphérique de classe 4), pas par XInput. Le runtime ne fournissait que le clavier. Le tutoriel Xidi confirme le mécanisme : sélection d'une manette « Xidi Virtual Controller » dans le jeu.
+- **GUID enregistré par le jeu** : `TAXI3.CFG` (fichier de l'installation du jeu, binaire) contient à l'offset `0x50` le GUID `9E573EDE-7734-11D2-8D4A-23903FB6BDF7`. Avec ce GUID comme instance du périphérique, le jeu crée le périphérique (`CreateDevice`) et lit son état en 272 octets (`DIJOYSTATE2`). Sans ce GUID, il ne le crée pas. Il est donc la valeur par défaut de `[Joystick] Guid`.
+- **Implémentation** : `runtime/src/rt_extra.cpp` (énumération classe 0, 1 ou 4 ; création ; `GetDeviceState` remplissant `DIJOYSTATE` : axes X/Y/Z centrés à 32767 sur la plage 0 à 65535, croix en axes ou POV, boutons DirectInput depuis les boutons SDL) et `runtime/src/rt_win.cpp` (état SDL des axes et boutons, lecture de `[Joystick]`). Talons `dinput8joy::`, séparés du clavier.
+- **Réglages** : `Config.ini` `[Joystick]` : `Enabled`, `Guid`, `StickX`, `StickY`, `Dpad` (axes|pov), `Triggers` (Y|Z), `DeadZone`. Absents : valeurs par défaut.
+- **Effets de force** : non implémentés (`CreateEffect` et les méthodes associées renvoient `E_NOTIMPL`). Le jeu tourne sans erreur. Étape 2 : traduire les effets en vibrations SDL, avec la gestion de `DIEP_NORESTART` (le correctif binaire de Xidi n'est donc pas nécessaire : c'est le comportement de `SetParameters` qu'on implémente).
+- **Limites** : `EnumObjects` ne renvoie aucun objet (axes et boutons non énumérés) ; la correspondance des boutons avec les contrôles du jeu reste à vérifier en jeu (les défauts de CT3 sont différents des défauts de CT1/CT2, selon le tutoriel).
+- **Vérification** : manette virtuelle (`CT3_PAD_TEST`) : périphérique créé, état au repos correct (32767), 1 256 présentations en 45 s, sans faute. Pas encore vérifié avec une vraie manette ni en jeu.
+- **Traces** : `CT3_PAD_LOG=1` affiche l'énumération, la création et le premier état.
+- **Correctif (test de l'utilisateur)** : menus bloqués sur « Bas » (sans manette, clavier débranché), disparu avec `Enabled=0`. Cause : la plage par défaut était 0 à 65535 (centre 32767), alors que Xidi présente des axes signés de −32767 à 32767 (centre 0). Au repos, l'axe Y valait donc une poussée maximale vers le bas. Plage par défaut désormais −32767 à 32767, comme Xidi. Vérifié : au repos, X, Y et Z valent 0.
+- **Plantage après sélection d'une option** : le journal montre l'appui sur A puis la sortie par la voie connue (`0x5154B5`). L'option choisie était probablement « Quitter » ; ce n'est pas un plantage nouveau.
+
 ## Environnement (31 oct. 2026)
 
 - KWin (session Plasma/Wayland) ne mappe plus les fenêtres X11 nouvelles : constaté sur G1, glxgears et CT3. Une commande de rechargement de KWin (`org.kde.KWin.reconfigure`) a été lancée par erreur, sans effet visible. Non traité : redémarrer la session graphique (déconnexion/reconnexion) devrait suffire, à confirmer par l'utilisateur.

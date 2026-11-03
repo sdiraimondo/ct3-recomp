@@ -15,6 +15,7 @@
 
 static void dik_set(int sc, bool down);
 #include <strings.h>
+#include <cctype>
 #include <vector>
 
 int rt_win_hold_visible = 0;   /* écran de chargement en cours (rt.h) */
@@ -241,6 +242,10 @@ static uint8_t pad_bind_dik[kPadInputs];
 static uint32_t pad_bind_vk[kPadInputs];
 static bool pad_in_on[kPadInputs];
 static uint8_t pad_count[256];
+/* Manette DirectInput (rt_extra.cpp) : état SDL par axe et par bouton, mis à jour par les événements. */
+static int16_t joy_axis[6];   /* LX LY RX RY LT RT (ordre SDL) */
+static uint8_t joy_btn[15];   /* boutons SDL de 0 à 14 */
+static int joy_on;
 static int pad_deadzone = 16000;
 static int pad_trigger_threshold = 16000;
 
@@ -267,9 +272,59 @@ static bool pad_find_key(const char *name, pad_keydef &out)
     return false;
 }
 
+/* Réglages [Joystick] : Enabled, StickX, StickY, Dpad (axes|pov), Triggers (Y|Z), DeadZone. */
+static void joy_config_set(const char *key, const char *val, const char *origin, int lineno)
+{
+    int v = atoi(val);
+    if (strcasecmp(key, "Enabled") == 0) {
+        rt_joy_config.enabled = v != 0;
+    } else if (strcasecmp(key, "StickX") == 0) {
+        rt_joy_config.stick_x = v != 0;
+    } else if (strcasecmp(key, "StickY") == 0) {
+        rt_joy_config.stick_y = v != 0;
+    } else if (strcasecmp(key, "Dpad") == 0) {
+        if (strcasecmp(val, "pov") == 0) rt_joy_config.dpad_pov = 1;
+        else if (strcasecmp(val, "axes") == 0) rt_joy_config.dpad_pov = 0;
+        else fprintf(stderr, "rt: %s:%d : Dpad = %s inconnu (axes ou pov)\n", origin, lineno, val);
+    } else if (strcasecmp(key, "Triggers") == 0) {
+        if (strcasecmp(val, "Y") == 0) rt_joy_config.triggers_z = 0;
+        else if (strcasecmp(val, "Z") == 0) rt_joy_config.triggers_z = 1;
+        else fprintf(stderr, "rt: %s:%d : Triggers = %s inconnu (Y ou Z)\n", origin, lineno, val);
+    } else if (strcasecmp(key, "Guid") == 0) {
+        /* Format : 9E573EDE-7734-11D2-8D4A-23903FB6BDF7 (chiffres hexadécimaux, tirets facultatifs). */
+        unsigned char g[16];
+        char hex[33];
+        size_t n = 0;
+        for (const char *q = val; *q && n < 32; q++) {
+            if (isxdigit((unsigned char)*q)) hex[n++] = *q;
+        }
+        hex[n] = '\0';
+        if (n == 32) {
+            for (int i = 0; i < 16; i++) {
+                unsigned int b;
+                sscanf(hex + 2 * i, "%2x", &b);
+                g[i] = (unsigned char)b;
+            }
+            /* Data1, Data2, Data3 sont stockés en little-endian. */
+            unsigned char t;
+            t = g[0]; g[0] = g[3]; g[3] = t; t = g[1]; g[1] = g[2]; g[2] = t;
+            t = g[4]; g[4] = g[5]; g[5] = t;
+            t = g[6]; g[6] = g[7]; g[7] = t;
+            memcpy(rt_joy_config.guid, g, 16);
+        } else {
+            fprintf(stderr, "rt: %s:%d : Guid invalide (32 chiffres hexadécimaux attendus)\n", origin, lineno);
+        }
+    } else if (strcasecmp(key, "DeadZone") == 0) {
+        if (v >= 0 && v < 32767) rt_joy_config.deadzone = v;
+        else fprintf(stderr, "rt: %s:%d : DeadZone hors plage (0 à 32766)\n", origin, lineno);
+    } else {
+        fprintf(stderr, "rt: %s:%d : clé [Joystick] inconnue (%s)\n", origin, lineno, key);
+    }
+}
+
 static void pad_parse_config(const char *text, const char *origin)
 {
-    bool in_controller = false;
+    int section = 0;   /* 0 : autre, 1 : [Controller], 2 : [Joystick] */
     char line[512];
     const char *p = text;
     int lineno = 0;
@@ -289,10 +344,10 @@ static void pad_parse_config(const char *text, const char *origin)
         while (len && (c[len - 1] == ' ' || c[len - 1] == '\t' || c[len - 1] == '\r')) c[--len] = '\0';
         if (len == 0) continue;
         if (c[0] == '[') {
-            in_controller = strcasecmp(c, "[Controller]") == 0;
+            section = strcasecmp(c, "[Controller]") == 0 ? 1 : strcasecmp(c, "[Joystick]") == 0 ? 2 : 0;
             continue;
         }
-        if (!in_controller) continue;
+        if (section == 0) continue;
         char *eq = strchr(c, '=');
         if (!eq) {
             fprintf(stderr, "rt: %s:%d : ligne ignorée\n", origin, lineno);
@@ -304,6 +359,10 @@ static void pad_parse_config(const char *text, const char *origin)
         size_t vl = strlen(val);
         while (vl && (val[vl - 1] == ' ' || val[vl - 1] == '\t')) val[--vl] = '\0';
         for (size_t i = strlen(key); i && (key[i - 1] == ' ' || key[i - 1] == '\t'); i--) key[i - 1] = '\0';
+        if (section == 2) {
+            joy_config_set(key, val, origin, lineno);
+            continue;
+        }
         if (strcasecmp(key, "DeadZone") == 0) {
             pad_deadzone = atoi(val);
             continue;
@@ -370,17 +429,24 @@ static void pad_event(const SDL_Event &e)
 {
     switch (e.type) {
     case SDL_CONTROLLERDEVICEADDED:
-        SDL_GameControllerOpen((int)e.cdevice.which);
+        if (SDL_GameControllerOpen((int)e.cdevice.which)) joy_on = 1;
         if (getenv("CT3_PAD_LOG")) fprintf(stderr, "[pad] ajoutée (index %d)\n", (int)e.cdevice.which);
         break;
     case SDL_CONTROLLERDEVICEREMOVED:
         for (int i = 0; i < kPadInputs; i++) pad_input(i, false);
+        joy_on = 0;
+        memset(joy_axis, 0, sizeof joy_axis);
+        memset(joy_btn, 0, sizeof joy_btn);
         break;
     case SDL_CONTROLLERBUTTONDOWN:
     case SDL_CONTROLLERBUTTONUP:
-        if (e.cbutton.button < 15) pad_input(e.cbutton.button, e.type == SDL_CONTROLLERBUTTONDOWN);
+        if (e.cbutton.button < 15) {
+            pad_input(e.cbutton.button, e.type == SDL_CONTROLLERBUTTONDOWN);
+            joy_btn[e.cbutton.button] = e.type == SDL_CONTROLLERBUTTONDOWN;
+        }
         break;
     case SDL_CONTROLLERAXISMOTION:
+        if (e.caxis.axis < 6) joy_axis[e.caxis.axis] = e.caxis.value;
         if (e.caxis.axis == SDL_CONTROLLER_AXIS_TRIGGERLEFT) {
             pad_input(kPadTriggerLt, e.caxis.value > pad_trigger_threshold);
         } else if (e.caxis.axis == SDL_CONTROLLER_AXIS_TRIGGERRIGHT) {
@@ -1119,4 +1185,20 @@ void rt_win_release_visible(void)
     for (window *w : windows) {
         if (w->sdl && w->visible && !w->destroyed) SDL_ShowWindow(w->sdl);
     }
+}
+
+/* Hors de l'espace de noms anonyme : utilisé par rt_extra.cpp (manette DirectInput). */
+/* GUID d'instance par défaut : celui que le jeu enregistre dans TAXI3.CFG pour sa manette (Game Controller Setup). */
+rt_joy_cfg rt_joy_config = { 1, 1, 0, 0, 0, 8000, { 0xDE, 0x3E, 0x57, 0x9E, 0x34, 0x77, 0xD2, 0x11,
+                                                    0x8D, 0x4A, 0x23, 0x90, 0x3F, 0xB6, 0xBD, 0xF7 } };
+
+int rt_win_joy_connected(void)
+{
+    return joy_on && rt_joy_config.enabled;
+}
+
+void rt_win_joy_state(int16_t axes[6], uint8_t buttons[15])
+{
+    memcpy(axes, joy_axis, sizeof joy_axis);
+    memcpy(buttons, joy_btn, sizeof joy_btn);
 }

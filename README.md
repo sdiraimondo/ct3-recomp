@@ -19,13 +19,20 @@ An unofficial effort to decompile and statically recompile **Crazy Taxi 3** (Win
 | 6 | Sound: DirectSound mixed to SDL audio | ✅ First pass: sound effects and in-game music. Movies are silent |
 | 7 | Known issues | ⚠️ See the roadmap |
 
+## Implemented features
+
+- **Startup in about 10 seconds** (against about 45 before): the game's image filter and several texture routines run as native code, checked bit for bit against the translated version.
+- **Loading screen video**: `avi/loading.avi` plays full screen on a black background while the game starts, decoded with FFmpeg. The game window stays hidden until the video ends. Needs FFmpeg (optional).
+- **Settings in `Config.ini`** (see below): skip the logo sequence, 16:9 or 4:3 aspect, field of view, map draw distance, interface texture fix.
+- **Gamepad** through SDL, with a mapping read from `Config.ini`, and **sound** through SDL audio (sound effects and in-game music).
+
 ## Roadmap
 
 1. **In-game slowdowns.** Frame-time spikes during driving and camera changes. Next: measure them with DXVK's shader compilation log, then decide whether to precompile shaders at startup.
-2. **Startup time.** The first frame appears about 43 seconds after launch. Most of the remaining time is a texture filter routine of the game's embedded D3DX code, to be replaced natively and checked against the translated version.
+2. **Startup time.** The first frame now appears about 10 seconds after launch. The remaining cost is mostly the DXT color block encoder, still translated.
 3. **Intro cinematics.** Still buggy. Movies do not play (the DirectShow playback is a stub that ends immediately), and some character polygons are wrong in the LV and SA cinematics.
 4. **Crashes.** A crash after about 20 to 30 minutes of play (memory fault in the game's object code, cause not yet found) and a crash when quitting the game.
-5. **Settings.** More options in `Config.ini` (resolution, game settings), then gamepad settings editable from the game's interface.
+5. **Settings.** Window resolution and borderless mode in `Config.ini`, then the settings editable from the game's Options menu.
 
 ## How it works
 
@@ -63,6 +70,13 @@ cmake --build build --target ct3_run
 The first build runs the whole translation of `CT3.exe` and takes several minutes.
 
 Useful runtime settings:
+- `Config.ini` also holds the game settings (read from the same place):
+  - `[Patches] SkipIntro=1` skips the logo sequence (`0` keeps it).
+  - `[Patches] UiTexcoord=1` fixes the distorted interface after a material with environment reflection.
+  - `[Game] Aspect=16:9` or `4:3` selects the camera aspect. `[Game] Fov=` sets the horizontal field of view in degrees (60 in 4:3 by default, 80 in 16:9).
+  - `[Distance] Map=1.0` multiplies the map draw distances (`2.0` is the value used by taxipatch).
+  Absent settings leave the game's own values unchanged.
+- `CT3_SPLASH=0` disables the loading screen video.
 - `Config.ini` (in the working directory, or the path in `CT3_CONFIG`) holds the gamepad mapping and the thresholds. Default mapping: A = Reverse, B = Drive, Y = Space, Start = Enter, RT = accelerate (Up), LT = brake (Down), left stick = steer.
 - Keyboard: Up accelerate, Down brake, Left and Right steer, X reverse, S drive, Space view or passengers, Enter start.
 - `CT3_NOAUDIO=1` disables sound. `CT3_PRESENT_LOG=1` logs the time of each frame, to measure startup and slowdowns.
@@ -79,13 +93,9 @@ Tests (each one is a program, run from `build/tests`):
 - Do **not** open issues or pull requests containing game files, recompiled output, or links to where to download the game. Such content will be removed.
 - Please support the official release: buy the game.
 
-## Credits
+## Remerciements
 
-- [dxvk-native](https://github.com/doitsujin/dxvk) by doitsujin, the Direct3D 9 to Vulkan layer.
-- [SDL2](https://github.com/libsdl-org/SDL), for the window, input and audio output.
-- [FFmpeg](https://ffmpeg.org), for decoding the loading screen video (LGPL build).
-- [Ghidra](https://github.com/NationalSecurityAgency/ghidra) by the NSA, for the p-code export.
-- [stb_truetype](https://github.com/nothings/stb) by Sean Barrett, for the font rasterization in `runtime/third_party`.
+Ce projet doit beaucoup à d'autres travaux. [dxvk-native](https://github.com/doitsujin/dxvk), de doitsujin, traduit Direct3D 9 en Vulkan et rend l'image du jeu. [SDL2](https://github.com/libsdl-org/SDL) gère la fenêtre, les manettes et le son. [FFmpeg](https://ffmpeg.org) décode la vidéo de chargement (build LGPL). [Ghidra](https://github.com/NationalSecurityAgency/ghidra), de la NSA, fournit l'export du p-code. [stb_truetype](https://github.com/nothings/stb), de Sean Barrett, rastérise les polices. Les réglages `[Patches]`, `[Game]` et `[Distance]` s'inspirent du comportement documenté de [taxipatch](https://github.com/stashymane/taxipatch) (GPL-3.0), successeur de [CT3Tweaks](https://github.com/stashymane/ct3tweaks) (Apache-2.0), dont les modifications de résolution, de fréquence d'images et de champ de vision ont servi de référence pour l'analyse de l'exécutable ; aucun code de ces projets n'est repris. Merci à leurs auteurs.
 
 ## License
 

@@ -85,6 +85,7 @@ NATIVE_OVERRIDES = {
     0x004DACC6: "rt_native_filter",  # filtre d'image D3DX (Apply), voir DECISIONS.md « Portage natif »
     0x004DDB6F: "rt_native_dither",  # écriture X8R8G8B8 par tramage (diffusion d'erreur), voir DECISIONS.md « suite 4 »
     0x004F0D8B: "rt_native_dxt3",    # encodeur DXT3 (alpha natif, couleur par la traduction de FUN_004F0019), voir DECISIONS.md « suite 5 »
+    0x004EFA9B: "rt_native_efa9b",   # ajustement des extrémités du bloc de couleur (appelé par FUN_004F0019), voir DECISIONS.md « suite 6 »
     # 0x004F096A: "rt_native_dxt1",  # décodeur DXT1 : validé (1 appel), désactivé : sans gain mesuré (DECISIONS.md)
 }
 

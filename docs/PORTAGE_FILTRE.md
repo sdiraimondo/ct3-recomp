@@ -234,7 +234,10 @@ Les sorties sont dans `ct3-shots/portage/` (hors dépôt) : `decomp.c` (filtre),
      et `FUN_004EF58F`) puis `FUN_004EFA9B` (ajustement des extrémités : divisions `1/x` et boucle de convergence à
      huit itérations maximum). Les deux sont longs : une routine à la fois, avec `CT3_FILTER_CHECK` dès que la
      dernière est portée.
-   - **Constats de lecture (suite 6, pas encore de code)** :
+   - **Suite 6 (fait)** : `FUN_004EFA9B` (ajustement des extrémités) porté (`rt_native_efa9b`), vérifié
+     bit à bit (`CT3_FILTER_CHECK=8`, 100 000 ajustements), gain d'environ 2 s (à confirmer). Le bloc de couleur
+     `FUN_004F0019` reste traduit : son chemin `param_2 == 0` est décrit ci-dessous, c'est la prochaine cible.
+   - **Constats de lecture (suite 6)** :
      - Appel depuis `FUN_004F0D8B` : `FUN_004F0019(EBX+8, 0.0, dither)` avec `EAX` = source. Le chemin utilisé est
        `param_2 == 0.0` : `local_28 = 4` (4 couleurs, sans transparence). Les autres chemins (`param_2 != 0`) restent
        sur la traduction.

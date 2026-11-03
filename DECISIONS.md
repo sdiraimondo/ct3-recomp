@@ -684,6 +684,18 @@ Outils ajoutés (build de traçage) : `CT3_MEMWATCH=lo-hi` (écritures dans une 
 - **Tests** (`build-check/`) : `test_cpu`, `test_vec`, `test_x87`, `test_g2`, `g1_d3d9_triangle` : verts.
 - **Suite** : porter `FUN_004F0019` (bloc de couleur) puis `FUN_004EFA9B` : c'est là que se trouve le reste du coût de l'encodeur.
 
+### Portage natif, suite 6 : ajustement des extrémités DXT (FUN_004EFA9B) (3 nov. 2026)
+
+- **Porté** : `FUN_004EFA9B` (stdcall, RET 0x10 : deux extrémités de 3 floats, 16 texels float4, mode 3 ou 4), dans `rt_native_efa9b` (`runtime/src/rt_filter.c`). Appelé par `FUN_004F0019` (bloc de couleur, toujours traduit) par appel direct, donc via `dispatch` : substitution `NATIVE_OVERRIDES` 0x4EFA9B.
+- **Structure transcrite** : pré-calcul (extrémités min/max, centres, axe initial `1/L`, quatre formes quadratiques dont le choix échange G ou B entre min et max), puis au plus 8 itérations (palette `min×w + max×tx`, projection des texels, accumulateurs `w/8`, `tx/8`, mise à jour des extrémités, test de convergence sur six accumulateurs au carré contre `2^-16`). Constantes lues en mémoire : `0x70B028…0x70B040` (valeurs initiales et échelles), `0x5D1058` (FLT_MIN), `0x5DD5B0` (2^-12), `0x5DD5AC` (2^-16), tables `0x5DD5B4…0x5DD5E0`.
+- **Précision** : intermédiaires de pile en `long double`, arrondi `float` à chaque `FSTP` (les accumulateurs, les extrémités et les coordonnées de projection sont stockés). Le choix de l'indice `t < nf` compare la valeur étendue, puis `trunc(float(t+0.5))` (RC=11).
+- **Repli** : si un indice sort de `[0, mode-1]`, la traduction est appelée avant toute écriture (aucun cas observé : `efa9b_fallbacks` = 0).
+- **Vérification** : `CT3_FILTER_CHECK=3` puis `=8` (appels DXT3 au démarrage) : identiques à la traduction (tas, listes libres, registres). Plus de 100 000 ajustements natifs, dont au moins une itération par appel (`itérations` dans le message : 16 047 pour 15 608 appels au premier point de contrôle). Les cas dégénérés et les cas à faible étendue sont aussi couverts par les mêmes appels.
+- **Interrupteur** : `CT3_EFA9B_NATIVE=0` revient à la traduction pour cette routine.
+- **Mesures** (Xvfb `:99`, llvmpipe, premier `Present` après `[start]`, deux paires alternées) : `CT3_EFA9B_NATIVE=0` : 12,8 s et 13,2 s ; par défaut : 11,0 s et 10,3 s. Gain d'environ 2 s, à confirmer (la charge de la machine varie).
+- **Tests** (`build-check/`) : `test_cpu`, `test_vec`, `test_x87`, `test_g2`, `g1_d3d9_triangle` : verts.
+- **Reste** : le bloc de couleur `FUN_004F0019` (quantification, diffusion, sélection des indices, empaquetage). Il est encore traduit ; c'est la prochaine routine à porter, avec le même harnais.
+
 ## Environnement (31 oct. 2026)
 
 - KWin (session Plasma/Wayland) ne mappe plus les fenêtres X11 nouvelles : constaté sur G1, glxgears et CT3. Une commande de rechargement de KWin (`org.kde.KWin.reconfigure`) a été lancée par erreur, sans effet visible. Non traité : redémarrer la session graphique (déconnexion/reconnexion) devrait suffire, à confirmer par l'utilisateur.

@@ -28,6 +28,8 @@ static int check_dither_only;
 static int dither_native_on = 1;
 static int dxt3_native_on = 1;
 static long dxt3_calls;
+static long efa9b_calls, efa9b_fallbacks, efa9b_iters;
+static int efa9b_native_on = 1;
 
 /* Traduction de la routine (généré) : présente seulement dans les exécutables qui la lient. */
 extern void sub_004dacc6(cpu_t *c) __attribute__((weak));
@@ -386,9 +388,9 @@ static void check_call(cpu_t *c, uint32_t P)
         fprintf(stderr, "rt: CT3_FILTER_CHECK : arrêt (appel %ld, objet 0x%08x)\n", 1L, P);
         exit(7);
     }
-    fprintf(stderr, "rt: CT3_FILTER_CHECK : appel identique (objet 0x%08x, mode %u, %ux%u -> %ux%u, tas %u octets, tramage natif cumulé %ld, DXT3 natif cumulé %ld)\n",
+    fprintf(stderr, "rt: CT3_FILTER_CHECK : appel identique (objet 0x%08x, mode %u, %ux%u -> %ux%u, tas %u octets, tramage natif cumulé %ld, DXT3 natif cumulé %ld, ajustement natif cumulé %ld (replis %ld, itérations %ld))\n",
             P, rd32(rd32(P) + 8), rd32(rd32(P) + 0x68), rd32(rd32(P) + 0x6C), rd32(rd32(P + 4) + 0x68),
-            rd32(rd32(P + 4) + 0x6C), (unsigned)lent, dither_calls, dxt3_calls);
+            rd32(rd32(P + 4) + 0x6C), (unsigned)lent, dither_calls, dxt3_calls, efa9b_calls, efa9b_fallbacks, efa9b_iters);
     fprintf(stderr, "rt: CT3_FILTER_CHECK : fourcc S=%08x D=%08x\n", rd32(rd32(P) + 4), rd32(rd32(P + 4) + 4));
     fprintf(stderr, "rt: CT3_FILTER_CHECK : S vt+4=%08x S+10=%u S+54=%u S+5c=%u | D vt+8=%08x D+10=%u D+54=%u D+5c=%u\n",
             rd32(rd32(rd32(P)) + 4), rd32(rd32(P) + 0x10), rd32(rd32(P) + 0x54), rd32(rd32(P) + 0x5C),
@@ -628,6 +630,226 @@ void rt_native_dxt3(cpu_t *c)
     cpu_wr(c, 644, 4, ret);
 }
 
+/* Ajustement des extrémités du bloc de couleur DXT (FUN_004EFA9B, stdcall, RET 0x10) : args out1, out2 (3 floats
+ * chacun), texels (16 float4), mode (4 ou 3). Transcription de l'asm : chaque FSTP float arrondit, les
+ * intermédiaires de pile restent en long double. Sortie de secours vers la traduction avant toute écriture si un
+ * indice sort de sa plage (ne doit pas arriver). */
+extern void sub_004efa9b(cpu_t *c) __attribute__((weak));
+
+static int efa9b_fit(uint32_t out1, uint32_t out2, uint32_t tex, int mode, uint32_t *ok_eax)
+{
+    uint32_t tab_w = mode == 3 ? 0x005DD5E0u : 0x005DD5C4u;
+    uint32_t tab_x = mode == 3 ? 0x005DD5D4u : 0x005DD5B4u;
+    float minR = rdf(0x0070B028), minG = rdf(0x0070B02C), minB = rdf(0x0070B030);
+    float maxR = 0.0f, maxG = 0.0f, maxB = 0.0f;
+    uint32_t t;
+    float cR, cG, cB, axR, axG, axB, dGf, a1 = 0.0f, a2 = 0.0f, a3 = 0.0f;
+    long double accP = 0.0L, L1, S, inv, best;
+    float nf, eps, stored_L1;
+    float dRf;
+    int bi = 0, cnt, k;
+
+    if (mode < 3 || mode > 4) {
+        *ok_eax = 0;
+        return 0;
+    }
+    for (t = 0; t < 16; t++) {
+        uint32_t p = tex + 16 * t;
+        float R = rdf(p), G = rdf(p + 4), B = rdf(p + 8);
+        if (R < minR) minR = R;
+        if (G < minG) minG = G;
+        if (B < minB) minB = B;
+        if (R > maxR) maxR = R;
+        if (maxG < G) maxG = G;
+        if (B > maxB) maxB = B;
+    }
+
+    dRf = (float)((long double)maxR - minR);
+    dGf = (float)((long double)maxG - minG);
+    {
+        long double dBe = (long double)maxB - minB;
+        S = (long double)dGf * dGf + dBe * dBe;
+        L1 = (long double)dRf * dRf + S;
+        if (L1 < (long double)rdf(0x005D1058)) {
+            *ok_eax = out2;
+            goto write_out;
+        }
+        stored_L1 = (float)L1;
+        inv = 1.0L / L1;
+        axR = (float)((long double)dRf * inv);
+        axG = (float)((long double)dGf * inv);
+        axB = (float)(dBe * inv);
+    }
+    cR = (float)(((long double)maxR + minR) * (long double)rdf(0x0053CC68));
+    cG = (float)(((long double)maxG + minG) * (long double)rdf(0x0053CC68));
+    cB = (float)(((long double)maxB + minB) * (long double)rdf(0x0053CC68));
+    for (t = 0; t < 16; t++) {
+        uint32_t p = tex + 16 * t;
+        float R = rdf(p), G = rdf(p + 4), B = rdf(p + 8);
+        float dr = (float)(((long double)R - cR) * axR);
+        float dg = (float)(((long double)G - cG) * axG);
+        long double db = ((long double)B - cB) * axB;
+        long double P = ((long double)dg + db) + dr;
+        long double Q, X, Y;
+        accP = accP + P * P;
+        Q = ((long double)dg + dr) - db;
+        a3 = (float)(Q * Q + a3);
+        X = ((long double)dr - dg) + db;
+        a2 = (float)(X * X + a2);
+        Y = ((long double)dr - dg) - db;
+        a1 = (float)(Y * Y + a1);
+    }
+    {
+        float v[4];
+        v[0] = (float)accP;
+        v[1] = a3;
+        v[2] = a2;
+        v[3] = a1;
+        best = accP;
+        for (k = 1; k < 4; k++) {
+            if (best < (long double)v[k]) {
+                best = v[k];
+                bi = k;
+            }
+        }
+    }
+    if (bi & 2) {
+        float oldMinG = minG;
+        minG = maxG;
+        maxG = oldMinG;
+    }
+    if (bi & 1) {
+        float oldMinB = minB;
+        minB = maxB;
+        maxB = oldMinB;
+    }
+    if ((long double)stored_L1 < (long double)rdf(0x005DD5B0)) {
+        *ok_eax = out2;
+        goto write_out;
+    }
+
+    nf = (float)(mode - 1);
+    eps = rdf(0x005DD5AC);
+    for (cnt = 0; cnt < 8; cnt++) {
+        float pal[4][3];
+        float A28 = 0.0f, A2c = 0.0f, A30 = 0.0f, A48 = 0.0f, A4c = 0.0f, A50 = 0.0f, A10 = 0.0f, A14 = 0.0f;
+        long double dRe, dBe, Lc, f;
+        float sq[6];
+        int conv, i;
+
+        for (k = 0; k < mode; k++) {
+            long double tw = rdf(tab_w + 4 * k), tx = rdf(tab_x + 4 * k);
+            pal[k][0] = (float)((long double)minR * tw + (long double)maxR * tx);
+            pal[k][1] = (float)((long double)minG * tw + (long double)maxG * tx);
+            pal[k][2] = (float)((long double)minB * tw + (long double)maxB * tx);
+        }
+        dRe = (long double)maxR - minR;
+        dGf = (float)((long double)maxG - minG);
+        dBe = (long double)maxB - minB;
+        S = (long double)dGf * dGf + dBe * dBe;
+        Lc = dRe * dRe + S;
+        if (Lc < (long double)rdf(0x005DD5B0)) break;
+        efa9b_iters++;
+        f = (long double)nf / Lc;
+        axR = (float)(dRe * f);
+        axG = (float)((long double)dGf * f);
+        axB = (float)(dBe * f);
+
+        for (t = 0; t < 16; t++) {
+            uint32_t p = tex + 16 * t;
+            float R = rdf(p), G = rdf(p + 4), B = rdf(p + 8);
+            long double tv = ((((long double)G - minG) * axG) + (((long double)R - minR) * axR)) +
+                             (((long double)B - minB) * axB);
+            float tf = (float)tv;
+            int idx;
+            if (tv < (long double)nf) {
+                float tp = (float)((long double)tf + 0.5L);
+                idx = fist_trunc((long double)tp);
+            } else {
+                idx = mode - 1;
+            }
+            if (idx < 0 || idx >= mode) {
+                *ok_eax = 0;
+                return 0;
+            }
+            {
+                float w = rdf(tab_w + 4 * idx), tx = rdf(tab_x + 4 * idx);
+                long double w8 = (long double)w * 0.125L, tx8 = (long double)tx * 0.125L;
+                long double dRt = (long double)pal[idx][0] - R;
+                float dGt = (float)((long double)pal[idx][1] - G);
+                long double dBt = (long double)pal[idx][2] - B;
+                A14 = (float)(w8 * w + A14);
+                A50 = (float)(w8 * dRt + A50);
+                A4c = (float)(w8 * dGt + A4c);
+                A48 = (float)(w8 * dBt + A48);
+                A10 = (float)(tx8 * tx + A10);
+                A30 = (float)(tx8 * dRt + A30);
+                A2c = (float)(dGt * tx8 + A2c);
+                A28 = (float)(tx8 * dBt + A28);
+            }
+        }
+        if (A14 > 0.0f) {
+            inv = -1.0L / A14;
+            minR = (float)((long double)A50 * inv + minR);
+            minG = (float)((long double)A4c * inv + minG);
+            minB = (float)((long double)A48 * inv + minB);
+        }
+        if (A10 > 0.0f) {
+            inv = -1.0L / A10;
+            maxR = (float)((long double)A30 * inv + maxR);
+            maxG = (float)((long double)A2c * inv + maxG);
+            maxB = (float)((long double)A28 * inv + maxB);
+        }
+        sq[0] = A50;
+        sq[1] = A4c;
+        sq[2] = A48;
+        sq[3] = A30;
+        sq[4] = A2c;
+        sq[5] = A28;
+        conv = 1;
+        for (i = 0; i < 6; i++) {
+            if (!((long double)sq[i] * sq[i] < (long double)eps)) {
+                conv = 0;
+                break;
+            }
+        }
+        if (conv) break;
+    }
+    *ok_eax = out2;
+
+write_out:
+    wrf(out1, minR);
+    wrf(out1 + 4, minG);
+    wrf(out1 + 8, minB);
+    wrf(out2, maxR);
+    wrf(out2 + 4, maxG);
+    wrf(out2 + 8, maxB);
+    return 1;
+}
+
+void rt_native_efa9b(cpu_t *c)
+{
+    uint32_t esp = (uint32_t)cpu_rd(c, 16, 4);
+    uint32_t out1 = (uint32_t)guest_ld(c, esp + 4, 4), out2 = (uint32_t)guest_ld(c, esp + 8, 4);
+    uint32_t tex = (uint32_t)guest_ld(c, esp + 12, 4), mode = (uint32_t)guest_ld(c, esp + 16, 4);
+    uint32_t ret = (uint32_t)guest_ld(c, esp, 4);
+    uint32_t eax = 0;
+
+    if (!efa9b_native_on) {
+        sub_004efa9b(c);
+        return;
+    }
+    efa9b_calls++;
+    if (!efa9b_fit(out1, out2, tex, (int)mode, &eax)) {
+        efa9b_fallbacks++;
+        sub_004efa9b(c);
+        return;
+    }
+    cpu_wr(c, 0, 4, eax);
+    cpu_wr(c, 16, 4, esp + 20);
+    cpu_wr(c, 644, 4, ret);
+}
+
 void rt_native_filter(cpu_t *c)
 {
     uint32_t P = (uint32_t)cpu_rd(c, 4, 4);
@@ -658,4 +880,5 @@ __attribute__((constructor)) static void rt_filter_init(void)
     check_dither_only = getenv("CT3_FILTER_CHECK_DITHER") != NULL;
     dither_native_on = !(getenv("CT3_DITHER_NATIVE") && strcmp(getenv("CT3_DITHER_NATIVE"), "0") == 0);
     dxt3_native_on = !(getenv("CT3_DXT3_NATIVE") && strcmp(getenv("CT3_DXT3_NATIVE"), "0") == 0);
+    efa9b_native_on = !(getenv("CT3_EFA9B_NATIVE") && strcmp(getenv("CT3_EFA9B_NATIVE"), "0") == 0);
 }

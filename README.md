@@ -93,9 +93,9 @@ Tests (each one is a program, run from `build/tests`):
 - Do **not** open issues or pull requests containing game files, recompiled output, or links to where to download the game. Such content will be removed.
 - Please support the official release: buy the game.
 
-## Remerciements
+## Acknowledgements
 
-Ce projet doit beaucoup à d'autres travaux. [dxvk-native](https://github.com/doitsujin/dxvk), de doitsujin, traduit Direct3D 9 en Vulkan et rend l'image du jeu. [SDL2](https://github.com/libsdl-org/SDL) gère la fenêtre, les manettes et le son. [FFmpeg](https://ffmpeg.org) décode la vidéo de chargement (build LGPL). [Ghidra](https://github.com/NationalSecurityAgency/ghidra), de la NSA, fournit l'export du p-code. [stb_truetype](https://github.com/nothings/stb), de Sean Barrett, rastérise les polices. Les réglages `[Patches]`, `[Game]` et `[Distance]` s'inspirent du comportement documenté de [taxipatch](https://github.com/stashymane/taxipatch) (GPL-3.0), successeur de [CT3Tweaks](https://github.com/stashymane/ct3tweaks) (Apache-2.0), dont les modifications de résolution, de fréquence d'images et de champ de vision ont servi de référence pour l'analyse de l'exécutable ; aucun code de ces projets n'est repris. Merci à leurs auteurs.
+This project owes a lot to other work. [dxvk-native](https://github.com/doitsujin/dxvk), by doitsujin, translates Direct3D 9 to Vulkan and renders the game's image. [SDL2](https://github.com/libsdl-org/SDL) handles the window, gamepads and sound. [FFmpeg](https://ffmpeg.org) decodes the loading screen video (LGPL build). [Ghidra](https://github.com/NationalSecurityAgency/ghidra), by the NSA, provides the p-code export. [stb_truetype](https://github.com/nothings/stb), by Sean Barrett, rasterizes the fonts. The `[Patches]`, `[Game]` and `[Distance]` settings are inspired by the documented behaviour of [taxipatch](https://github.com/stashymane/taxipatch) (GPL-3.0), the successor of [CT3Tweaks](https://github.com/stashymane/ct3tweaks) (Apache-2.0). The resolution, frame rate and field of view changes made by CT3Tweaks were used as a reference when analysing the executable. No code from these two projects is reused. Thanks to their authors.
 
 ## License
 

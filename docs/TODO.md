@@ -1,104 +1,102 @@
 # TODO : Crazy Taxi 3 sous Linux
 
-Liste de travail, dans l'ordre de priorité indiqué par l'utilisateur (2 nov. 2026). Le détail technique
-de chaque point est dans `DECISIONS.md` ; l'état d'ensemble est dans `docs/HANDOFF.md`.
+Liste de travail, dans l'ordre de priorité indiqué par l'utilisateur. Le détail technique de chaque point est dans
+`DECISIONS.md` ; l'état d'ensemble est dans `docs/HANDOFF.md`. Mise à jour : 3 nov. 2026.
 
-## 1. Manettes via SDL (tests plus rapides à la manette) : premier jet fait (D-064)
+## Terminé ou en place
 
-- Fait : boutons et stick gauche traduits en touches DIK (menus validés avec une manette virtuelle).
-- Mapping PS2 et `Config.ini` : voir D-065. Testé avec une DualShock 4 (boutons et stick) par l'utilisateur.
-- Reste : la vérification complète des touches de conduite en jeu (klaxon, Crazy Dash), la touche de
-  validation des menus (Start ou L1), et l'effet d'un appui qui semble déplacer le curseur de deux entrées.
+- **Démarrage lent (écran noir)** : premier affichage à environ 9 à 10 s (contre 43 à 45 s avant les portages), sur
+  l'écran de l'utilisateur comme en Xvfb. Routines portées en code natif, vérifiées bit à bit contre la traduction
+  (`CT3_FILTER_CHECK`, `CT3_FILTER_CHECK_DITHER`) : filtre `FUN_004DACC6` (mode 1), tramage `FUN_004DDB6F` et
+  `FUN_004DD45C`, alpha DXT3 `FUN_004F0D8B`, ajustement des extrémités `FUN_004EFA9B`. Voir `docs/PORTAGE_FILTRE.md`
+  et D-068 à D-070.
+- **Écran de chargement vidéo (D-070)** : `avi/loading.avi` est lue au lancement (FFmpeg, build LGPL), en plein écran,
+  fond noir, vidéo à sa taille d'origine et centrée. La fenêtre du jeu reste cachée pendant la vidéo et s'affiche au
+  premier affichage du jeu. Vérifié sur l'écran de l'utilisateur.
+- **Manettes** : premier jet fait (D-064, D-065), testé avec une DualShock 4.
+- **Son** : premier jet fait (D-067). Bruitages et musique fonctionnent.
 
-- Objectif : piloter le jeu à la manette (menus et conduite) pour accélérer les tests.
-- Point de départ : le clavier passe déjà par DirectInput (D-046) et les événements SDL. `EnumDevices` ne
-  renvoie que le clavier (`GUID_SysKeyboard`) ; `CreateDevice`/`GetDeviceState` ne couvrent pas les joysticks.
-- À faire :
-  - Vérifier quels périphériques le jeu énumère (`GUID_Joystick`, ou XInput : `XInput1_3.dll` est présent dans
-    le dossier du jeu, à contrôler dans l'import).
-  - Remplir `DIJOYSTATE` (axes, boutons, POV) depuis SDL (GameController ou Joystick).
-  - Table de correspondance boutons et axes du jeu vers les contrôles SDL, à valider sur une vraie manette.
+## 1. Manettes : reste à faire
 
-### Hors liste : paramètres dans Config.ini et UI (v1.1)
+- Vérifier les touches de conduite en jeu (klaxon, Crazy Dash) et la touche de validation des menus (Start ou L1).
+- Corriger l'effet d'un appui qui semble déplacer le curseur de deux entrées.
+- v1.1 : modifier les paramètres des manettes dans l'interface du jeu (et écrire `Config.ini`).
+- Hors liste : étendre `Config.ini` (résolution, autres réglages).
 
-- Fait : le mapping des manettes est lu dans `Config.ini` (D-065).
-- À faire : étendre `Config.ini` (résolution, autres réglages du jeu).
-- v1.1 : modifier les paramètres des manettes directement dans l'interface du jeu (et écrire `Config.ini`).
+## 2. Son : reste à faire
 
-## 2. Son (totalement absent) : premier jet fait (D-067)
+- Atténuation 3D des tampons (absente : les méthodes 3D n'ont pas d'effet, `rt_extra.cpp`).
+- Interpolation du rééchantillonnage (plus proche voisin actuellement).
+- Cinématiques : muettes, faute de flux DirectShow (D-061).
 
-- Fait : mixage des tampons DirectSound vers SDL, avec format, fréquence, volume et panoramique.
-- Confirmé par l'utilisateur : les bruitages fonctionnent, et la musique est jouée en jeu.
-- Reste : les vidéos (cinématiques) restent muettes, faute de flux DirectShow (D-061) ; atténuation 3D ;
-  interpolation du rééchantillonnage.
+## 3. Ralentissements en jeu (compilation des shaders) : à traiter
 
-- Constat : DirectSound est un stub silencieux (D-038). Le curseur de lecture suit l'horloge (D-051), et les
-  banques `Media/SE/*.bin` et les fichiers `.aif`, `.ogg` sont lus mais rien n'est joué.
-- Plan prévu : sortie SDL audio (D-008). Le jeu écrit dans des tampons verrouillés (`Lock`/`Unlock`, deux zones
-  au bouclage, D-058) : il faut mélanger ces tampons vers SDL à la position de lecture réelle.
-- À faire : un fil de sortie SDL qui lit les tampons en lecture (`Play`, `Stop`, `SetCurrentPosition`) ; ensuite
-  le décodage des formats du jeu (`xbhm`, AIFF, Ogg) et la musique.
-- Attention : la cinématique et le titre dépendent du curseur d'écriture du décodeur (D-057) ; ne pas casser
-  le bouclage.
-
-## 3. Compilation des shaders (ralentissements en jeu)
-
-- Constat : des à-coups en jeu, dus à la compilation des shaders et des pipelines à leur premier usage.
+- Constat : des à-coups en jeu, aléatoires. Non mesurés. La compilation des shaders et des pipelines au premier usage
+  est la piste principale.
 - Pistes :
-  - Le cache d'état DXVK est déjà utilisé (`~/.cache/dxvk/*.dxvk.bin`, 222 shaders au lancement). Vérifier qu'il
-    est bien écrit et relu d'un lancement à l'autre.
-  - Compilation asynchrone des pipelines (option DXVK, à vérifier dans la version compilée, D-013).
+  - Vérifier que le cache DXVK (`~/.cache/dxvk/*.dxvk.bin`) est écrit et relu d'un lancement à l'autre.
+  - Compilation asynchrone des pipelines (option DXVK, D-013).
   - Préchauffage pendant l'écran titre, ou précompilation à partir du cache.
-- À mesurer d'abord : temps passé dans la compilation (journal DXVK ou `perf`), pour cibler la piste.
+- À mesurer d'abord : temps passé dans la compilation (journal DXVK ou `perf`).
+
+## 4. Démarrage : reste à faire
+
+- Le bloc de couleur DXT3 `FUN_004F0019` (chemin `param_2 == 0`) est encore traduit. Sa structure est décrite dans
+  `docs/PORTAGE_FILTRE.md`, section 11. Gain attendu plus modeste que les précédents.
+- Les autres modes du filtre (2 et 3) ne sont pas portés (non vérifiés). Le décodeur DXT1 natif reste désactivé.
+- Après le premier affichage, le jeu montre encore son logo en fondu (images sombres vers les images 260 et 500 à 600,
+  mesure Xvfb). Couvrir ces fondus par la vidéo est une décision à prendre.
+
+## 5. Win32 : manques et implémentations partielles
+
+- Sur 203 imports de `CT3.exe`, 189 sont implémentés. 14 manquent : `DialogBoxParamA`, `EndDialog`, `GetDlgItem`,
+  `IsDlgButtonChecked`, `CheckRadioButton`, `RaiseException`, `RtlUnwind`, `CreateFileW`, `EnumSystemLocalesA`,
+  `GetLocaleInfoW`, `GetEnvironmentStrings`, `GetIconInfo`, et deux ordinaux (`COMCTL32 #17`, `DSOUND #11`).
+  Un appel à l'un d'eux arrête le runtime (code 3). Aucun n'apparaît dans nos journaux, mais leurs sites d'appel ne
+  sont pas vérifiés.
+- Implémentations partielles : `GetStringType` (type 1 seulement), `LCMapString` (indicateurs 0x100 et 0x200
+  seulement).
+- À faire : vérifier les sites d'appel des 14 imports (le p-code) ; commencer par `CreateFileW`, `RaiseException` et
+  `RtlUnwind`.
+- Licence : le dépôt n'a pas encore de licence. Tant que ce n'est pas tranché, aucun code de Wine ne peut être copié.
+  Une réimplémentation à partir de la documentation et des tests de Wine reste possible.
+
+## 6. Cinématiques
+
+- Seule `avi/loading.avi` est présente dans la copie (D-004, D-005). Les cinématiques `sa_ic.avi`, `go_bb.avi` et
+  `go_an.avi` manquent : sans elles, le graphe DirectShow factice (D-061) termine la lecture immédiatement.
+- À faire quand les fichiers seront disponibles : identifier leur codec avec `ffprobe` et vérifier la lecture avec
+  FFmpeg (déjà compilé dans le préfixe, `tools/deps/build_ffmpeg.sh`).
 
 ## Constats à traiter (hors liste de l'utilisateur)
 
-### Cinématiques d'introduction (intros) : encore buggées
+### Plantage A (D-069) : faute à 0x3F800000 au bout de 5 à 12 min de course
 
-- Constat utilisateur (2 nov. 2026) : les cinématiques d'introduction restent défectueuses. À investiguer
-  (détail à relever : quelle intro, quel moment, quel défaut ; capture au moment du bug).
-- Lien possible : les vidéos sont remplacées par le graphe DirectShow factice (D-061) ; la fin immédiate de la
-  lecture peut changer le déroulement des intros. À vérifier avant de conclure.
-
-### Démarrage lent : écran noir pendant une bonne minute
-
-- Mesuré (D-068) : premier `Present` à environ 43 s après le lancement (79 s avant le correctif x87).
-  Constaté par l'utilisateur à 43 s (2 nov. 2026).
-- Reste : voir l'item « Remplacement natif de la routine de filtre » ci-dessous.
-- Diagnostic : `CT3_PRESENT_LOG=1`.
-
-### Remplacement natif de la routine de filtre au démarrage (environ 40 s)
-
-- Routine : `FUN_004DACC6`, variante du filtre d'image D3DX embarqué, appelée par `FUN_004DB284` pour chaque
-  texture au chargement. Elle applique des poids sparses (tables de `FUN_004D7A41`), des accumulateurs flottants
-  par texel, puis un serrage à [0, 1] selon le filtre.
-- À faire : reproduire ces tables, les variantes par format, et l'arithmétique x87 (`long double` pour rester bit
-  à bit) ; vérifier contre la version traduite (harnais de comparaison).
-- Piste mesurée : compilation en `-O2` = 39 s au lieu de 43 s (non retenue, D-068).
+- Revenu sur le build avec portages natifs (3 nov., 301 s de course), même signature : `EBX = EBP = 0x45183AD4`,
+  fonction `FUN_00414ED0`. Le plantage précède les portages, mais rien n'exclut une écriture native.
+- Écrivain de la valeur fautive : non identifié.
+- À faire : si reproductible, comparer avec `CT3_FILTER_NATIVE=0`.
 
 ### Plantage à la sortie du jeu (adresse non traduite 0x005154b5)
 
-- Constat : en quittant le jeu (menu « Exit » ou fermeture), le journal affiche `rt: appel vers une adresse non
-  traduite 0x005154b5 (retour invité 0x00517930)`. Le trampoline `0x53aefb` est désormais suivi (commit `8c3ee82`),
-  mais `0x5154b5` est une fonction pointée par la table `atexit` (`0x7DB7D8`), remplie à l'exécution. Ghidra ne l'a
-  pas désassemblée (la zone `0x5154a0`-`0x5154be` n'est pas dans l'export).
-- Impact : seulement la sortie (pas de nettoyage, code de sortie 3). Sans effet sur le jeu en cours.
-- À faire : repérer les écritures de pointeurs de fonction dans `atexit` / `_onexit`, et exporter les fonctions
-  référencées par constante dans le code (passe `pcode-all-ptrs`).
+- En quittant le jeu, le journal affiche `appel vers une adresse non traduite 0x005154b5`. Fonction de la table
+  `atexit`, non désassemblée.
+- Impact : seulement la sortie. Sans effet sur le jeu en cours.
+- À faire : repérer les écritures de pointeurs de fonction dans `atexit` / `_onexit`.
+
+### Intros d'introduction : encore buggées
+
+- Constat utilisateur (2 nov.) : les cinématiques d'introduction restent défectueuses. Quelle intro, quel moment, quel
+  défaut : à relever avec une capture au moment du bug (`CT3_SHOT`).
+- Lien possible avec le graphe DirectShow factice (D-061).
 
 ### Personnages déformés dans les cinématiques
 
-- Constat utilisateur : dans les cinématiques LV et SA, des polygones des personnages manquent ou sont décalés.
-  Le décor et les véhicules sont corrects, et le même personnage est correct en jeu.
-- Piste (non vérifiée) : les personnages sont peut-être déformés par des matrices de squelette (palette de
-  matrices, `VERTEXBLEND`). Le calcul de matrices 4×4 passe par `FUN_004E7813`, qui apparaît dans les piles de
-  rendu de scène. Une erreur de précision dans le chemin x87 ou dans les indices de matrices serait à vérifier.
-- À faire : capture d'écran au moment du défaut (`CT3_SHOT`), puis comparaison avec le matériel des personnages.
+- Constat utilisateur : polygones manquants ou décalés pour les personnages (LV et SA), décor et véhicules corrects.
+- Piste (non vérifiée) : palette de matrices de squelette (`VERTEXBLEND`), calcul de matrices `FUN_004E7813`.
+- À faire : capture au moment du défaut, puis comparaison.
 
-### Arrêt « tas invité épuisé » après environ 20 minutes
+### « Tas invité épuisé » après environ 20 minutes
 
-- Constat : le run lancé à 17:26 s'est arrêté à 17:45 par `rt: tas invité épuisé`. Un autre run, sans rapport
-  apparent, avait déjà présenté ce message en fin de cinématique SA (avant le correctif D-061).
-- À faire : `CT3_ALLOCLOG=1` et `CT3_HEAPCHK=1` sur une session longue, pour identifier la fuite (appelant
-  dominant). Les allocations du graphe DirectShow factice sont minimes (D-061) : vérifier qu'elles ne contribuent
-  pas.
+- Un run s'est arrêté à 17:45 par `rt: tas invité épuisé`.
+- À faire : `CT3_ALLOCLOG=1` et `CT3_HEAPCHK=1` sur une session longue, pour trouver la fuite.

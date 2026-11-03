@@ -720,6 +720,20 @@ Outils ajoutés (build de traçage) : `CT3_MEMWATCH=lo-hi` (écritures dans une 
   - Les cinématiques `sa_ic.avi`, `go_bb.avi`, `go_an.avi` restent absentes de la copie (D-005) : seul `loading.avi` est lu.
   - Le lecteur DirectShow factice (D-061) n'est pas modifié : la vidéo de chargement est une fenêtre séparée, pas une lecture de l'API du jeu.
 
+### Réglages dans Config.ini : saut des logos, format 16:9 ou 4:3, FOV (3 nov. 2026, D-071)
+
+- **Décision** : premier lot du plan `docs/TAXIPATCH_PLAN.md`, réglé par `Config.ini` (sections `[Patches]` et `[Game]`), sans modifier `CT3.exe`. Lecture dans `runtime/src/rt_patch.c`.
+- **Saut des logos** (`[Patches] SkipIntro=1|0`, défaut 1) : crochet `rt_patch_before_logo` sur `FUN_0042E160` (générateur : `PRE_HOOKS` dans `tools/recomp/ct3rc.py`). Le crochet met le compteur `[0x717884]` à 1024 juste avant chaque appel, comme la routine l'attend pour passer à la suite. Mesure : 1 025 appels de la routine sans saut, 1 appel avec saut ; l'écran titre « PRESS START » apparaît à l'image 200.
+- **Format et FOV** (`[Game] Aspect=W:H`, `[Game] Fov=degrés`) : la caméra relit à chaque image ses globales (`0x71C3C8` FOV, `0x71C420` format, `0x71C42C` et `0x71C430` plans). `rt_patch_frame` les écrit à chaque présentation. Par défaut : pas de Fov explicite, donc 60° en 4:3 et 80° en 16:9. Le 16:9 de cette version (CT3Tweaks) est conservé.
+- **Réponse à la question du 4:3** : oui. Un réglage `Aspect=4:3` suffit côté jeu, sans toucher à l'exécutable. La taille de la fenêtre (résolution, mode) doit suivre pour que le rendu soit correct : c'est le lot suivant. Vérification visuelle en course à faire (non encore faite) : seuls le chargement et les présentations ont été vérifiés pour 4:3.
+- **Découverte** : `CT3.exe` a été modifié par CT3Tweaks (12 octets : résolution 1280×720, limiteur à 60, format 16:9, FOV 80) ; `CT3.original.exe` (empreinte Xplosiv acceptée par taxipatch) est l'original. Voir `docs/TAXIPATCH_PLAN.md`, section 2.
+- **Tests** (`build-check/`) : `test_cpu`, `test_vec`, `test_x87`, `test_g2`, `g1_d3d9_triangle` : verts.
+
+- **Points 4 et 5 du plan réduit (même lot)** :
+  - Correctif d'interface (`[Patches] UiTexcoord=1`, défaut 1) : crochet avant `SpriteRenderQueue::Flush` (`FUN_00424990`, `rt_patch_before_flush` dans `runtime/src/rt_patch_d3d.cpp`), qui réinitialise `D3DTSS_TEXCOORDINDEX` à 0 sur les quatre étages. Le pointeur du périphérique est lu à `0x714E74` (`Render::D3D_DEVICE`).
+  - Distances de la carte (`[Distance] Map=1.0`, défaut 1.0 = valeur d'origine) : crochet **après** `Map::UpdateDrawDistance` (`FUN_00447ED0`, nouveau type `POST_HOOKS` du générateur), qui multiplie rayon (`0x7239D4`), nombre de maillages (`0x7239D8`, plafond 200), LOD (`0x724DF0`) et plan lointain (`0x71C430`, au moins 10 000 et au moins 1,1 × rayon). Valeur 2.0 proposée par taxipatch : décision en attente.
+  - Vérification : démarrage avec `Map=2.0` et `UiTexcoord=1` sans faute (1 161 présentations sur 40 s), tests obligatoires verts. Effet visuel non vérifié (scène avec matériau à réflexion pour le point 4, vue lointaine pour le point 5).
+
 ## Environnement (31 oct. 2026)
 
 - KWin (session Plasma/Wayland) ne mappe plus les fenêtres X11 nouvelles : constaté sur G1, glxgears et CT3. Une commande de rechargement de KWin (`org.kde.KWin.reconfigure`) a été lancée par erreur, sans effet visible. Non traité : redémarrer la session graphique (déconnexion/reconnexion) devrait suffire, à confirmer par l'utilisateur.

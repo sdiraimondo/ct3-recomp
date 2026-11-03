@@ -89,6 +89,19 @@ NATIVE_OVERRIDES = {
     # 0x004F096A: "rt_native_dxt1",  # décodeur DXT1 : validé (1 appel), désactivé : sans gain mesuré (DECISIONS.md)
 }
 
+# Fonctions précédées d'un crochet (runtime/src/rt_patch.c) : le crochet s'exécute avant la traduction, qui reste
+# appelée ensuite. Le crochet vérifie lui-même si le réglage est actif (Config.ini), voir DECISIONS.md « suite 7 ».
+PRE_HOOKS = {
+    0x0042E160: "rt_patch_before_logo",  # séquence des logos : saut des logos (Config.ini [Patches] SkipIntro)
+    0x00424990: "rt_patch_before_flush",  # vidage des sprites : réinitialise TEXCOORDINDEX (Config.ini [Patches] UiTexcoord)
+}
+
+# Fonctions suivies d'un crochet : la traduction s'exécute d'abord, puis le crochet (ex. réécriture des valeurs
+# recalculées par la routine). Voir DECISIONS.md « suite 7 ».
+POST_HOOKS = {
+    0x00447ED0: "rt_patch_after_map",  # distances de la carte (Config.ini [Distance] Map)
+}
+
 # __setjmp3 du CRT MSVC (CT3.exe) : l'appel est remplacé par un setjmp hôte dans le cadre appelant.
 SETJMP_ENTRY = 0x0051A238
 
@@ -691,6 +704,10 @@ def main():
                 # Version native (runtime/src/rt_filter.c), active par défaut ; CT3_FILTER_NATIVE=0 : traduction.
                 f.write("    case 0x%08x: if (rt_native_filter_on) { %s(c); return; } %s(c); return;\n"
                         % (entry, NATIVE_OVERRIDES[entry], cname))
+            elif entry in PRE_HOOKS:
+                f.write("    case 0x%08x: %s(c); %s(c); return;\n" % (entry, PRE_HOOKS[entry], cname))
+            elif entry in POST_HOOKS:
+                f.write("    case 0x%08x: %s(c); %s(c); return;\n" % (entry, cname, POST_HOOKS[entry]))
             else:
                 f.write("    case 0x%08x: %s(c); return;\n" % (entry, cname))
         f.write("    default: rt_unresolved(c, addr);\n    }\n}\n")

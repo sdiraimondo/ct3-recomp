@@ -33,6 +33,13 @@ void rt_probe_present(void);
 /* Écran de chargement (avi/loading.avi, FFmpeg) : démarré au lancement, arrêté à la première présentation. */
 void rt_splash_start(const char *ct3_exe);
 void rt_splash_stop(void);
+/* Réglages Config.ini ([Patches], [Game]) : chargement, crochet des logos, écriture par présentation (rt_patch.c). */
+void rt_patch_load(void);
+void rt_patch_before_logo(cpu_t *c);
+void rt_patch_frame(void);
+void rt_patch_before_flush(cpu_t *c);
+void rt_patch_after_map(cpu_t *c);
+int rt_patch_ui_texcoord_enabled(void);
 /* Fenêtres du jeu cachées pendant l'écran de chargement, affichées ensuite (rt_win.cpp). */
 extern int rt_win_hold_visible;
 void rt_win_release_visible(void);

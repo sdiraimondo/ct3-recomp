@@ -79,6 +79,7 @@ static void parse_range(const char *v, uint32_t *lo, uint32_t *span);
 void rt_probe_present(void)
 {
     rt_splash_stop();
+    rt_patch_frame();
     /* CT3_PROBE_AFTER=N : active la trace de CT3_PROBE seulement à partir de la N-ième présentation. */
     static long probe_after = -2;
     if (probe_after == -2) {

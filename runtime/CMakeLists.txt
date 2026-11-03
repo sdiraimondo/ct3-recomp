@@ -40,7 +40,9 @@ add_library(ct3_rt STATIC
   "${CMAKE_CURRENT_SOURCE_DIR}/src/rt_extra.cpp"
   "${CMAKE_CURRENT_SOURCE_DIR}/src/rt_font.c"
   "${CMAKE_CURRENT_SOURCE_DIR}/src/rt_fs.cpp"
-  "${CMAKE_CURRENT_SOURCE_DIR}/src/rt_splash.c")
+  "${CMAKE_CURRENT_SOURCE_DIR}/src/rt_splash.c"
+  "${CMAKE_CURRENT_SOURCE_DIR}/src/rt_patch.c"
+  "${CMAKE_CURRENT_SOURCE_DIR}/src/rt_patch_d3d.cpp")
 target_include_directories(ct3_rt PUBLIC
   "${CMAKE_CURRENT_SOURCE_DIR}/include"
   "${CMAKE_CURRENT_SOURCE_DIR}/src"

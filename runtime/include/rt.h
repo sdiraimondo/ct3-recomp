@@ -176,6 +176,12 @@ static inline uint64_t rt_rdtsc(void)
 void rt_int3(uint32_t addr);
 uint32_t rt_cpuid_block(cpu_t *c);
 void dispatch(cpu_t *c, uint32_t addr);
+
+/* Versions natives de routines invitées (runtime/src/rt_filter.c), activées par CT3_FILTER_NATIVE=1. */
+extern int rt_native_filter_on;
+void rt_native_filter(cpu_t *c);
+void rt_native_dxt1(cpu_t *c);
+void rt_native_dither(cpu_t *c);
 void rt_fatal(const char *msg);
 void rt_unresolved(cpu_t *c, uint32_t addr);
 void rt_unsupported(const char *what, uint32_t addr);

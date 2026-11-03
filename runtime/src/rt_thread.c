@@ -479,6 +479,7 @@ static void crash_handler(int sig, siginfo_t *info, void *ctx)
     fprintf(stderr, "rt: dernière instruction invitée 0x%08x\n", rt_cur_insn);
     fprintf(stderr, "rt: faute mémoire (signal %d) à l'adresse hôte %p, invitée 0x%llx\n", sig,
             info->si_addr, fault >= base && fault < base + RT_GUEST_SIZE ? (unsigned long long)(fault - base) : 0ULL);
+    rt_probe_dump();
     rt_thread *t = rt_current();
     if (t && t->cpu) {
         fprintf(stderr, "rt: EAX=%08llx ECX=%08llx EDX=%08llx EBX=%08llx ESP=%08llx EBP=%08llx ESI=%08llx EDI=%08llx\n",

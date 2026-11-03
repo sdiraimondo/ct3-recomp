@@ -22,6 +22,8 @@ void rt_heap_free(uint32_t p);
 uint32_t rt_heap_size(uint32_t p);
 uint32_t rt_heap_realloc(uint32_t p, uint32_t size);
 uint32_t rt_scratch_alloc(uint32_t size);
+void rt_heap_get_state(uint32_t *top, uint32_t *bins);
+void rt_heap_set_state(uint32_t top, const uint32_t *bins);
 
 #ifdef __cplusplus
 }

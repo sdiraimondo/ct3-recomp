@@ -135,6 +135,19 @@ static int heap_trace(void)
     return on;
 }
 
+/* État du tas côté hôte (sommet et listes libres), pour la vérification du portage natif (rt_filter.c). */
+void rt_heap_get_state(uint32_t *top, uint32_t *bins)
+{
+    *top = heap_next;
+    memcpy(bins, heap_bins, sizeof heap_bins);
+}
+
+void rt_heap_set_state(uint32_t top, const uint32_t *bins)
+{
+    heap_next = top;
+    memcpy(heap_bins, bins, sizeof heap_bins);
+}
+
 uint32_t rt_heap_alloc(uint32_t size, int zero)
 {
     uint32_t total = block_total(size);

@@ -80,6 +80,13 @@ TERMINAL_MNEMONICS = ("RET", "RETN", "JMP", "HLT", "INT3", "UD2")
 # CT3_TRACE_INSN=1 : chaque instruction met à jour rt_cur_insn (diagnostic de plantage, build de débogage).
 TRACE_INSN = os.environ.get("CT3_TRACE_INSN") == "1"
 
+# Fonctions remplacées par une version native (runtime/src/rt_filter.c) quand rt_native_filter_on est vrai.
+NATIVE_OVERRIDES = {
+    0x004DACC6: "rt_native_filter",  # filtre d'image D3DX (Apply), voir DECISIONS.md « Portage natif »
+    0x004DDB6F: "rt_native_dither",  # écriture X8R8G8B8 par tramage (diffusion d'erreur), voir DECISIONS.md « suite 4 »
+    # 0x004F096A: "rt_native_dxt1",  # décodeur DXT1 : validé (1 appel), désactivé : sans gain mesuré (DECISIONS.md)
+}
+
 # __setjmp3 du CRT MSVC (CT3.exe) : l'appel est remplacé par un setjmp hôte dans le cadre appelant.
 SETJMP_ENTRY = 0x0051A238
 
@@ -678,7 +685,12 @@ def main():
         f.write("    rt_watch_entry(c, addr);\n")  # CT3_WATCH : sans effet si la variable est absente
         f.write("    switch (addr) {\n")
         for entry, cname in sorted(entries):
-            f.write("    case 0x%08x: %s(c); return;\n" % (entry, cname))
+            if entry in NATIVE_OVERRIDES:
+                # Version native (runtime/src/rt_filter.c), active par défaut ; CT3_FILTER_NATIVE=0 : traduction.
+                f.write("    case 0x%08x: if (rt_native_filter_on) { %s(c); return; } %s(c); return;\n"
+                        % (entry, NATIVE_OVERRIDES[entry], cname))
+            else:
+                f.write("    case 0x%08x: %s(c); return;\n" % (entry, cname))
         f.write("    default: rt_unresolved(c, addr);\n    }\n}\n")
     with open(os.path.join(args.outdir, "chunks.txt"), "w") as f:
         f.write("\n".join(chunk_files) + "\n")

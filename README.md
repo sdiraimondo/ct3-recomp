@@ -43,6 +43,24 @@ An unofficial effort to decompile and statically recompile **Crazy Taxi 3** (Win
 
 Everything in `build/` is derived from your copy of the game and is not versioned.
 
+### Data pack (removing the runtime dependency on `CT3.exe`)
+
+The translated code never executes the x86 code of `CT3.exe`, but the runtime
+still reads the game's memory image and imports from it. The `ct3pack` target
+extracts them into `build/pack/` (`ct3_data.bin`, `ct3_image.h`,
+`ct3_image.json`):
+
+```sh
+cmake --build build --target ct3pack
+cmake --build build --target ct3pack-check   # checks the generated C addresses
+```
+
+The pack contains the PE headers, `.rdata`, `.data` and `.rsrc`, but not
+`.text`. It is a derivative of your copy of the game and must not be committed
+or shared. The runtime switch to the pack is the next step; until then,
+`ct3_run` still takes the path to `CT3.exe`. Format and loader contract:
+[docs/PACK.md](docs/PACK.md).
+
 ## Building and running
 
 Requirements:
@@ -51,7 +69,7 @@ Requirements:
 - JDK 21 and [Ghidra 12.1.4](https://github.com/NationalSecurityAgency/ghidra/releases) (used at build time for the export)
 - SDL2 and dxvk-native, installed in a prefix (the build expects `~/.local/ct3-deps/prefix` by default). The dependency recipe is not scripted yet.
 - Optional: FFmpeg (LGPL build), for the loading screen video. `tools/deps/build_ffmpeg.sh` builds it in the same prefix. Without it, the game starts without the loading video.
-- Your own copy of `CT3.exe`
+- Your own copy of `CT3.exe` (needed at build time; the current runtime still takes its path, until the data pack is wired in)
 
 ```sh
 git clone https://github.com/sdiraimondo/ct3-recomp.git

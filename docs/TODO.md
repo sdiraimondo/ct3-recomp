@@ -1,7 +1,7 @@
 # TODO : Crazy Taxi 3 sous Linux
 
 Liste de travail, dans l'ordre de priorité indiqué par l'utilisateur. Le détail technique de chaque point est dans
-`DECISIONS.md` ; l'état d'ensemble est dans `docs/HANDOFF.md`. Mise à jour : 3 nov. 2026.
+`DECISIONS.md` ; l'état d'ensemble est dans `docs/HANDOFF.md`. Mise à jour : 4 nov. 2026.
 
 ## Terminé ou en place
 
@@ -67,6 +67,20 @@ Liste de travail, dans l'ordre de priorité indiqué par l'utilisateur. Le déta
   `go_an.avi` manquent : sans elles, le graphe DirectShow factice (D-061) termine la lecture immédiatement.
 - À faire quand les fichiers seront disponibles : identifier leur codec avec `ffprobe` et vérifier la lecture avec
   FFmpeg (déjà compilé dans le préfixe, `tools/deps/build_ffmpeg.sh`).
+
+## 7. Runtime sans CT3.exe (lot 1 fait, lot 2 à faire)
+
+- **Lot 1 fait (D-073)** : `tools/pepack/pepack.py` et la cible `ct3pack` produisent `build/pack/`
+  (`ct3_data.bin`, `ct3_image.h`, `ct3_image.json`). `ct3pack-check` vérifie les 4 574 adresses statiques du C
+  généré (`packed=4572`, `excluded=0`, `gap=0`). Format et contrat de chargement : `docs/PACK.md`.
+- **Lot 2** : brancher le chargeur sur le pack.
+  - `runtime/src/rt_pe.c` : remplacer la lecture de `CT3.exe` par le pack (zéro-remplissage du BSS, sections,
+    imports dans l'ordre, point d'entrée `CT3_IMAGE_ENTRY`).
+  - `runtime/src/rt_shims.c` : `rt_unresolved` ne doit plus lire `.text`.
+  - `tests/run/test_run.c` et `tests/common/harness.h` : ne plus prendre le chemin de `CT3.exe` en argument.
+  - `runtime/src/rt_file.c` et `runtime/src/rt_splash.c` : ne plus dériver le dossier des assets du chemin de
+    l'exécutable.
+- **Critère** : lancer `ct3_run` sans argument et sans `CT3.exe`, avec le pack et les assets du jeu.
 
 ## Constats à traiter (hors liste de l'utilisateur)
 

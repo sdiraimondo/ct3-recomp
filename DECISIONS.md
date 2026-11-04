@@ -747,6 +747,33 @@ Outils ajoutés (build de traçage) : `CT3_MEMWATCH=lo-hi` (écritures dans une 
 - **Correctif (test de l'utilisateur)** : menus bloqués sur « Bas » (sans manette, clavier débranché), disparu avec `Enabled=0`. Cause : la plage par défaut était 0 à 65535 (centre 32767), alors que Xidi présente des axes signés de −32767 à 32767 (centre 0). Au repos, l'axe Y valait donc une poussée maximale vers le bas. Plage par défaut désormais −32767 à 32767, comme Xidi. Vérifié : au repos, X, Y et Z valent 0.
 - **Plantage après sélection d'une option** : le journal montre l'appui sur A puis la sortie par la voie connue (`0x5154B5`). L'option choisie était probablement « Quitter » ; ce n'est pas un plantage nouveau.
 
+## D-073 : pack de données CT3, première étape vers un runtime sans CT3.exe (4 nov. 2026)
+
+- **Décision** : extraire au build l'image mémoire de `CT3.exe` dans un pack
+  (`build/pack/`) pour que le runtime n'ait plus besoin de lire l'exécutable
+  Windows. Le code x86 reste traduit en C : le pack ne contient que des données.
+- **Contenu** : en-têtes PE, `.rdata`, `.data` et `.rsrc`, sections alignées sur
+  16 octets. `.text` est exclue par défaut (`--include-text` pour déboguer).
+  Le BSS de `.data` n'est pas stocké : le chargeur devra zéro-remplir l'image.
+- **Métadonnées** : `ct3_image.h` (constantes, `ct3_pack_sections`,
+  `ct3_pack_imports`) et `ct3_image.json` (empreintes source et charge utile,
+  sections, 203 imports dans 10 DLL, statistiques). L'ordre des imports est
+  conservé : les talons restent `RT_STUB_BASE + 16 * index`.
+- **Outil** : `tools/pepack/pepack.py`, sans dépendance externe. Il ne modifie
+  jamais `CT3.exe` et refuse une base d'image autre que `0x00400000`.
+- **CMake** : cibles `ct3pack` et `ct3pack-check` (`cmake/CT3Pack.cmake`).
+  `CT3_EXE` n'est plus obligatoire au configure : un avertissement remplace le
+  `FATAL_ERROR`, et les cibles qui en dépendent échouent avec un message clair.
+- **Vérification** (4 nov. 2026) : `--scan-generated build/g3/gen --strict`
+  donne 4 574 adresses uniques et 31 273 références, `packed=4572`,
+  `excluded=0`, `gap=0`, `outside=2` (`0x8000`, `0x0c000000` : code mort et
+  MMIO). Les octets de chaque section ont été comparés au PE, et le header C
+  compile en C11 sans avertissement.
+- **Portée** : le runtime actuel charge encore `CT3.exe` ; le lot 2 branchera
+  `rt_pe.c` sur le pack. Le pack et le C généré ne sont pas versionnés
+  (D-016), car dérivés du binaire du jeu. Format et contrat de chargement :
+  `docs/PACK.md`.
+
 ## Environnement (31 oct. 2026)
 
 - KWin (session Plasma/Wayland) ne mappe plus les fenêtres X11 nouvelles : constaté sur G1, glxgears et CT3. Une commande de rechargement de KWin (`org.kde.KWin.reconfigure`) a été lancée par erreur, sans effet visible. Non traité : redémarrer la session graphique (déconnexion/reconnexion) devrait suffire, à confirmer par l'utilisateur.

@@ -3,3 +3,9 @@ build/
 __pycache__/
 build*/
 captures/
+
+# Pack de données CT3 : dérivé du binaire du jeu, jamais versionné.
+ct3_data.bin
+ct3_image.h
+ct3_image.json
+/pack/

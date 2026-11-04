@@ -16,7 +16,9 @@ set(CMAKE_BUILD_RPATH "${CT3_DEPS_PREFIX}/lib64")
 set(CT3_TRACE_INSN "0" CACHE STRING "1 : trace de la dernière instruction invitée (build de débogage)")
 set(CT3_EXE "" CACHE FILEPATH "CT3.exe de référence, de votre propre copie (lecture seule)")
 if(NOT CT3_EXE)
-  message(FATAL_ERROR "CT3_EXE doit désigner votre copie de CT3.exe : -DCT3_EXE=\"/chemin/vers/CT3.exe\"")
+  message(WARNING
+    "CT3_EXE non défini : les cibles ct3gen, ct3pack, g2 et x87 ne pourront pas être construites. "
+    "Configurer avec -DCT3_EXE=\"/chemin/vers/CT3.exe\" pour les générer.")
 endif()
 set(CT3_GHIDRA_DIR "$ENV{HOME}/.local/share/ghidra_12.1.4_PUBLIC" CACHE PATH "Installation Ghidra 12.1.4")
 set(CT3_JAVA_HOME "" CACHE PATH "JDK 21 pour Ghidra (dossier libexec, ou laisser vide pour le JDK du système)")
@@ -30,3 +32,5 @@ add_subdirectory(tests/x87)
 add_subdirectory(tests/cpu)
 add_subdirectory(tests/vec)
 add_subdirectory(tests/run)
+
+include(cmake/CT3Pack.cmake)

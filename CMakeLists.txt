@@ -22,6 +22,7 @@ if(NOT CT3_EXE)
 endif()
 set(CT3_GHIDRA_DIR "$ENV{HOME}/.local/share/ghidra_12.1.4_PUBLIC" CACHE PATH "Installation Ghidra 12.1.4")
 set(CT3_JAVA_HOME "" CACHE PATH "JDK 21 pour Ghidra (dossier libexec, ou laisser vide pour le JDK du système)")
+set(CT3_PACK_DIR "${CMAKE_BINARY_DIR}/pack" CACHE PATH "Dossier du pack de données CT3 (ct3_data.bin, ct3_image.h)")
 
 include(cmake/CT3Recomp.cmake)
 

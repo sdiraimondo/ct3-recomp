@@ -38,5 +38,5 @@ function(ct3_translated_test)
 
   add_executable(test_${T_NAME} "${T_SOURCE}")
   target_include_directories(test_${T_NAME} PRIVATE "${PROJECT_SOURCE_DIR}/tests/common")
-  target_link_libraries(test_${T_NAME} PRIVATE ${T_NAME}_gen ct3_rt)
+  target_link_libraries(test_${T_NAME} PRIVATE ${T_NAME}_gen ct3_pack ct3_rt)
 endfunction()

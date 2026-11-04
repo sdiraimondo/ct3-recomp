@@ -4,6 +4,7 @@
  * pas la file d'événements. CT3_SPLASH=0 : désactivé. Sans FFmpeg (CT3_HAVE_FFMPEG=0) : fonctions vides. */
 
 #include "rt.h"
+#include "rt_file.h"
 
 #include <stdint.h>
 #include <stdio.h>
@@ -181,20 +182,15 @@ done:
     clip_free(&clip);
 }
 
-void rt_splash_start(const char *ct3_exe)
+void rt_splash_start(void)
 {
     const char *off = getenv("CT3_SPLASH");
+    const char *base = rt_file_base();
     char path[4096];
-    const char *slash;
-    size_t n;
     pid_t pid;
 
     if (off && strcmp(off, "0") == 0) return;
-    if (!ct3_exe) return;
-    slash = strrchr(ct3_exe, '/');
-    n = slash ? (size_t)(slash - ct3_exe) : 0;
-    if (n + 32 >= sizeof path) return;
-    snprintf(path, sizeof path, "%.*s/avi/loading.avi", slash ? (int)n : 1, slash ? ct3_exe : ".");
+    if (snprintf(path, sizeof path, "%s/avi/loading.avi", base) >= (int)sizeof path) return;
     if (access(path, R_OK) != 0) return;
 
     fflush(stdout);
@@ -229,9 +225,8 @@ void rt_splash_stop(void)
 
 #else /* sans FFmpeg */
 
-void rt_splash_start(const char *ct3_exe)
+void rt_splash_start(void)
 {
-    (void)ct3_exe;
 }
 
 void rt_splash_stop(void)

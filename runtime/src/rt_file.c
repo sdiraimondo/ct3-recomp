@@ -28,16 +28,10 @@ const char *rt_file_base(void)
     return base_dir;
 }
 
-void rt_file_set_base(const char *exe_path)
+void rt_file_set_base_dir(const char *dir)
 {
-    snprintf(base_dir, sizeof base_dir, "%s", exe_path);
-    char *slash = strrchr(base_dir, '/');
-    if (slash) {
-        *slash = 0;
-        if (base_dir[0] == 0) strcpy(base_dir, "/");
-    } else {
-        strcpy(base_dir, ".");
-    }
+    if (!dir || !*dir) dir = ".";
+    snprintf(base_dir, sizeof base_dir, "%s", dir);
 }
 
 /* Traduit un chemin Win32 : « \ » devient « / », la lettre de lecteur est retirée, le chemin est relatif

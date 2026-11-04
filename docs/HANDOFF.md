@@ -61,13 +61,16 @@ Lancer le jeu (test, Xvfb) :
 ```sh
 Xvfb :99 -screen 0 1280x1024x24 -nolisten tcp &
 DXVK_FILTER_DEVICE_NAME=llvmpipe DISPLAY=:99 timeout -s KILL 280 ./build/tests/run/ct3_run \
-  "$CT3_EXE" > /dev/null 2> journal.err
+  "/run/media/.../Crazy Taxi 3" > /dev/null 2> journal.err
 ```
 Sur l'écran utilisateur : `DISPLAY=:0`, sans `DXVK_FILTER_DEVICE_NAME` (RADV).
 
-Tests : `tests/cpu/test_cpu`, `tests/vec/test_vec` (sans argument) ; `tests/g2/test_g2`, `tests/x87/test_x87`
-(argument : chemin de `CT3.exe`) ; `tests/g1_d3d9_triangle/g1_d3d9_triangle` (Xvfb + llvmpipe). **Tous passent**
-au dernier commit (`0df49a9`).
+Le runtime charge le pack (`CT3_PACK` pour forcer son chemin) et ne lit plus `CT3.exe`. Le dossier du jeu
+(assets) est passé en argument ou par `CT3_DATA_DIR` ; sans argument, c'est le répertoire courant.
+
+Tests : `tests/cpu/test_cpu`, `tests/vec/test_vec`, `tests/g2/test_g2`, `tests/x87/test_x87` (sans argument ;
+les deux derniers chargent le pack) ; `tests/g1_d3d9_triangle/g1_d3d9_triangle` (Xvfb + llvmpipe). **Tous
+passent** au dernier commit.
 
 ### Variables d'environnement de diagnostic
 

@@ -7,7 +7,7 @@
  *   0x4576f0 FUN_004576f0    FUCOMPP, FNSTSW AX, FSQRT, constante en .rdata, cdecl
  *   0x51f780 FUN_0051f780    2^x : FRNDINT, F2XM1, FSCALE, pile x87, ret nu
  *
- * Usage : test_x87 <chemin de CT3.exe>
+ * Usage : test_x87 (le pack est cherché automatiquement ; CT3_PACK pour le forcer)
  */
 
 #include "harness.h"

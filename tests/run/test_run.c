@@ -1,5 +1,7 @@
-/* Exécution de CT3.exe depuis son point d'entrée (code entièrement traduit).
- * Chaque import appelé est tracé sur stderr. Un import non implémenté arrête l'exécution. */
+/* Exécution du jeu depuis le pack de données CT3 (code entièrement traduit).
+ * Le pack est cherché automatiquement ; le dossier du jeu (assets) peut être
+ * passé en argument ou par CT3_DATA_DIR. Chaque import appelé est tracé sur
+ * stderr. Un import non implémenté arrête l'exécution. */
 
 #include "harness.h"
 #include "rt_proc.h"
@@ -10,13 +12,22 @@
 
 int main(int argc, char **argv)
 {
+    const char *game_dir;
+
+    if (argc > 2) {
+        fprintf(stderr, "usage : %s [dossier du jeu]\n", argv[0]);
+        return 1;
+    }
+    game_dir = argc == 2 ? argv[1] : getenv("CT3_DATA_DIR");
+    rt_set_game_dir(game_dir && *game_dir ? game_dir : ".");
+
     if (getenv("CT3_PRESENT_LOG")) {
         struct timespec ts;
         clock_gettime(CLOCK_MONOTONIC, &ts);
         fprintf(stderr, "[start] ms=%ld\n", (long)(ts.tv_sec * 1000 + ts.tv_nsec / 1000000));
     }
     rt_patch_load();
-    if (argc == 2) rt_splash_start(argv[1]);
+    rt_splash_start();
     rt_pe_image *img = harness_load(argc, argv);
     if (!img) {
         return 1;

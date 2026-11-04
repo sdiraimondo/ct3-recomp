@@ -68,19 +68,26 @@ Liste de travail, dans l'ordre de priorité indiqué par l'utilisateur. Le déta
 - À faire quand les fichiers seront disponibles : identifier leur codec avec `ffprobe` et vérifier la lecture avec
   FFmpeg (déjà compilé dans le préfixe, `tools/deps/build_ffmpeg.sh`).
 
-## 7. Runtime sans CT3.exe (lot 1 fait, lot 2 à faire)
+## 7. Runtime sans CT3.exe (lots 1 et 2 faits)
 
 - **Lot 1 fait (D-073)** : `tools/pepack/pepack.py` et la cible `ct3pack` produisent `build/pack/`
   (`ct3_data.bin`, `ct3_image.h`, `ct3_image.json`). `ct3pack-check` vérifie les 4 574 adresses statiques du C
   généré (`packed=4572`, `excluded=0`, `gap=0`). Format et contrat de chargement : `docs/PACK.md`.
-- **Lot 2** : brancher le chargeur sur le pack.
-  - `runtime/src/rt_pe.c` : remplacer la lecture de `CT3.exe` par le pack (zéro-remplissage du BSS, sections,
-    imports dans l'ordre, point d'entrée `CT3_IMAGE_ENTRY`).
-  - `runtime/src/rt_shims.c` : `rt_unresolved` ne doit plus lire `.text`.
-  - `tests/run/test_run.c` et `tests/common/harness.h` : ne plus prendre le chemin de `CT3.exe` en argument.
-  - `runtime/src/rt_file.c` et `runtime/src/rt_splash.c` : ne plus dériver le dossier des assets du chemin de
-    l'exécutable.
-- **Critère** : lancer `ct3_run` sans argument et sans `CT3.exe`, avec le pack et les assets du jeu.
+- **Lot 2 fait (D-074)** : le runtime charge le pack, plus `CT3.exe`.
+  - `runtime/src/rt_pe.c` : lecture de `ct3_data.bin`, zéro-remplissage du BSS, sections, imports dans l'ordre,
+    point d'entrée `CT3_IMAGE_ENTRY`, protections sans exécution.
+  - `.text` est incluse dans le pack **comme données** : le code traduit y lit des tables de sauts
+    (`0x0051B19C`, entre autres). Sans elle, le jeu s'arrête sur un appel à `0x00000000` au démarrage.
+  - `runtime/src/rt_shims.c` : `rt_unresolved` ne suit les trampolines que si les octets de `.text` sont
+    présents (`CT3_IMAGE_HAS_TEXT`).
+  - `tests/run/test_run.c` et `tests/common/harness.h` : plus de chemin de `CT3.exe` ; dossier du jeu optionnel
+    ou `CT3_DATA_DIR`, pack cherché automatiquement (`CT3_PACK` pour le forcer).
+  - `runtime/src/rt_file.c` et `runtime/src/rt_splash.c` : le dossier des assets vient de `rt_set_game_dir`,
+    plus du chemin de l'exécutable.
+- **Critère vérifié (4 nov. 2026)** : `ct3_run` sans argument depuis le dossier du jeu, avec `CT3.exe` masqué
+  par un montage vide : 987 présentations en 30 s, aucune erreur. Avec `CT3_DATA_DIR` : 1 893 présentations en
+  60 s. Aucun `open`/`fopen` de `CT3.exe` observé par intercepteur `LD_PRELOAD`. Tests `cpu`, `vec`, `g2`, `x87`
+  et `g1_d3d9_triangle` verts.
 
 ## Constats à traiter (hors liste de l'utilisateur)
 

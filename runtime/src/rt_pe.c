@@ -1,161 +1,315 @@
-#include "rt.h"
+/* Charge l'image invitée depuis le pack de données CT3 (lot 1).
+ *
+ * Le runtime ne lit plus CT3.exe : le pack contient les en-têtes PE, .text,
+ * .rdata, .data, .rsrc et la table d'imports. Le code x86 reste traduit en C ;
+ * .text n'est copiée que comme données (tables de sauts) et n'est jamais
+ * exécutée. Le BSS (vsize > raw_size) est zéro-rempli ; les sections exclues
+ * du pack restent à zéro. */
 
+#include "rt.h"
+#include "rt_pe.h"
+#include "ct3_image.h"
+
+#include <errno.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-
-#include "rt_pe.h"
+#include <sys/stat.h>
+#include <unistd.h>
 
 int rt_mem_init(void);
 int rt_mem_protect(uint32_t addr, uint32_t size, int prot);
 void rt_mem_fill(uint32_t addr, uint32_t size, uint8_t value);
 
-static uint32_t rd32(const uint8_t *p) { uint32_t v; memcpy(&v, p, 4); return v; }
-static uint16_t rd16(const uint8_t *p) { uint16_t v; memcpy(&v, p, 2); return v; }
+#if CT3_IMAGE_BASE != RT_IMAGE_BASE
+#error "le pack et le runtime ne visent pas la même base d'image"
+#endif
 
-static const uint8_t *rva_ptr(const uint8_t *file, size_t fsize, const rt_pe_section *secs, unsigned nsec, uint32_t rva)
+static int path_is_dir(const char *path)
 {
-    for (unsigned i = 0; i < nsec; i++) {
-        uint32_t va = secs[i].va;
-        uint32_t vsz = secs[i].vsize > secs[i].rawsize ? secs[i].vsize : secs[i].rawsize;
-        if (rva >= va && rva < va + vsz) {
-            uint32_t off = secs[i].rawptr + (rva - va);
-            if (off < fsize) {
-                return file + off;
-            }
-            return NULL;
+    struct stat st;
+    return stat(path, &st) == 0 && S_ISDIR(st.st_mode);
+}
+
+static int path_exists(const char *path)
+{
+    return access(path, R_OK) == 0;
+}
+
+static int join_path(char *out, size_t n, const char *dir, const char *name)
+{
+    int len;
+    if (!dir || !*dir || strcmp(dir, ".") == 0) {
+        len = snprintf(out, n, "%s", name);
+    } else {
+        size_t dlen = strlen(dir);
+        if (dir[dlen - 1] == '/') {
+            len = snprintf(out, n, "%s%s", dir, name);
+        } else {
+            len = snprintf(out, n, "%s/%s", dir, name);
         }
     }
-    return NULL;
+    return len >= 0 && (size_t)len < n;
 }
 
-static int prot_of(uint32_t chars)
+static void dirname_of(const char *path, char *out, size_t n)
 {
-    int prot = 1; /* lecture */
-    if (chars & 0x20000000u) prot |= 4; /* exécutable */
-    if (chars & 0x80000000u) prot |= 2; /* écriture */
-    return prot;
+    const char *slash;
+    if (!path || !*path) {
+        snprintf(out, n, ".");
+        return;
+    }
+    slash = strrchr(path, '/');
+    if (!slash) {
+        snprintf(out, n, ".");
+        return;
+    }
+    size_t len = (size_t)(slash - path);
+    if (len == 0) len = 1; /* racine */
+    if (len >= n) len = n - 1;
+    memcpy(out, path, len);
+    out[len] = 0;
 }
 
-rt_pe_image *rt_pe_load(const char *path)
+/* Essaie un fichier, ou un dossier contenant ct3_data.bin. */
+static int resolve_candidate(const char *candidate, char *out, size_t n)
+{
+    char joined[4096];
+    if (!candidate || !*candidate) return 0;
+    if (path_is_dir(candidate)) {
+        if (!join_path(joined, sizeof joined, candidate, "ct3_data.bin")) return 0;
+        if (!path_exists(joined)) return 0;
+        snprintf(out, n, "%s", joined);
+        return 1;
+    }
+    if (path_exists(candidate)) {
+        snprintf(out, n, "%s", candidate);
+        return 1;
+    }
+    return 0;
+}
+
+static int find_pack(const char *pack_path, const char *argv0, char *out, size_t n)
+{
+    static const char *const relative[] = {
+        "ct3_data.bin",
+        "pack/ct3_data.bin",
+        "../pack/ct3_data.bin",
+        "../../pack/ct3_data.bin",
+        "../share/ct3/ct3_data.bin",
+    };
+    const char *env = getenv("CT3_PACK");
+
+    if (pack_path && *pack_path) {
+        if (resolve_candidate(pack_path, out, n)) return 1;
+        fprintf(stderr, "rt: pack introuvable : %s\n", pack_path);
+        return 0;
+    }
+    if (env && *env) {
+        if (resolve_candidate(env, out, n)) return 1;
+        fprintf(stderr, "rt: CT3_PACK introuvable : %s\n", env);
+        return 0;
+    }
+
+    /* Répertoire courant. */
+    for (size_t i = 0; i < sizeof relative / sizeof relative[0]; i++) {
+        if (path_exists(relative[i])) {
+            snprintf(out, n, "%s", relative[i]);
+            return 1;
+        }
+    }
+
+    /* À côté du binaire et dans les dossiers voisins. */
+    if (argv0 && *argv0) {
+        char dir[4096];
+        char candidate[4096];
+        dirname_of(argv0, dir, sizeof dir);
+        for (size_t i = 0; i < sizeof relative / sizeof relative[0]; i++) {
+            if (!join_path(candidate, sizeof candidate, dir, relative[i])) continue;
+            if (path_exists(candidate)) {
+                snprintf(out, n, "%s", candidate);
+                return 1;
+            }
+        }
+    }
+
+    fprintf(stderr,
+            "rt: pack de données CT3 introuvable.\n"
+            "    Générez-le avec : cmake --build build --target ct3pack\n"
+            "    ou définissez CT3_PACK=/chemin/vers/build/pack\n");
+    return 0;
+}
+
+static int read_file(const char *path, uint8_t **out, size_t *out_size)
 {
     FILE *f = fopen(path, "rb");
+    long end;
+    uint8_t *data;
+
     if (!f) {
-        perror(path);
-        return NULL;
+        fprintf(stderr, "rt: %s : %s\n", path, strerror(errno));
+        return -1;
     }
-    fseek(f, 0, SEEK_END);
-    size_t fsize = (size_t)ftell(f);
-    fseek(f, 0, SEEK_SET);
-    uint8_t *file = malloc(fsize);
-    if (!file || fread(file, 1, fsize, f) != fsize) {
+    if (fseek(f, 0, SEEK_END) != 0 || (end = ftell(f)) < 0 || fseek(f, 0, SEEK_SET) != 0) {
+        fprintf(stderr, "rt: %s : lecture impossible\n", path);
         fclose(f);
-        free(file);
-        fprintf(stderr, "rt_pe_load: lecture impossible\n");
-        return NULL;
+        return -1;
+    }
+    data = malloc(end > 0 ? (size_t)end : 1);
+    if (!data) {
+        fprintf(stderr, "rt: %s : mémoire insuffisante\n", path);
+        fclose(f);
+        return -1;
+    }
+    if (fread(data, 1, (size_t)end, f) != (size_t)end) {
+        fprintf(stderr, "rt: %s : lecture incomplète\n", path);
+        free(data);
+        fclose(f);
+        return -1;
     }
     fclose(f);
+    *out = data;
+    *out_size = (size_t)end;
+    return 0;
+}
 
-    rt_pe_image *img = calloc(1, sizeof(*img));
+static void free_image(rt_pe_image *img)
+{
+    if (!img) return;
+    for (unsigned i = 0; i < RT_PE_MAX_IMPORTS; i++) free(img->import_names[i]);
+    free(img);
+}
+
+static int section_contains(const ct3_pack_section *sec, uint32_t address, uint32_t size)
+{
+    uint64_t end = (uint64_t)address + size;
+    return address >= sec->va && end <= (uint64_t)sec->va + sec->vsize;
+}
+
+rt_pe_image *rt_pe_load(const char *pack_path, const char *argv0)
+{
+    char path[4096];
+    uint8_t *data = NULL;
+    size_t size = 0;
+    rt_pe_image *img = NULL;
+
+    if (!find_pack(pack_path, argv0, path, sizeof path)) return NULL;
+    if (read_file(path, &data, &size) != 0) return NULL;
+
+    if (size != CT3_IMAGE_DATA_SIZE) {
+        fprintf(stderr, "rt: %s : taille 0x%zx, attendu 0x%x\n", path, size,
+                (unsigned)CT3_IMAGE_DATA_SIZE);
+        free(data);
+        return NULL;
+    }
+    if (size < 0x40 || data[0] != 'M' || data[1] != 'Z') {
+        fprintf(stderr, "rt: %s : en-tête PE absent du pack\n", path);
+        free(data);
+        return NULL;
+    }
+
     if (rt_mem_init() != 0) {
+        free(data);
         return NULL;
     }
-    if (fsize < 0x40 || memcmp(file, "MZ", 2) != 0) {
-        fprintf(stderr, "rt_pe_load: en-tête MZ absent\n");
+    if (rt_mem_protect(CT3_IMAGE_BASE, CT3_IMAGE_SIZE, 3) != 0) {
+        free(data);
         return NULL;
     }
-    uint32_t pe = rd32(file + 0x3C);
-    if (pe + 24 > fsize || memcmp(file + pe, "PE\0\0", 4) != 0) {
-        fprintf(stderr, "rt_pe_load: signature PE absente\n");
-        return NULL;
-    }
-    uint16_t machine = rd16(file + pe + 4);
-    uint16_t nsec = rd16(file + pe + 6);
-    uint16_t optsz = rd16(file + pe + 20);
-    const uint8_t *opt = file + pe + 24;
-    if (machine != 0x14c || rd16(opt) != 0x10b) {
-        fprintf(stderr, "rt_pe_load: attendu PE32 i386\n");
-        return NULL;
-    }
-    uint32_t image_base = rd32(opt + 28);
-    uint32_t size_of_image = rd32(opt + 56);
-    uint32_t size_of_headers = rd32(opt + 60);
-    uint32_t import_rva = rd32(opt + 96 + 8);
-    if (image_base != RT_IMAGE_BASE) {
-        fprintf(stderr, "rt_pe_load: base d'image inattendue 0x%08x\n", image_base);
-        return NULL;
-    }
-    if (nsec > RT_PE_MAX_SECTIONS) {
-        fprintf(stderr, "rt_pe_load: trop de sections\n");
-        return NULL;
-    }
+    rt_mem_fill(CT3_IMAGE_BASE, CT3_IMAGE_SIZE, 0);
 
-    const uint8_t *sh = opt + optsz;
-    rt_pe_section secs[RT_PE_MAX_SECTIONS];
-    for (unsigned i = 0; i < nsec; i++) {
-        const uint8_t *s = sh + 40 * i;
-        secs[i].va = rd32(s + 12);
-        secs[i].vsize = rd32(s + 8);
-        secs[i].rawsize = rd32(s + 16);
-        secs[i].rawptr = rd32(s + 20);
-        secs[i].chars = rd32(s + 36);
-    }
-
-    /* Mapping : tout en lecture-écriture pendant le chargement, puis protections finales. */
-    if (rt_mem_protect(RT_IMAGE_BASE, size_of_image, 3) != 0) {
-        return NULL;
-    }
-    rt_mem_fill(RT_IMAGE_BASE, size_of_image, 0);
-    memcpy(rt_mem_base + RT_IMAGE_BASE, file, size_of_headers < fsize ? size_of_headers : fsize);
-    for (unsigned i = 0; i < nsec; i++) {
-        uint32_t n = secs[i].rawsize < secs[i].vsize ? secs[i].rawsize : secs[i].vsize;
-        if (secs[i].rawptr + n > fsize) {
-            fprintf(stderr, "rt_pe_load: section tronquée\n");
+    for (unsigned i = 0; i < ct3_pack_section_count; i++) {
+        const ct3_pack_section *sec = &ct3_pack_sections[i];
+        uint64_t end = (uint64_t)sec->va + (sec->vsize ? sec->vsize : sec->raw_size);
+        if (end > (uint64_t)CT3_IMAGE_BASE + CT3_IMAGE_SIZE || sec->va < CT3_IMAGE_BASE) {
+            fprintf(stderr, "rt: pack : section %s hors image\n", sec->name);
+            free(data);
             return NULL;
         }
-        memcpy(rt_mem_base + RT_IMAGE_BASE + secs[i].va, file + secs[i].rawptr, n);
+        if (!sec->present || sec->raw_size == 0) continue;
+        if ((uint64_t)sec->offset + sec->raw_size > size) {
+            fprintf(stderr, "rt: pack : section %s hors du fichier\n", sec->name);
+            free(data);
+            return NULL;
+        }
+        if (sec->vsize && sec->raw_size > sec->vsize) {
+            fprintf(stderr, "rt: pack : section %s plus grande que sa taille virtuelle\n", sec->name);
+            free(data);
+            return NULL;
+        }
+        memcpy(rt_mem_base + sec->va, data + sec->offset, sec->raw_size);
     }
 
-    /* Table d'importation : chaque entrée IAT reçoit une adresse de talon (stub). */
-    if (import_rva) {
-        uint32_t idx = 0;
-        for (const uint8_t *d = rva_ptr(file, fsize, secs, nsec, import_rva); d && rd32(d + 12) != 0; d += 20) {
-            const char *dll = (const char *)rva_ptr(file, fsize, secs, nsec, rd32(d + 12));
-            uint32_t ilt = rd32(d) ? rd32(d) : rd32(d + 16);
-            uint32_t iat = rd32(d + 16);
-            const uint8_t *thunk = rva_ptr(file, fsize, secs, nsec, ilt);
-            if (!dll || !thunk) {
-                continue;
-            }
-            for (uint32_t k = 0; rd32(thunk + 4 * k) != 0; k++) {
-                uint32_t entry = rd32(thunk + 4 * k);
-                char name[256];
-                if (entry & 0x80000000u) {
-                    snprintf(name, sizeof name, "%s::#%u", dll, entry & 0xFFFFu);
-                } else {
-                    const char *fn = (const char *)rva_ptr(file, fsize, secs, nsec, entry) + 2;
-                    snprintf(name, sizeof name, "%s::%s", dll, fn);
-                }
-                if (idx >= RT_PE_MAX_IMPORTS) {
-                    fprintf(stderr, "rt_pe_load: trop d'imports\n");
-                    return NULL;
-                }
-                img->import_names[idx] = strdup(name);
-                uint32_t stub = RT_STUB_BASE + 16 * idx;
-                memcpy(rt_mem_base + RT_IMAGE_BASE + iat + 4 * k, &stub, 4);
-                idx++;
+    img = calloc(1, sizeof(*img));
+    if (!img) {
+        fprintf(stderr, "rt: pack : mémoire insuffisante\n");
+        free(data);
+        return NULL;
+    }
+    if (ct3_pack_import_count > RT_PE_MAX_IMPORTS) {
+        fprintf(stderr, "rt: pack : trop d'imports (%u)\n", (unsigned)ct3_pack_import_count);
+        free(data);
+        free_image(img);
+        return NULL;
+    }
+
+    for (unsigned i = 0; i < ct3_pack_import_count; i++) {
+        const ct3_pack_import *imp = &ct3_pack_imports[i];
+        uint32_t iat = CT3_IMAGE_BASE + imp->iat_rva;
+        int found = 0;
+        char name[512];
+
+        for (unsigned j = 0; j < ct3_pack_section_count; j++) {
+            if (ct3_pack_sections[j].present && section_contains(&ct3_pack_sections[j], iat, 4)) {
+                found = 1;
+                break;
             }
         }
-        img->import_count = idx;
-    }
+        if (!found) {
+            fprintf(stderr, "rt: pack : IAT 0x%08x hors des sections présentes\n", iat);
+            free(data);
+            free_image(img);
+            return NULL;
+        }
 
-    for (unsigned i = 0; i < nsec; i++) {
-        if (rt_mem_protect(RT_IMAGE_BASE + secs[i].va, secs[i].vsize, prot_of(secs[i].chars)) != 0) {
+        if (imp->name) {
+            snprintf(name, sizeof name, "%s::%s", imp->dll, imp->name);
+        } else {
+            snprintf(name, sizeof name, "%s::#%u", imp->dll, imp->ordinal);
+        }
+        img->import_names[i] = strdup(name);
+        if (!img->import_names[i]) {
+            fprintf(stderr, "rt: pack : mémoire insuffisante\n");
+            free(data);
+            free_image(img);
+            return NULL;
+        }
+        uint32_t stub = RT_STUB_BASE + 16 * i;
+        memcpy(rt_mem_base + iat, &stub, 4);
+    }
+    img->import_count = ct3_pack_import_count;
+    img->entry = CT3_IMAGE_ENTRY;
+    img->size = CT3_IMAGE_SIZE;
+
+    for (unsigned i = 0; i < ct3_pack_section_count; i++) {
+        const ct3_pack_section *sec = &ct3_pack_sections[i];
+        uint32_t sec_size = sec->vsize ? sec->vsize : sec->raw_size;
+        int prot;
+        if (sec_size == 0) continue;
+        /* Le pack ne contient que des données : aucune section n'est exécutée.
+         * .text est mappée en lecture seule, même si le PE la marque exécutable. */
+        prot = (int)(sec->prot & 3);
+        if (prot == 0) prot = 1;
+        if (rt_mem_protect(sec->va, sec_size, prot) != 0) {
+            free(data);
+            free_image(img);
             return NULL;
         }
     }
-    img->entry = RT_IMAGE_BASE + rd32(opt + 16);
-    img->size = size_of_image;
-    free(file);
+
+    rt_set_image_has_text(CT3_IMAGE_HAS_TEXT);
+    printf("[pack] chargé : %s (image 0x%08x, %u imports)\n", path, (unsigned)CT3_IMAGE_SIZE,
+           (unsigned)img->import_count);
+    free(data);
     return img;
 }

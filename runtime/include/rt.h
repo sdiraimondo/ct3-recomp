@@ -30,8 +30,10 @@ extern uint32_t rt_cur_insn;
 extern uint32_t rt_probe_lo, rt_probe_span;
 void rt_probe_hit(cpu_t *c, uint32_t addr);
 void rt_probe_present(void);
+/* Dossier du jeu (assets, Config.ini) : base des chemins Win32 et de l'écran de chargement. */
+void rt_set_game_dir(const char *dir);
 /* Écran de chargement (avi/loading.avi, FFmpeg) : démarré au lancement, arrêté à la première présentation. */
-void rt_splash_start(const char *ct3_exe);
+void rt_splash_start(void);
 void rt_splash_stop(void);
 /* Réglages Config.ini ([Patches], [Game]) : chargement, crochet des logos, écriture par présentation (rt_patch.c). */
 void rt_patch_load(void);

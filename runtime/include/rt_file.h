@@ -7,13 +7,13 @@
 extern "C" {
 #endif
 
-/* Fichiers Win32 : chemins relatifs au dossier de l'exécutable, insensibles à la casse. */
+/* Fichiers Win32 : chemins relatifs au dossier du jeu, insensibles à la casse. */
 
 #define RT_INVALID_HANDLE 0xFFFFFFFFu
 
 extern uint32_t rt_error; /* dernière erreur (GetLastError) */
 
-void rt_file_set_base(const char *exe_path);
+void rt_file_set_base_dir(const char *dir);
 void rt_file_resolve(const char *win_path, char *out, size_t n);
 const char *rt_file_base(void);
 uint32_t rt_file_open(const char *win_path, uint32_t access, uint32_t disposition);

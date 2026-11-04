@@ -10,9 +10,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-rt_pe_image *rt_pe_load(const char *path);
 void rt_set_image(rt_pe_image *img);
-void rt_set_exe_path(const char *path);
 int rt_mem_protect(uint32_t addr, uint32_t size, int prot);
 extern unsigned rt_shim_calls;
 extern uint32_t rt_shim_last_arg0;
@@ -73,22 +71,14 @@ static long double st_get(unsigned i)
 
 static rt_pe_image *harness_load(int argc, char **argv)
 {
-    if (argc != 2) {
-        fprintf(stderr, "usage : %s <CT3.exe>\n", argv[0]);
-        return NULL;
-    }
-    rt_pe_image *img = rt_pe_load(argv[1]);
+    (void)argc;
+    rt_pe_image *img = rt_pe_load(NULL, argv ? argv[0] : NULL);
     if (!img) {
         return NULL;
     }
     rt_set_image(img);
-    char resolved[1024];
-    if (realpath(argv[1], resolved)) {
-        rt_set_exe_path(resolved);
-    }
     if (rt_mem_protect(RT_SCRATCH_BASE, RT_SCRATCH_SIZE, 3) != 0) {
         return NULL;
     }
-    printf("image chargée à 0x%08x, taille 0x%x, %u imports\n", RT_IMAGE_BASE, img->size, img->import_count);
     return img;
 }

@@ -1,6 +1,6 @@
-# Pack de données CT3 (lot 1) : extrait .rdata/.data de CT3.exe pour que le
-# runtime n'ait plus besoin de l'exécutable Windows. Le pack est un dérivé du
-# binaire du jeu : il ne doit pas être versionné ni distribué.
+# Pack de données CT3 : extrait l'image mémoire de CT3.exe pour que le runtime
+# n'ait plus besoin de l'exécutable Windows. Le pack est un dérivé du binaire du
+# jeu : il ne doit pas être versionné ni distribué.
 #
 # Cibles :
 #   ct3pack        génère build/pack/{ct3_data.bin,ct3_image.h,ct3_image.json}
@@ -9,11 +9,10 @@
 # Variables :
 #   CT3_EXE                 copie de CT3.exe (lecture seule)
 #   CT3_PACK_DIR            dossier de sortie (défaut : build/pack)
-#   CT3_PACK_INCLUDE_TEXT   inclure .text dans le pack (débogage, défaut : OFF)
+#   CT3_PACK_INCLUDE_TEXT   inclure .text dans le pack (défaut : ON, comme données)
 #   CT3_PACK_INCLUDE_RSRC   inclure .rsrc (défaut : ON, le runtime ne l'utilise pas encore)
 
-set(CT3_PACK_DIR "${CMAKE_BINARY_DIR}/pack" CACHE PATH "Dossier de sortie du pack de données CT3")
-set(CT3_PACK_INCLUDE_TEXT OFF CACHE BOOL "Inclure .text dans le pack (débogage)")
+set(CT3_PACK_INCLUDE_TEXT ON CACHE BOOL "Inclure .text dans le pack (tables de sauts lues par le code traduit)")
 set(CT3_PACK_INCLUDE_RSRC ON CACHE BOOL "Inclure .rsrc dans le pack")
 set(CT3_G3_GEN_DIR "${CMAKE_BINARY_DIR}/g3/gen" CACHE PATH "C généré par ct3gen (pour ct3pack-check)")
 
@@ -23,8 +22,8 @@ set(CT3_PACK_HEADER "${CT3_PACK_DIR}/ct3_image.h")
 set(CT3_PACK_MANIFEST "${CT3_PACK_DIR}/ct3_image.json")
 
 set(_ct3_pack_args)
-if(CT3_PACK_INCLUDE_TEXT)
-  list(APPEND _ct3_pack_args --include-text)
+if(NOT CT3_PACK_INCLUDE_TEXT)
+  list(APPEND _ct3_pack_args --exclude-text)
 endif()
 if(NOT CT3_PACK_INCLUDE_RSRC)
   list(APPEND _ct3_pack_args --no-rsrc)
@@ -51,6 +50,12 @@ add_custom_command(
 
 add_custom_target(ct3pack
   DEPENDS "${CT3_PACK_DATA}" "${CT3_PACK_HEADER}" "${CT3_PACK_MANIFEST}")
+
+# Le chargeur du runtime inclut ct3_image.h : le pack doit exister avant sa
+# compilation. La bibliothèque ct3_pack est définie dans runtime/CMakeLists.txt.
+if(TARGET ct3_pack)
+  add_dependencies(ct3_pack ct3pack)
+endif()
 
 # Vérifie que les adresses statiques du C généré tombent dans les sections
 # packées. Nécessite ct3gen (build/g3/gen) ; la cible échoue clairement sinon.

@@ -774,6 +774,39 @@ Outils ajoutés (build de traçage) : `CT3_MEMWATCH=lo-hi` (écritures dans une 
   (D-016), car dérivés du binaire du jeu. Format et contrat de chargement :
   `docs/PACK.md`.
 
+## D-074 : runtime branché sur le pack de données CT3 (4 nov. 2026)
+
+- **Décision** : `ct3_run` et les tests traduits (`g2`, `x87`) chargent l'image
+  invitée depuis `build/pack/ct3_data.bin`, plus depuis `CT3.exe`. Le pack est
+  cherché via `CT3_PACK`, le répertoire courant, `pack/`, `../pack`,
+  `../../pack`, `../share/ct3`, puis à côté du binaire. `CT3.exe` ne reste
+  nécessaire qu'au build (traduction et génération du pack).
+- **Correction de D-073** : `.text` est désormais incluse par défaut, **comme
+  données**. Le code traduit y lit des tables de sauts (par exemple
+  `0x0051B19C`) ; sans ces octets, le jeu s'arrête au démarrage sur un appel à
+  `0x00000000`. Le chargeur ne mappe jamais une section exécutable : `.text`
+  est en lecture seule. `CT3_IMAGE_HAS_TEXT` vaut `1`, ce qui permet à
+  `rt_unresolved` de suivre les trampolines non traduits. `--exclude-text`
+  produit l'ancien pack réduit, réservé au diagnostic.
+- **Assets** : `rt_set_game_dir` fixe la base des chemins Win32 et de l'écran de
+  chargement. `ct3_run` prend un dossier de jeu optionnel, sinon
+  `CT3_DATA_DIR`, sinon le répertoire courant. Le chemin des assets n'est plus
+  dérivé de `CT3.exe` ; `GetModuleFileNameA`/`GetCommandLineA` renvoient un nom
+  factice `<dossier>/CT3.exe` sans jamais ouvrir le fichier.
+- **Build** : le chargeur est isolé dans la bibliothèque `ct3_pack`
+  (`runtime/src/rt_pe.c`), dépendante de la cible `ct3pack`. `ct3_rt` reste
+  indépendant du pack, donc `test_cpu` et `test_vec` n'en ont pas besoin.
+- **Vérification** (4 nov. 2026) : pack de 3 235 584 octets (SHA-256
+  `1fe1833001e628671651dba49b036c710445d341a7323638d6992d636140504e`),
+  `ct3pack-check` : `packed=4572 excluded=0 gap=0 outside=2`, auto-test
+  d'image complet cohérent. `ct3_run` sans argument depuis le dossier du jeu,
+  avec `CT3.exe` masqué par un montage vide : 987 présentations en 30 s. Avec
+  `CT3_DATA_DIR` et le même masque : 1 893 présentations en 60 s. Aucun
+  `open`/`fopen` de `CT3.exe` observé par intercepteur `LD_PRELOAD`. `test_cpu`,
+  `test_vec`, `test_g2`, `test_x87` et `g1_d3d9_triangle` verts.
+- **Portée** : le pack et le C généré restent des dérivés non versionnés
+  (D-016). Format et contrat : `docs/PACK.md`.
+
 ## Environnement (31 oct. 2026)
 
 - KWin (session Plasma/Wayland) ne mappe plus les fenêtres X11 nouvelles : constaté sur G1, glxgears et CT3. Une commande de rechargement de KWin (`org.kde.KWin.reconfigure`) a été lancée par erreur, sans effet visible. Non traité : redémarrer la session graphique (déconnexion/reconnexion) devrait suffire, à confirmer par l'utilisateur.

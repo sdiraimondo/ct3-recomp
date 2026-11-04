@@ -23,7 +23,6 @@ endif()
 
 add_library(ct3_rt STATIC
   "${CMAKE_CURRENT_SOURCE_DIR}/src/rt_mem.c"
-  "${CMAKE_CURRENT_SOURCE_DIR}/src/rt_pe.c"
   "${CMAKE_CURRENT_SOURCE_DIR}/src/rt_shims.c"
   "${CMAKE_CURRENT_SOURCE_DIR}/src/rt_cpu.c"
   "${CMAKE_CURRENT_SOURCE_DIR}/src/rt_vec.c"
@@ -52,3 +51,9 @@ target_compile_definitions(ct3_rt PUBLIC CT3_HAVE_FFMPEG=${CT3_HAVE_FFMPEG})
 if(CT3_FFMPEG_FOUND)
   target_link_libraries(ct3_rt PUBLIC PkgConfig::CT3_FFMPEG)
 endif()
+
+# Chargeur du pack de données (lot 2). Séparé de ct3_rt pour que les tests
+# CPU/vecteurs restent indépendants du pack et de CT3.exe.
+add_library(ct3_pack STATIC "${CMAKE_CURRENT_SOURCE_DIR}/src/rt_pe.c")
+target_include_directories(ct3_pack PUBLIC "${CT3_PACK_DIR}")
+target_link_libraries(ct3_pack PUBLIC ct3_rt)

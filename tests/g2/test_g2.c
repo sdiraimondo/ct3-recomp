@@ -5,7 +5,7 @@
  *   0x42e740 FUN_0042e740      thiscall + stdcall (ret 8), copie de 64 octets
  *   0x4c1960 FUN_004c1960      thiscall, appel IAT vers CloseHandle (talon Win32)
  *
- * Usage : test_g2 <chemin de CT3.exe>
+ * Usage : test_g2 (le pack est cherché automatiquement ; CT3_PACK pour le forcer)
  */
 
 #include "harness.h"

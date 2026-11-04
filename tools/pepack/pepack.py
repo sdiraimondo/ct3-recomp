@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
 """Pack de données CT3 (lot 1) : extrait l'image de données de CT3.exe.
 
-Le runtime n'a pas besoin du code x86 de CT3.exe : toutes les fonctions sont
-traduites en C par tools/recomp/ct3rc.py. Il a besoin de l'image mémoire
-(.rdata, .data, en-têtes PE, éventuellement .rsrc) et de la table d'imports.
+Le runtime n'a pas besoin d'exécuter le code x86 de CT3.exe : toutes les
+fonctions sont traduites en C par tools/recomp/ct3rc.py. Il a besoin de l'image
+mémoire (en-têtes PE, .text, .rdata, .data, éventuellement .rsrc) et de la table
+d'imports. `.text` est copiée comme données : le code traduit y lit notamment
+des tables de sauts. Elle n'est jamais exécutée.
 
 Ce script produit, dans un dossier de sortie :
 
@@ -299,12 +301,12 @@ class PEImage:
             executable = bool(sec.characteristics & IMAGE_SCN_MEM_EXECUTE)
             if sec.name == ".text" and not include_text:
                 sec.present = False
-                sec.reason = "section exécutable exclue (--include-text pour l'inclure)"
+                sec.reason = "section exécutable exclue (--exclude-text)"
                 excluded.append(sec)
                 continue
             if executable and not include_text:
                 sec.present = False
-                sec.reason = "section exécutable exclue (--include-text pour l'inclure)"
+                sec.reason = "section exécutable exclue (--exclude-text)"
                 excluded.append(sec)
                 continue
             if sec.name == ".rsrc" and not include_rsrc:
@@ -640,7 +642,19 @@ def main(argv: list[str]) -> int:
     )
     parser.add_argument("exe", type=Path, help="chemin de votre copie de CT3.exe (lecture seule)")
     parser.add_argument("outdir", type=Path, help="dossier de sortie (build/pack)")
-    parser.add_argument("--include-text", action="store_true", help="inclure .text (débogage)")
+    parser.add_argument(
+        "--include-text",
+        action="store_true",
+        dest="include_text",
+        help="compatibilité : .text est inclus par défaut",
+    )
+    parser.add_argument(
+        "--exclude-text",
+        action="store_false",
+        dest="include_text",
+        help="exclure .text (pack plus petit ; le code traduit lit des tables de sauts dans .text)",
+    )
+    parser.set_defaults(include_text=True)
     parser.add_argument(
         "--no-rsrc", action="store_true", help="exclure .rsrc (le runtime actuel ne l'utilise pas)"
     )

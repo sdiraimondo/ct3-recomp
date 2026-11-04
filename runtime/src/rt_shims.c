@@ -15,6 +15,10 @@
 #include <unistd.h>
 
 static rt_pe_image *rt_image;
+static int image_has_text;
+
+void rt_set_image_has_text(int has_text) { image_has_text = has_text; }
+int rt_image_has_text(void) { return image_has_text; }
 
 /* Journal des appels interceptés (utilisé par les tests G2). */
 unsigned rt_shim_calls;
@@ -254,12 +258,24 @@ static uint32_t lcmap(const uint32_t *a, int wide)
 }
 static uint32_t sh_LCMapStringW(cpu_t *c, const uint32_t *a) { (void)c; return lcmap(a, 1); }
 static uint32_t sh_LCMapStringA(cpu_t *c, const uint32_t *a) { (void)c; return lcmap(a, 0); }
-/* Chemin absolu de l'exécutable, fourni par le lanceur (rt_set_exe_path). */
+/* Dossier du jeu (assets, Config.ini), fourni par le lanceur. Le chemin de
+ * l'exécutable n'est plus lu : il sert seulement à GetModuleFileNameA et
+ * GetCommandLineA, avec un nom factice dans ce dossier. */
 
-void rt_set_exe_path(const char *path)
+void rt_set_game_dir(const char *dir)
 {
-    snprintf(exe_path, sizeof exe_path, "%s", path);
-    rt_file_set_base(exe_path);
+    char resolved[4096];
+    size_t len;
+    if (!dir || !*dir) dir = ".";
+    if (realpath(dir, resolved)) dir = resolved;
+    len = strlen(dir);
+    while (len > 1 && dir[len - 1] == '/') len--;
+    rt_file_set_base_dir(dir);
+    if (len == 1 && dir[0] == '/') {
+        snprintf(exe_path, sizeof exe_path, "/CT3.exe");
+    } else {
+        snprintf(exe_path, sizeof exe_path, "%.*s/CT3.exe", (int)len, dir);
+    }
 }
 
 static uint32_t sh_GetModuleFileNameA(cpu_t *c, const uint32_t *a)
@@ -786,8 +802,9 @@ void rt_unresolved(cpu_t *c, uint32_t addr)
     /* Retour vers l'hôte (threads, rappels) : dispatch rend la main à l'appelant C. */
     if (addr == RT_HOST_RET) return;
     /* Trampoline non traduit (ex. thunk isolé « jmp rel32 » que l'export n'a pas reconnu) : un saut direct ne
-     * touche pas la pile, il équivaut à aller à sa cible. Suivi ici, avec signalement ; le reste reste fatal. */
-    if (addr >= 0x400000u && addr < 0x800000u) {
+     * touche pas la pile, il équivaut à aller à sa cible. Suivi ici, avec signalement ; le reste reste fatal.
+     * Sans les octets de .text (pack --exclude-text), le suivi n'est pas possible. */
+    if (rt_image_has_text() && addr >= 0x400000u && addr < 0x800000u) {
         uint8_t op = (uint8_t)guest_ld(c, addr, 1);
         int32_t rel = 0;
         uint32_t target = 0;

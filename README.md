@@ -45,20 +45,21 @@ Everything in `build/` is derived from your copy of the game and is not versione
 
 ### Data pack (removing the runtime dependency on `CT3.exe`)
 
-The translated code never executes the x86 code of `CT3.exe`, but the runtime
-still reads the game's memory image and imports from it. The `ct3pack` target
-extracts them into `build/pack/` (`ct3_data.bin`, `ct3_image.h`,
-`ct3_image.json`):
+The translated code never executes the x86 code of `CT3.exe`. The runtime needs
+the game's memory image and imports, which the `ct3pack` target extracts once
+into `build/pack/` (`ct3_data.bin`, `ct3_image.h`, `ct3_image.json`):
 
 ```sh
 cmake --build build --target ct3pack
 cmake --build build --target ct3pack-check   # checks the generated C addresses
 ```
 
-The pack contains the PE headers, `.rdata`, `.data` and `.rsrc`, but not
-`.text`. It is a derivative of your copy of the game and must not be committed
-or shared. The runtime switch to the pack is the next step; until then,
-`ct3_run` still takes the path to `CT3.exe`. Format and loader contract:
+The pack contains the PE headers, `.text`, `.rdata`, `.data` and `.rsrc`.
+`.text` is copied as data only: the translated code reads jump tables stored
+there, and the runtime maps it read-only without ever executing it. The pack is
+a derivative of your copy of the game and must not be committed or shared.
+`ct3_run` loads the pack automatically (`CT3_PACK` overrides its location) and
+no longer reads `CT3.exe`. Format and loader contract:
 [docs/PACK.md](docs/PACK.md).
 
 ## Building and running
@@ -69,7 +70,7 @@ Requirements:
 - JDK 21 and [Ghidra 12.1.4](https://github.com/NationalSecurityAgency/ghidra/releases) (used at build time for the export)
 - SDL2 and dxvk-native, installed in a prefix (the build expects `~/.local/ct3-deps/prefix` by default). The dependency recipe is not scripted yet.
 - Optional: FFmpeg (LGPL build), for the loading screen video. `tools/deps/build_ffmpeg.sh` builds it in the same prefix. Without it, the game starts without the loading video.
-- Your own copy of `CT3.exe` (needed at build time; the current runtime still takes its path, until the data pack is wired in)
+- Your own copy of `CT3.exe` (needed at build time only: translation and data pack)
 
 ```sh
 git clone https://github.com/sdiraimondo/ct3-recomp.git
@@ -82,8 +83,16 @@ cmake -S . -B build -G Ninja \
     -DCT3_JAVA_HOME="/path/to/jdk-21"   # optional: the system JDK is used when omitted
 cmake --build build --target ct3_run
 
-./build/tests/run/ct3_run "/path/to/your/Crazy Taxi 3/CT3.exe"
+# Either pass the game directory:
+./build/tests/run/ct3_run "/path/to/your/Crazy Taxi 3"
+# or run from the game directory without an argument:
+cd "/path/to/your/Crazy Taxi 3" && /path/to/ct3-linux/build/tests/run/ct3_run
 ```
+
+The game directory holds the assets (`avi/`, `Media/`, etc.). It can also be
+set with `CT3_DATA_DIR`. The pack is found automatically in the current
+directory, `pack/`, `../pack`, `../../pack`, next to the binary, or via
+`CT3_PACK`.
 
 The first build runs the whole translation of `CT3.exe` and takes several minutes.
 
@@ -100,8 +109,8 @@ Useful runtime settings:
 - `CT3_NOAUDIO=1` disables sound. `CT3_PRESENT_LOG=1` logs the time of each frame, to measure startup and slowdowns.
 
 Tests (each one is a program, run from `build/tests`):
-- `cpu/test_cpu` and `vec/test_vec` need no argument.
-- `x87/test_x87` and `g2/test_g2` take the path to `CT3.exe`.
+- `cpu/test_cpu`, `vec/test_vec`, `x87/test_x87` and `g2/test_g2` need no argument.
+  The last two load the data pack (`CT3_PACK` overrides its location).
 - `g1_d3d9_triangle/g1_d3d9_triangle` draws a triangle through dxvk-native. Use a virtual display (Xvfb) if you have no desktop session.
 
 ## Legal

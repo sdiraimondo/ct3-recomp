@@ -1120,6 +1120,12 @@ uint32_t sh_ds_ok(cpu_t *c, const uint32_t *a) { (void)c; (void)a; return 0; }
 uint32_t sh_ds_zero(cpu_t *c, const uint32_t *a) { (void)c; (void)a; return 0; }
 uint32_t sh_ds_addref(cpu_t *c, const uint32_t *a) { (void)c; (void)a; return 2; }
 uint32_t sh_ds_release(cpu_t *c, const uint32_t *a) { (void)c; (void)a; return 1; }
+static uint32_t sh_ds_objinpath(cpu_t *c, const uint32_t *a)
+{
+    (void)c;
+    if (a[4]) put32(a[4], 0);
+    return 0x80004002u; /* E_NOINTERFACE */
+}
 // QueryInterface : le même objet, pour IUnknown, IDirectSoundBuffer, IDirectSoundNotify...
 uint32_t sh_ds_qi(cpu_t *c, const uint32_t *a) { (void)c; if (a[2]) put32(a[2], a[0]); return 0; }
 
@@ -1809,7 +1815,7 @@ extern "C" const rt_shim_entry rt_extra_table[] = {
     {"dsoundcom::IDirectSoundBuffer::Restore", 1, sh_ds_ok},
     {"dsoundcom::IDirectSoundBuffer::SetFX", 4, sh_ds_ok},
     {"dsoundcom::IDirectSoundBuffer::AcquireResources", 4, sh_ds_ok},
-    {"dsoundcom::IDirectSoundBuffer::GetObjectInPath", 5, sh_ds_zero},
+    {"dsoundcom::IDirectSoundBuffer::GetObjectInPath", 5, sh_ds_objinpath},
     {"KERNEL32.dll::FlushFileBuffers", 1, sh_one},
     {"KERNEL32.dll::SetStdHandle", 2, sh_one},
     {"KERNEL32.dll::SetEndOfFile", 1, sh_one},

@@ -571,13 +571,46 @@ def self_test(outdir: Path, pe: PEImage, present: list[Section], payload: bytes)
             raise PackError(f"section {sec.name} hors de ct3_data.bin")
         if sec.offset % 16:
             raise PackError(f"section {sec.name} non alignée")
+        expected_size = min(sec.vsize, sec.raw_size) if sec.vsize else sec.raw_size
+        if sec.copy_size != expected_size:
+            raise PackError(
+                f"section {sec.name} : {sec.copy_size} octets packés, "
+                f"{expected_size} attendus"
+            )
     for imp in pe.imports:
         address = pe.image_base + imp["iat_rva"]
         if not any(sec.present and sec.contains(address) for sec in pe.sections):
             raise PackError(f"IAT 0x{imp['iat_rva']:x} hors des sections présentes")
     if pe.entry_rva >= pe.image_size:
         raise PackError("point d'entrée hors image")
-    print("[self-test] pack cohérent")
+
+    # Reconstruit l'image invitée à partir du pack et la compare à celle que
+    # produirait le PE : en-têtes, sections présentes, sections exclues et BSS
+    # laissés à zéro. C'est le contrat que le chargeur du lot 2 devra tenir.
+    expected = bytearray(pe.image_size)
+    expected[: pe.size_of_headers] = pe.data[: pe.size_of_headers]
+    for sec in pe.sections:
+        if sec.present:
+            expected[sec.rva : sec.rva + sec.copy_size] = pe.data[
+                sec.raw_ptr : sec.raw_ptr + sec.copy_size
+            ]
+    actual = bytearray(pe.image_size)
+    for sec in present:
+        actual[sec.rva : sec.rva + sec.copy_size] = data[
+            sec.offset : sec.offset + sec.copy_size
+        ]
+    if actual != expected:
+        for offset, (got, want) in enumerate(zip(actual, expected)):
+            if got != want:
+                raise PackError(
+                    "image reconstruite différente à l'adresse "
+                    f"0x{pe.image_base + offset:08x} : 0x{got:02x} != 0x{want:02x}"
+                )
+        raise PackError("image reconstruite différente")
+    print(
+        f"[self-test] pack cohérent, image invitée reconstruite "
+        f"à l'identique (0x{pe.image_size:x} octets)"
+    )
 
 
 def print_summary(pe: PEImage, present: list[Section], excluded: list[Section], payload: bytes) -> None:

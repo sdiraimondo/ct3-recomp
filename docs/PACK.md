@@ -89,7 +89,11 @@ Le pack ne contient aucun code exécutable : `CT3_IMAGE_HAS_TEXT` vaut `0` et
 ## Vérification des adresses
 
 `ct3pack-check` relit le C généré (`build/g3/gen`) et vérifie que chaque adresse
-statique tombe dans une section packée :
+statique tombe dans une section packée. Avec `--self-test`, l'outil reconstruit
+aussi l'image invitée complète (`CT3_IMAGE_SIZE` octets) à partir du pack et la
+compare à celle que produirait le PE : en-têtes, sections présentes, BSS et
+sections exclues laissés à zéro. Une corruption est signalée avec l'adresse
+invitée exacte.
 
 ```sh
 cmake --build build --target ct3pack-check

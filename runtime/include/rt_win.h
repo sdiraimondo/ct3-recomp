@@ -25,7 +25,8 @@ void rt_win_key_states(uint8_t out[256]);  /* état clavier et manette par code 
 /* diagnostic : bouton Start de la manette virtuelle (CT3_PAD_TEST, CT3_PAD_SEQ) */
 void rt_win_pad_test(int down, const char *name);
 
-/* Manette DirectInput (rt_extra.cpp) : réglages de [Joystick] et état SDL (axes LX LY RX RY LT RT, boutons 0 à 14). */
+/* Manette DirectInput (rt_extra.cpp) : réglages de [Joystick] et état SDL (axes LX LY RX RY LT RT,
+ * boutons 0 à 14). Les gâchettes LT/RT sont calibrées au repos et normalisées de 0 à 32767. */
 typedef struct {
     int enabled;   /* 1 : la manette est exposée au jeu */
     int stick_x;   /* 1 : stick gauche sur l'axe X */

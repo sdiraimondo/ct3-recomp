@@ -244,10 +244,25 @@ static bool pad_in_on[kPadInputs];
 static uint8_t pad_count[256];
 /* Manette DirectInput (rt_extra.cpp) : état SDL par axe et par bouton, mis à jour par les événements. */
 static int16_t joy_axis[6];   /* LX LY RX RY LT RT (ordre SDL) */
-static uint8_t joy_btn[15];   /* boutons SDL de 0 à 14 */
+static uint8_t joy_btn[15];   /* boutons SDL de 0 à 14, toujours dans l'ordre SDL (non remappés) */
+static int8_t joy_btn_remap[15] = {-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1}; /* -1 = pas de remapping */
+static SDL_GameController *pad_gc;  /* manette ouverte : lecture directe (axes, boutons, calibration) */
 static int joy_on;
 static int pad_deadzone = 16000;
 static int pad_trigger_threshold = 16000;
+
+/* Calibration des gâchettes. Certaines manettes (DualSense Edge) annoncent parfois un repos proche de
+ * la mi-course : le rapport HID est mal interprété ou le firmware décale la valeur. Sans calibration,
+ * RT (mappé sur « haut ») reste enfoncé et le menu défile tout seul. On mesure donc le repos sur les
+ * premiers échantillons, puis on normalise la course restante. Pendant la mesure, les gâchettes sont
+ * ignorées : aucun appui fantôme ne peut atteindre le jeu. */
+enum { kTrigCalSamples = 90, kTrigCalBuckets = 64 };  /* 90 lectures, ~1,5 s à 60 Hz */
+static int16_t joy_trig_raw[2];                        /* dernière valeur brute SDL (LT, RT) */
+static int joy_trig_hist[2][kTrigCalBuckets];          /* histogramme de la mesure de repos */
+static int joy_trig_samples[2];
+static int joy_trig_rest[2];                           /* repos calibré, unités SDL */
+static int joy_trig_eff[2];                            /* valeur utile 0..32767, repos = 0 */
+static bool joy_trig_down[2];                          /* état logique (hystérésis) */
 
 static int pad_find_input(const char *name)
 {
@@ -371,6 +386,11 @@ static void pad_parse_config(const char *text, const char *origin)
             pad_trigger_threshold = atoi(val);
             continue;
         }
+        if (strncasecmp(key, "MapBtn", 6) == 0 && isdigit((unsigned char)key[6])) {
+            int b = atoi(key + 6);
+            if (b >= 0 && b < 15) joy_btn_remap[b] = atoi(val);
+            continue;
+        }
         int input = pad_find_input(key);
         pad_keydef kd;
         if (input < 0 || !pad_find_key(val, kd)) {
@@ -419,38 +439,160 @@ static void pad_send(uint8_t dik, uint32_t vk, bool down)
 
 static void pad_input(int input, bool on)
 {
+    if (input < 0 || input >= kPadInputs) return;
     if (pad_in_on[input] == on) return;
     pad_in_on[input] = on;
     if (getenv("CT3_PAD_LOG")) fprintf(stderr, "[pad] %s %s\n", kPadInputNames[input], on ? "appuyé" : "relâché");
     pad_send(pad_bind_dik[input], pad_bind_vk[input], on);
 }
 
+static void joy_trig_reset(void)
+{
+    memset(joy_trig_raw, 0, sizeof joy_trig_raw);
+    memset(joy_trig_hist, 0, sizeof joy_trig_hist);
+    memset(joy_trig_samples, 0, sizeof joy_trig_samples);
+    memset(joy_trig_rest, 0, sizeof joy_trig_rest);
+    memset(joy_trig_eff, 0, sizeof joy_trig_eff);
+    memset(joy_trig_down, 0, sizeof joy_trig_down);
+}
+
+/* Met à jour la touche mappée à partir de la valeur utile, avec hystérésis : l'appui demande le seuil
+ * complet, le relâchement se fait à 5/8 du seuil (évite le clignotement autour de la valeur limite). */
+static void joy_trig_key_update(int idx)
+{
+    int th = pad_trigger_threshold;
+    if (th < 1) th = 1;
+    bool on = joy_trig_down[idx];
+    if (!on) {
+        if (joy_trig_eff[idx] >= th) on = true;
+    } else if (joy_trig_eff[idx] <= th * 5 / 8) {
+        on = false;
+    }
+    if (on == joy_trig_down[idx]) return;
+    joy_trig_down[idx] = on;
+    pad_input(idx == 0 ? kPadTriggerLt : kPadTriggerRt, on);
+}
+
+/* Échantillonne une gâchette (idx 0 = LT, 1 = RT). Pendant la calibration (les 90 premiers
+ * échantillons), la valeur utile reste nulle. Le repos retenu est le milieu du bucket le plus
+ * fréquent : une valeur stable, même aberrante, devient le repos, tandis qu'un pic isolé est ignoré. */
+static void joy_trig_sample(int idx, int raw)
+{
+    if (raw < 0) raw = 0;
+    if (raw > 32767) raw = 32767;
+    joy_trig_raw[idx] = (int16_t)raw;
+    if (joy_trig_samples[idx] < kTrigCalSamples) {
+        int b = raw * kTrigCalBuckets / 32768;
+        if (b >= kTrigCalBuckets) b = kTrigCalBuckets - 1;
+        joy_trig_hist[idx][b]++;
+        joy_trig_samples[idx]++;
+        if (joy_trig_samples[idx] == kTrigCalSamples) {
+            int best = 0;
+            for (int i = 1; i < kTrigCalBuckets; i++) {
+                if (joy_trig_hist[idx][i] > joy_trig_hist[idx][best]) best = i;
+            }
+            joy_trig_rest[idx] = best * 32768 / kTrigCalBuckets + 32768 / kTrigCalBuckets / 2;
+            if (getenv("CT3_PAD_LOG")) {
+                fprintf(stderr, "[pad] calibration %s : repos=%d (brut=%d)\n", idx ? "rt" : "lt",
+                        joy_trig_rest[idx], raw);
+            }
+        }
+        joy_trig_eff[idx] = 0;
+        joy_trig_key_update(idx);
+        return;
+    }
+    int rest = joy_trig_rest[idx];
+    int span = 32767 - rest;
+    int eff = 0;
+    if (span > 4096) {
+        eff = (int)(((int64_t)(raw - rest) * 32767) / span);
+        if (eff < 0) eff = 0;
+        if (eff > 32767) eff = 32767;
+    } else {
+        /* Repos mesuré trop près du maximum (gâchette maintenue au démarrage) : course brute. */
+        eff = raw;
+    }
+    joy_trig_eff[idx] = eff;
+    joy_trig_key_update(idx);
+}
+
 static void pad_event(const SDL_Event &e)
 {
     switch (e.type) {
     case SDL_CONTROLLERDEVICEADDED:
-        if (SDL_GameControllerOpen((int)e.cdevice.which)) joy_on = 1;
-        if (getenv("CT3_PAD_LOG")) fprintf(stderr, "[pad] ajoutée (index %d)\n", (int)e.cdevice.which);
+        {
+            if (getenv("CT3_PAD_RAW") || getenv("CT3_PAD_FORCE_RAW")) {
+                if (getenv("CT3_PAD_LOG")) fprintf(stderr, "[pad] ajoutée ignorée en mode brut (raw)\n");
+                break;
+            }
+            SDL_GameController *gc = SDL_GameControllerOpen((int)e.cdevice.which);
+            if (gc) {
+                if (pad_gc) SDL_GameControllerClose(pad_gc);
+                pad_gc = gc;
+                joy_trig_reset();
+                joy_on = 1;
+                if (getenv("CT3_PAD_LOG")) {
+                    fprintf(stderr, "[pad] ajoutée (index %d) nom=%s mapping=%s\n", (int)e.cdevice.which,
+                            SDL_GameControllerName(gc), SDL_GameControllerMapping(gc));
+                }
+            } else if (getenv("CT3_PAD_LOG")) {
+                fprintf(stderr, "[pad] ajoutée mais pas reconnu comme gamecontroller (index %d)\n", (int)e.cdevice.which);
+            }
+        }
         break;
     case SDL_CONTROLLERDEVICEREMOVED:
         for (int i = 0; i < kPadInputs; i++) pad_input(i, false);
+        if (pad_gc) {
+            SDL_GameControllerClose(pad_gc);
+            pad_gc = nullptr;
+        }
         joy_on = 0;
         memset(joy_axis, 0, sizeof joy_axis);
         memset(joy_btn, 0, sizeof joy_btn);
+        joy_trig_reset();
         break;
     case SDL_CONTROLLERBUTTONDOWN:
     case SDL_CONTROLLERBUTTONUP:
         if (e.cbutton.button < 15) {
-            pad_input(e.cbutton.button, e.type == SDL_CONTROLLERBUTTONDOWN);
-            joy_btn[e.cbutton.button] = e.type == SDL_CONTROLLERBUTTONDOWN;
+            if (getenv("CT3_PAD_LOG")) fprintf(stderr, "[pad] button %d %s\n", e.cbutton.button, e.type == SDL_CONTROLLERBUTTONDOWN ? "down" : "up");
+            const bool down = e.type == SDL_CONTROLLERBUTTONDOWN;
+            /* L'état DirectInput reste indexé par le bouton SDL réel : le remappage ne concerne que
+             * la touche clavier envoyée au jeu (sinon MapBtn corrompt l'état lu par la manette). */
+            joy_btn[e.cbutton.button] = down;
+            int btn = e.cbutton.button;
+            /* Permettre le swap A/B/X/Y via env */
+            if (getenv("CT3_PAD_SWAP_ABXY")) {
+                if (btn == 0) btn = 1; else if (btn == 1) btn = 0;
+                else if (btn == 2) btn = 3; else if (btn == 3) btn = 2;
+            }
+            if (btn >= 0 && btn < 15 && joy_btn_remap[btn] >= 0) btn = joy_btn_remap[btn];
+            pad_input(btn, down);
         }
+        break;
+    case SDL_JOYDEVICEADDED:
+        if (getenv("CT3_PAD_LOG")) fprintf(stderr, "[pad] joystick ajouté (index %d)\n", (int)e.jdevice.which);
+        /* Si pas déjà ouvert comme gamecontroller, on peut l'ouvrir en mode brut */
+        break;
+    case SDL_JOYBUTTONDOWN:
+    case SDL_JOYBUTTONUP:
+        if (getenv("CT3_PAD_LOG")) fprintf(stderr, "[pad] joy button %d %s\n", e.jbutton.button, e.type == SDL_JOYBUTTONDOWN ? "down" : "up");
+        /* Éviter double-traitement si déjà géré comme gamecontroller */
+        break;
+    case SDL_JOYAXISMOTION:
+        if (getenv("CT3_PAD_LOG") && e.jaxis.value > 30000) fprintf(stderr, "[pad] joy axis %d val=%d\n", e.jaxis.axis, e.jaxis.value);
         break;
     case SDL_CONTROLLERAXISMOTION:
         if (e.caxis.axis < 6) joy_axis[e.caxis.axis] = e.caxis.value;
-        if (e.caxis.axis == SDL_CONTROLLER_AXIS_TRIGGERLEFT) {
-            pad_input(kPadTriggerLt, e.caxis.value > pad_trigger_threshold);
-        } else if (e.caxis.axis == SDL_CONTROLLER_AXIS_TRIGGERRIGHT) {
-            pad_input(kPadTriggerRt, e.caxis.value > pad_trigger_threshold);
+        if (e.caxis.axis == SDL_CONTROLLER_AXIS_TRIGGERLEFT || e.caxis.axis == SDL_CONTROLLER_AXIS_TRIGGERRIGHT) {
+            /* Échantillonner les deux gâchettes : celle qui ne bouge pas doit aussi terminer sa
+             * calibration (les événements d'axe ne sont émis que sur changement). */
+            if (pad_gc) {
+                joy_trig_sample(0, SDL_GameControllerGetAxis(pad_gc, SDL_CONTROLLER_AXIS_TRIGGERLEFT));
+                joy_trig_sample(1, SDL_GameControllerGetAxis(pad_gc, SDL_CONTROLLER_AXIS_TRIGGERRIGHT));
+            } else {
+                joy_trig_sample(0, joy_axis[4]);
+                joy_trig_sample(1, joy_axis[5]);
+            }
         } else if (e.caxis.axis == SDL_CONTROLLER_AXIS_LEFTX) {
             pad_input(kPadStickLeft, e.caxis.value < -pad_deadzone);
             pad_input(kPadStickRight, e.caxis.value > pad_deadzone);
@@ -481,7 +623,14 @@ void pad_test_attach()
         fprintf(stderr, "rt: manette virtuelle indisponible : %s\n", SDL_GetError());
         return;
     }
-    if (SDL_IsGameController(idx)) SDL_GameControllerOpen(idx);
+    if (SDL_IsGameController(idx)) {
+        SDL_GameController *gc = SDL_GameControllerOpen(idx);
+        if (gc && !pad_gc) {
+            pad_gc = gc;
+            joy_trig_reset();
+            joy_on = 1;
+        }
+    }
     pad_test_js = SDL_JoystickOpen(idx);
 }
 
@@ -497,6 +646,11 @@ void pump_events()
         case SDL_CONTROLLERBUTTONDOWN:
         case SDL_CONTROLLERBUTTONUP:
         case SDL_CONTROLLERAXISMOTION:
+        case SDL_JOYBUTTONDOWN:
+        case SDL_JOYBUTTONUP:
+        case SDL_JOYAXISMOTION:
+        case SDL_JOYDEVICEADDED:
+        case SDL_JOYDEVICEREMOVED:
             pad_event(e);
             break;
         case SDL_QUIT:
@@ -1159,8 +1313,10 @@ void rt_win_pad_test(int down, const char *name)
         {"right", SDL_CONTROLLER_BUTTON_DPAD_RIGHT}, {"lb", SDL_CONTROLLER_BUTTON_LEFTSHOULDER},
         {"rb", SDL_CONTROLLER_BUTTON_RIGHTSHOULDER}};
     if (!pad_test_js) return;
-    if (strcmp(name, "lt") == 0) SDL_JoystickSetVirtualAxis(pad_test_js, SDL_CONTROLLER_AXIS_TRIGGERLEFT, down ? 32767 : 0);
-    if (strcmp(name, "rt") == 0) SDL_JoystickSetVirtualAxis(pad_test_js, SDL_CONTROLLER_AXIS_TRIGGERRIGHT, down ? 32767 : 0);
+    /* SDL normalise les axes des gâchettes de -32768..32767 vers 0..32767 : le repos est
+     * SDL_JOYSTICK_AXIS_MIN, pas 0 (sinon la gâchette virtuelle reste à mi-course). */
+    if (strcmp(name, "lt") == 0) SDL_JoystickSetVirtualAxis(pad_test_js, SDL_CONTROLLER_AXIS_TRIGGERLEFT, down ? 32767 : SDL_JOYSTICK_AXIS_MIN);
+    if (strcmp(name, "rt") == 0) SDL_JoystickSetVirtualAxis(pad_test_js, SDL_CONTROLLER_AXIS_TRIGGERRIGHT, down ? 32767 : SDL_JOYSTICK_AXIS_MIN);
     for (const auto &n : kNames) {
         if (strcmp(n.name, name) == 0) SDL_JoystickSetVirtualButton(pad_test_js, n.button, down ? 1 : 0);
     }
@@ -1199,6 +1355,22 @@ int rt_win_joy_connected(void)
 
 void rt_win_joy_state(int16_t axes[6], uint8_t buttons[15])
 {
+    if (pad_gc) {
+        /* Lecture directe : l'état est frais même sans événement (les axes ne sont signalés que
+         * lorsqu'ils changent), et la calibration des gâchettes progresse à chaque lecture du jeu. */
+        for (int i = 0; i < 6; i++) {
+            joy_axis[i] = (int16_t)SDL_GameControllerGetAxis(pad_gc, (SDL_GameControllerAxis)i);
+        }
+        for (int i = 0; i < 15; i++) {
+            joy_btn[i] = SDL_GameControllerGetButton(pad_gc, (SDL_GameControllerButton)i) ? 1 : 0;
+        }
+        joy_trig_sample(0, joy_axis[4]);
+        joy_trig_sample(1, joy_axis[5]);
+    }
     memcpy(axes, joy_axis, sizeof joy_axis);
+    if (pad_gc) {
+        axes[4] = (int16_t)joy_trig_eff[0];
+        axes[5] = (int16_t)joy_trig_eff[1];
+    }
     memcpy(buttons, joy_btn, sizeof joy_btn);
 }

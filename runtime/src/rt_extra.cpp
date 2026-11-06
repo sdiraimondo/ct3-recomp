@@ -1339,10 +1339,15 @@ static void joy_build_state(uint32_t dst, uint32_t cb)
 
     memset(buf, 0, sizeof buf);
     float sx = dz(norm(ax[0])), sy = dz(norm(ax[1]));
+    /* Les gâchettes arrivent déjà calibrées et normalisées par rt_win (0 = repos, 32767 = course
+     * complète), même si la manette annonce un repos décalé. La zone morte s'applique aussi à la
+     * différence LT-RT : sans elle, un écart de repos de quelques centaines d'unités suffisait à
+     * maintenir une direction dans les menus. */
     float lt = norm(ax[4]), rt = norm(ax[5]);
     lt = lt < dzf ? 0.0f : lt;
     rt = rt < dzf ? 0.0f : rt;
     float trig = lt - rt;                       /* LT vers le haut de l'axe, RT vers le bas (comme Xidi) */
+    if (trig > -dzf && trig < dzf) trig = 0.0f;
     int dpx = (int)bt[14] - (int)bt[13];        /* droite - gauche */
     int dpy = (int)bt[12] - (int)bt[11];        /* bas - haut */
     const int pov = rt_joy_config.dpad_pov;

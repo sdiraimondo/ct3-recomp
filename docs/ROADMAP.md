@@ -148,8 +148,8 @@ chantiers Linux, mais `L1` (pic de heap) et `L3`/`L9` (cinématiques, imports) r
 |---|---|---|---|---|---|---|
 | **L1** | Crash après 20–30 min et « tas invité épuisé » | Session de 60 min sans faute ni épuisement du heap | — | 2 sem. | ⬜ | D-069, TODO |
 | L1.1 | Instrumenter le pic de heap (`rt_proc.c`, `CT3_ALLOCLOG`, `CT3_HEAPCHK`) | Pic mesuré et consigné (octets, scénario) | — | 2 j | ✅ | D-076, SWITCH_PORT §3 |
-| L1.2 | Reproduire et localiser la fuite ou la corruption | Cause identifiée (fuite, écriture hors bornes, objet non libéré) | L1.1 | 1 sem. | ✅ | D-077, D-078 |
-| L1.3 | Corriger et vérifier | 60 min de course, aucun message « tas invité épuisé » | L1.2 | 3 j | ⬜ | — |
+| L1.2 | Reproduire et localiser la fuite ou la corruption | Cause identifiée (fuite, écriture hors bornes, objet non libéré) | L1.1 | 1 sem. | ✅ | D-077, D-078, D-079 |
+| L1.3 | Corriger et vérifier | 60 min de course, aucun message « tas invité épuisé » | L1.2 | 3 j | 🔄 | pic 285 737 072 o (272,5 Mio), sortie propre 300 s post-course ; run 60 min à faire |
 | **L2** | Crash à la sortie (`0x5154b5`, table `atexit`) | Sortie propre depuis le menu et depuis une course, code 0 | — | 1 sem. | 🔄 | D-078 |
 | L2.1 | Lanceur `atexit` et nettoyages CRT (`0x514919`, `0x5164E5`, `0x5206C7`) | Fermeture de fenêtre : handlers exécutés, `ExitProcess(0)`, code 0 | — | 2 j | ✅ | D-078 |
 | L2.2 | Sortie par le menu EXIT et depuis une course | Même résultat que L2.1 par les deux chemins | L2.1 | 3 j | ⬜ | — |
@@ -215,7 +215,7 @@ chantiers Linux, mais `L1` (pic de heap) et `L3`/`L9` (cinématiques, imports) r
 | S3.2 | Backend Horizon (`svcCreateThread`, TLS) | Threads invités fonctionnels | S3.1 | 1 sem. | ⬜ | — |
 | S3.3 | Tests de sortie et de session longue | Sortie propre ; pas de fuite de threads | S3.2 | 3 j | ⬜ | — |
 | **S4** | WSI DXVK Switch | Swapchain 720p présentée, puis triangle DXVK | S2 | 4 sem. | ⬜ | SWITCH_PORT §3 |
-| S4.1 | Squelette `src/wsi/switch/*` + option meson | Compilation avec `-DDXVK_WSI_SWITCH` | — | 3 j | ⬜ | DXVK 3.1.1 |
+| S4.1 | Squelette `src/wsi/switch/*` + option meson | Compilation avec `-DDXVK_WSI_SWITCH` | — | 3 j | 🔄 | DXVK 3.1.1 local (`~/.local/ct3-deps/src/dxvk`) |
 | S4.2 | `createSurface` via `vkCreateViSurfaceNN` | Surface créée avec un `NWindow*` | S4.1 | 1 sem. | ⬜ | `wsi_platform.h` |
 | S4.3 | Fenêtre NWindow sans SDL | Fenêtre plein écran 720p/1080p, pas de redimensionnement | S4.1 | 1 sem. | ⬜ | rt_win.cpp:145 |
 | S4.4 | Smoke test Vulkan puis triangle DXVK | Image présentée à l'écran | S4.2, S4.3 | 1 sem. | ⬜ | — |

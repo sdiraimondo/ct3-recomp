@@ -2,6 +2,7 @@
 
 #include <stdint.h>
 #include <string.h>
+#include <time.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -212,7 +213,15 @@ static inline int64_t rt_rem_s(int64_t a, int64_t b)
 
 static inline uint64_t rt_rdtsc(void)
 {
+#if defined(__x86_64__) || defined(__i386__)
     return __builtin_ia32_rdtsc();
+#else
+    /* AArch64 : pas de TSC. Compteur monotone en nanosecondes ; le port Horizon
+     * devra le remplacer par armGetSystemTick() pour conserver l'échelle des cycles. */
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return (uint64_t)ts.tv_sec * 1000000000ull + (uint64_t)ts.tv_nsec;
+#endif
 }
 
 void rt_int3(uint32_t addr);

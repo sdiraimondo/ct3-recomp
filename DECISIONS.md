@@ -63,7 +63,8 @@ Journal des décisions du portage. Une entrée par décision, avec la date et la
 
 - Décision : le portage Switch est une étape ultérieure. Le portage Linux PC est traité en premier.
 - Conséquence d'architecture à respecter dès maintenant : la couche D3D9 et le backend de rendu sont séparés, pour qu'un backend autre que Vulkan (Switch) puisse remplacer dxvk-native plus tard. Le code généré reste du C portable, sans assembleur en ligne. La couche plateforme passe par une interface.
-- Source : réponse de l'utilisateur (point 6).
+- Mise à jour (17 nov. 2026) : l'hypothèse « backend autre que Vulkan » ne tient plus. `mesa-switch` fournit NVK Vulkan homebrew avec `VK_NN_vi_surface` (scanout direct NWindow) ; le chemin retenu est DXVK Native + backend WSI Switch, pas deko3d. Le port reste une étape ultérieure, mais la décompilation est jugée suffisante et le spike AArch64 est fait. Mesures et plan : `docs/SWITCH_PORT.md`.
+- Source : réponse de l'utilisateur (point 6) ; mise à jour du 17 nov. 2026.
 
 ## D-012 : xboxrecomp non retenu comme base du traducteur (30 oct. 2026)
 

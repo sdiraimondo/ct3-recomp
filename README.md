@@ -33,6 +33,7 @@ An unofficial effort to decompile and statically recompile **Crazy Taxi 3** (Win
 3. **Intro cinematics.** Still buggy. Movies do not play (the DirectShow playback is a stub that ends immediately), and some character polygons are wrong in the LV and SA cinematics.
 4. **Crashes.** A crash after about 20 to 30 minutes of play (memory fault in the game's object code, cause not yet found) and a crash when quitting the game.
 5. **Settings.** Window resolution and borderless mode in `Config.ini`, then the settings editable from the game's Options menu.
+6. **Nintendo Switch port.** Feasibility, measured AArch64 spike and plan: [docs/SWITCH_PORT.md](docs/SWITCH_PORT.md).
 
 ## How it works
 

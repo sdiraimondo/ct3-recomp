@@ -7,6 +7,7 @@ void rt_diag_init(void);
 
 #include <stdio.h>
 #include <string.h>
+#include <time.h>
 
 int rt_mem_protect(uint32_t addr, uint32_t size, int prot);
 int rt_mem_init(void);
@@ -49,6 +50,9 @@ void rt_regs_check(cpu_t *c, const uint32_t s[4], uint32_t site, uint32_t target
  * est le lien. Les blocs libres sont découpés pour les demandes plus petites et fusionnés avec le bloc
  * physiquement suivant ; le bloc de tête revient au pointeur de croissance. */
 static uint32_t heap_next = RT_HEAP_BASE;
+/* Pic historique du sommet du tas : sert à dimensionner l'arène Switch (S2). Monotone, il n'est pas
+ * réduit par rt_heap_set_state (instantané utilisé par la vérification du portage natif). */
+static uint32_t heap_peak_top = RT_HEAP_BASE;
 
 #define RT_BLOCK_USED 0x5A110CEDu
 #define RT_BLOCK_FREE 0xF4EEF4EEu
@@ -133,6 +137,47 @@ static int heap_trace(void)
     return on;
 }
 
+/* CT3_HEAPSTATS=1 : toutes les 30 s (CT3_HEAPSTATS_MS pour changer), une ligne avec le sommet
+ * courant, le pic historique et l'occupation. Le pic sert à dimensionner l'arène Switch (S2) ;
+ * les octets comptent les en-têtes. */
+static void heap_report(const char *where, int force)
+{
+    static int on = -1;
+    if (on < 0) on = getenv("CT3_HEAPSTATS") != NULL;
+    if (!on && !force) return;
+    static long period_ms = -1;
+    if (period_ms < 0) {
+        const char *s = getenv("CT3_HEAPSTATS_MS");
+        period_ms = s ? strtol(s, NULL, 10) : 30000;
+        if (period_ms < 1000) period_ms = 1000;
+    }
+    static struct timespec last;
+    struct timespec now;
+    clock_gettime(CLOCK_MONOTONIC, &now);
+    if (!force && last.tv_sec != 0) {
+        long ms = (now.tv_sec - last.tv_sec) * 1000L + (now.tv_nsec - last.tv_nsec) / 1000000L;
+        if (ms < period_ms) return;
+    }
+    last = now;
+
+    uint32_t used = 0, free_bytes = 0, largest = 0;
+    unsigned blocks = 0;
+    for (uint32_t b = RT_HEAP_BASE; b < heap_next;) {
+        uint32_t st = get32(b + 4);
+        uint32_t total = block_total(get32(b));
+        if (total < 16 || b + total > heap_next) break;
+        if (st == RT_BLOCK_USED) used += total;
+        else if (st == RT_BLOCK_FREE) {
+            free_bytes += total;
+            if (total > largest) largest = total;
+        }
+        blocks++;
+        b += total;
+    }
+    fprintf(stderr, "rt: tas %s sommet=0x%08x pic=0x%08x utilise=%u libre=%u plus_grand=%u blocs=%u\n",
+            where, heap_next - RT_HEAP_BASE, heap_peak_top - RT_HEAP_BASE, used, free_bytes, largest, blocks);
+}
+
 /* État du tas côté hôte (sommet et listes libres), pour la vérification du portage natif (rt_filter.c). */
 void rt_heap_get_state(uint32_t *top, uint32_t *bins)
 {
@@ -143,6 +188,7 @@ void rt_heap_get_state(uint32_t *top, uint32_t *bins)
 void rt_heap_set_state(uint32_t top, const uint32_t *bins)
 {
     heap_next = top;
+    if (top > heap_peak_top) heap_peak_top = top;
     memcpy(heap_bins, bins, sizeof heap_bins);
 }
 
@@ -173,10 +219,12 @@ uint32_t rt_heap_alloc(uint32_t size, int zero)
         }
     } else {
         if (heap_next + total > RT_HEAP_BASE + RT_HEAP_SIZE) {
+            heap_report("epuise", 1);
             rt_fatal("tas invité épuisé");
         }
         block = heap_next;
         heap_next += total;
+        if (heap_next > heap_peak_top) heap_peak_top = heap_next;
     }
     uint32_t cap = total - 8;
     put32(block, cap);
@@ -186,6 +234,7 @@ uint32_t rt_heap_alloc(uint32_t size, int zero)
     }
     if (heap_trace()) fprintf(stderr, "[h+] 0x%08x 0x%x\n", block + 8, cap);
     heap_check("alloc");
+    heap_report("alloc", 0);
     return block + 8;
 }
 
@@ -210,11 +259,13 @@ void rt_heap_free(uint32_t p)
     if (next == heap_next) {
         heap_next = block;
         heap_check("libre-fin");
+        heap_report("libre", 0);
         return;
     }
     put32(block, total - 8);
     bin_insert(block, total);
     heap_check("libre");
+    heap_report("libre", 0);
 }
 
 uint32_t rt_heap_size(uint32_t p)

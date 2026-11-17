@@ -1322,15 +1322,35 @@ void rt_win_pad_test(int down, const char *name)
     }
 }
 
-void rt_win_test_key(int down)
+void rt_win_test_key_named(const char *name, int down)
 {
+    SDL_Keycode sym = SDLK_UNKNOWN;
+    SDL_Scancode sc = SDL_SCANCODE_UNKNOWN;
+    if (strcmp(name, "up") == 0) { sym = SDLK_UP; sc = SDL_SCANCODE_UP; }
+    else if (strcmp(name, "down") == 0) { sym = SDLK_DOWN; sc = SDL_SCANCODE_DOWN; }
+    else if (strcmp(name, "left") == 0) { sym = SDLK_LEFT; sc = SDL_SCANCODE_LEFT; }
+    else if (strcmp(name, "right") == 0) { sym = SDLK_RIGHT; sc = SDL_SCANCODE_RIGHT; }
+    else if (strcmp(name, "return") == 0 || strcmp(name, "enter") == 0) { sym = SDLK_RETURN; sc = SDL_SCANCODE_RETURN; }
+    else if (strcmp(name, "x") == 0) { sym = SDLK_x; sc = SDL_SCANCODE_X; }
+    else if (strcmp(name, "s") == 0) { sym = SDLK_s; sc = SDL_SCANCODE_S; }
+    else if (strcmp(name, "space") == 0) { sym = SDLK_SPACE; sc = SDL_SCANCODE_SPACE; }
+    else if (strcmp(name, "escape") == 0) { sym = SDLK_ESCAPE; sc = SDL_SCANCODE_ESCAPE; }
+    else {
+        fprintf(stderr, "rt: touche de test inconnue « %s »\n", name);
+        return;
+    }
     SDL_Event ev;
     memset(&ev, 0, sizeof ev);
     ev.type = down ? SDL_KEYDOWN : SDL_KEYUP;
     ev.key.state = down ? SDL_PRESSED : SDL_RELEASED;
-    ev.key.keysym.sym = SDLK_RETURN;
-    ev.key.keysym.scancode = SDL_SCANCODE_RETURN;
+    ev.key.keysym.sym = sym;
+    ev.key.keysym.scancode = sc;
     SDL_PushEvent(&ev);
+}
+
+void rt_win_test_key(int down)
+{
+    rt_win_test_key_named("return", down);
 }
 
 

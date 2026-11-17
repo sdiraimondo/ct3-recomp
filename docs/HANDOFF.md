@@ -93,6 +93,12 @@ passent** au dernier commit.
 | `CT3_UNRESDBG=1` | À un appel non traduit, affiche l'objet `[0x724E10]` et sa vtable |
 | `CT3_ALLOCLOG=1` | Journal des allocations et libérations avec appelants du jeu |
 | `CT3_HEAPCHK=1` | Vérification de cohérence du tas après chaque opération (lent) |
+| `CT3_HEAPSTATS=1` | Toutes les 30 s : sommet, **pic historique**, occupation et plus grand bloc libre du tas invité (`CT3_HEAPSTATS_MS` change la période, minimum 1 s) |
+| `CT3_WINDOWED=1` | Force le mode fenêtré à la création et à chaque `Reset` (tests sous Xvfb, où aucun mode plein écran n'existe) |
+| `CT3_PAD_HOLD=N:bouton,...` | Avec `CT3_PAD_TEST=1`, maintient des boutons de la manette virtuelle à partir de la présentation N (course automatisée) |
+| `CT3_KEY_HOLD=N:touche,...` | Maintient des touches clavier à partir de la présentation N (`up`, `down`, `left`, `right`, `return`, `x`, `s`, `space`, `escape`), sans manette virtuelle |
+| `CT3_KEY_SEQ=N:touche,...` | Appuis discrets (20 présentations) pour naviguer les menus au clavier, sans manette virtuelle |
+| `CT3_ATEXIT_LOG=1` | Journalise chaque fonction de la table `atexit` appelée à la sortie (adresse et index) |
 | `CT3_COMDBG=1` | Signale la réutilisation d'un wrapper COM pour une autre interface |
 | `CT3_TRACE_INSN=1` (build `-O0`) | Trace par instruction, vérification des registres |
 | `CT3_PROBE=lo-hi` (build `-O0`) | Affiche chaque instruction exécutée dans la plage (registres, pile, FILE) |

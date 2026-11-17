@@ -465,8 +465,88 @@ static uint32_t sh_GetVersionExA(cpu_t *c, const uint32_t *a)
 static uint32_t sh_ExitProcess(cpu_t *c, const uint32_t *a)
 {
     (void)c;
+    /* Arrête le fil de mixage avant le démontage : un rappel audio ne doit plus lire le tas
+     * invité pendant exit() (D-079). */
+    void ds_audio_stop(void);
+    ds_audio_stop();
     fprintf(stderr, "rt: ExitProcess(%u)\n", a[0]);
     exit((int)a[0]);
+}
+
+/* Adresse invitée lisible par le diagnostic (image, tas, zone de travail, piles de threads). */
+static int guest_diag_ok(uint32_t p, uint32_t n)
+{
+    uint64_t end = (uint64_t)p + n;
+    if (p >= 0x400000u && end <= 0x800000u) return 1;
+    if (p >= 0x10000000u && end <= 0x10400000u) return 1;
+    if (p >= 0x30000000u && end <= 0x34080000u) return 1;
+    if (p >= 0x40000000u && end <= 0x7C000000u) return 1;
+    return 0;
+}
+
+static uint32_t diag_ld(cpu_t *c, uint32_t addr)
+{
+    return guest_diag_ok(addr, 4) ? (uint32_t)guest_ld(c, addr, 4) : 0;
+}
+
+/* Nom du type C++ d'une exception MSVC (code 0xE06D7363) : _ThrowInfo -> _CatchableTypeArray ->
+ * _CatchableType -> _TypeDescriptor, où le nom commence à +8. */
+static void diag_cxx_type(cpu_t *c, uint32_t throw_info)
+{
+    uint32_t cta = diag_ld(c, throw_info + 0x0C);
+    uint32_t n = diag_ld(c, cta);
+    uint32_t ct = diag_ld(c, cta + 4);
+    uint32_t td = diag_ld(c, ct + 4);
+    uint32_t name = td + 8;
+    fprintf(stderr, "rt:   C++ throw_info=0x%08x types=%u type_desc=0x%08x nom=", throw_info, n, td);
+    for (unsigned i = 0; i < 128 && guest_diag_ok(name + i, 1); i++) {
+        char ch = (char)guest_ld(c, name + i, 1);
+        if (!ch) break;
+        fputc(ch, stderr);
+    }
+    fputc('\n', stderr);
+}
+
+/* KERNEL32!RaiseException : le runtime n'a pas d'SEH. Les exceptions FP du CRT (0xC000008D à
+ * 0xC0000093) sont des rapports de `_matherr` : le code après l'appel de RaiseException dans le CRT
+ * remet les drapeaux FP à zéro et rend la main au calcul. On le laisse donc continuer au lieu de
+ * dérouler une pile SEH absente. Les autres exceptions restent fatales et sont décodées. */
+static uint32_t sh_RaiseException(cpu_t *c, const uint32_t *a)
+{
+    uint32_t code = a[0], flags = a[1], nargs = a[2], pargs = a[3];
+    uint32_t esp = (uint32_t)cpu_rd(c, 16, 4);
+    uint32_t ret = diag_ld(c, esp);
+    if (code >= 0xC000008Du && code <= 0xC0000093u) {
+        static unsigned fp_seen;
+        if (fp_seen++ < 8) {
+            fprintf(stderr, "rt: exception FP 0x%08x ignorée (nargs=%u, retour=0x%08x)\n", code, nargs, ret);
+        }
+        return 0;
+    }
+    fprintf(stderr, "rt: RaiseException code=0x%08x flags=0x%x nargs=%u args=0x%08x retour=0x%08x\n",
+            code, flags, nargs, pargs, ret);
+    for (uint32_t k = 0; k < nargs && k < 8; k++) {
+        fprintf(stderr, "rt:   arg[%u]=0x%08x\n", k, diag_ld(c, pargs + 4 * k));
+    }
+    if (code == 0xE06D7363u && nargs >= 2) diag_cxx_type(c, diag_ld(c, pargs + 4));
+    /* Pile invitée : les adresses de retour identifient l'appelant (CRT, math, jeu). */
+    rt_thread *t = rt_current();
+    if (t && t->cpu && t->stack_low && t->stack_top && esp >= t->stack_low && esp < t->stack_top) {
+        uint32_t lim = t->stack_top - esp;
+        if (lim > 0x600) lim = 0x600;
+        int shown = 0;
+        fprintf(stderr, "rt:   pile invitée :");
+        for (uint32_t off = 0; off + 4 <= lim && shown < 12; off += 4) {
+            uint32_t v = diag_ld(c, esp + off);
+            if (v >= 0x401000u && v < 0x53b000u) {
+                fprintf(stderr, " +%x=0x%08x", off, v);
+                shown++;
+            }
+        }
+        fputc('\n', stderr);
+    }
+    rt_probe_dump();
+    exit(3);
 }
 
 static uint32_t sh_GetModuleHandleA_real(cpu_t *c, const uint32_t *a);
@@ -565,6 +645,7 @@ static const rt_shim_entry rt_shims[] = {
     {"KERNEL32.dll::VirtualAlloc", 4, sh_VirtualAlloc},
     {"KERNEL32.dll::VirtualFree", 3, sh_VirtualFree},
     {"KERNEL32.dll::ExitProcess", 1, sh_ExitProcess},
+    {"KERNEL32.dll::RaiseException", 4, sh_RaiseException},
     {"WINMM.dll::timeGetTime", 0, sh_timeGetTime},
     {"COMCTL32.dll::#17", 0, sh_InitCommonControls},
 };
@@ -797,10 +878,60 @@ uint32_t rt_dyn_stub_addr(const char *full)
     return dyn_stub(full);
 }
 
+/* Lanceur atexit du CRT MSVC (0x5154B5). Ghidra ne l'a pas identifié : il suit le RET de
+ * l'enregistreur 0x51547F et n'est donc pas traduit. La table est à 0x7DB7D8, le compte à
+ * 0x70CC90 (10 au départ, décrémenté par atexit) ; le lanceur appelle les entrées du compte
+ * courant jusqu'à 10, en incrémentant le compte avant chaque appel, comme le code d'origine. */
+static void rt_atexit_run(cpu_t *c)
+{
+    uint32_t count = (uint32_t)guest_ld(c, 0x70cc90u, 4);
+    while (count < 10) {
+        uint32_t fn = (uint32_t)guest_ld(c, 0x7db7d8u + 4 * count, 4);
+        guest_st(c, 0x70cc90u, 4, count + 1);
+        if (getenv("CT3_ATEXIT_LOG")) fprintf(stderr, "rt: atexit %u -> 0x%08x\n", count, fn);
+        rt_call_guest(c, fn, NULL, 0);
+        count++;
+    }
+}
+
+/* Une fonction traitée nativement doit dépiler son adresse de retour comme le RET traduit ;
+ * sinon la pile invitée garde un mot et le retour suivant saute au mauvais endroit. */
+static void rt_unresolved_ret(cpu_t *c)
+{
+    uint32_t esp = (uint32_t)cpu_rd(c, 16, 4);
+    uint32_t ret = (uint32_t)guest_ld(c, esp, 4);
+    cpu_wr(c, 16, 4, esp + 4);
+    cpu_wr(c, 644, 4, ret);
+}
+
 void rt_unresolved(cpu_t *c, uint32_t addr)
 {
     /* Retour vers l'hôte (threads, rappels) : dispatch rend la main à l'appelant C. */
     if (addr == RT_HOST_RET) return;
+    /* Lanceur atexit MSVC, non traduit (voir rt_atexit_run). Les deux adresses désignent la même
+     * fonction : 0x51549F est le saut d'entrée, 0x5154B5 la cible du saut et l'adresse enregistrée
+     * dans la table de terminaison du CRT. */
+    if (addr == 0x51549fu || addr == 0x5154b5u) {
+        rt_atexit_run(c);
+        rt_unresolved_ret(c);
+        return;
+    }
+    /* Nettoyage des verrous du CRT (0x514919, _mtdeletelocks), atteint uniquement par les thunks
+     * de la table _onexit (0x53AEF1, 0x53AF0F). Les sections critiques invitées sont des ressources
+     * de l'hôte gérées par les shims ; à la sortie, leur suppression est sans effet. */
+    if (addr == 0x514919u) {
+        rt_unresolved_ret(c);
+        return;
+    }
+    /* Nettoyage des fichiers du CRT à la sortie : _flushall (0x5164E5) puis _fcloseall (0x5206C7).
+     * Le jeu ferme ses fichiers dans ses propres handlers atexit ; ces fonctions ne sont atteintes
+     * que par le chemin _cexit. On rend 0 (aucun fichier restant) plutôt que d'exécuter une table
+     * FILE invitée que le runtime ne modélise pas. */
+    if (addr == 0x5164e5u || addr == 0x5206c7u) {
+        cpu_wr(c, 0, 4, 0);
+        rt_unresolved_ret(c);
+        return;
+    }
     /* Trampoline non traduit (ex. thunk isolé « jmp rel32 » que l'export n'a pas reconnu) : un saut direct ne
      * touche pas la pile, il équivaut à aller à sa cible. Suivi ici, avec signalement ; le reste reste fatal.
      * Sans les octets de .text (pack --exclude-text), le suivi n'est pas possible. */
@@ -835,6 +966,16 @@ void rt_unresolved(cpu_t *c, uint32_t addr)
     uint32_t esp = (uint32_t)cpu_rd(c, 16, 4);
     uint32_t ret = (uint32_t)guest_ld(c, esp, 4);
     fprintf(stderr, "rt: appel vers une adresse non traduite 0x%08x (retour invité 0x%08x)\n", addr, ret);
+    /* Sortie du CRT : la table _onexit (__onexitbegin/__onexitend à 0x7DD0EC/0x7DD0E8) contient
+     * les fonctions enregistrées par atexit. Ghidra ne traduit pas celles qui ne sont atteintes que
+     * par pointeur ; CT3_ATEXIT_LOG les énumère pour identifier les nettoyages à couvrir. */
+    if (getenv("CT3_ATEXIT_LOG")) {
+        uint32_t beg = (uint32_t)guest_ld(c, 0x7dd0ecu, 4);
+        uint32_t end = (uint32_t)guest_ld(c, 0x7dd0e8u, 4);
+        fprintf(stderr, "rt: table _onexit 0x%08x..0x%08x\n", beg, end);
+        for (uint32_t p = beg; p + 4 <= end && p - beg < 0x100; p += 4)
+            fprintf(stderr, "rt:   [0x%08x] = 0x%08x\n", p, (uint32_t)guest_ld(c, p, 4));
+    }
     rt_probe_dump();
     if (getenv("CT3_UNRESDBG")) {
         uint32_t obj = (uint32_t)guest_ld(c, 0x724e10u, 4);

@@ -112,6 +112,10 @@ Useful runtime settings:
 - `Config.ini` (in the working directory, or the path in `CT3_CONFIG`) holds the gamepad mapping and the thresholds. Default mapping: A = Reverse, B = Drive, Y = Space, Start = Enter, RT = accelerate (Up), LT = brake (Down), left stick = steer.
 - Keyboard: Up accelerate, Down brake, Left and Right steer, X reverse, S drive, Space view or passengers, Enter start.
 - `CT3_NOAUDIO=1` disables sound. `CT3_PRESENT_LOG=1` logs the time of each frame, to measure startup and slowdowns.
+- `CT3_WINDOWED=1` forces a windowed swapchain (useful under Xvfb, which has no fullscreen modes).
+- `CT3_KEY_HOLD=3600:up` holds a keyboard key from the given frame (automated test runs).
+- `CT3_KEY_SEQ=2100:down,2200:return` presses and releases keyboard keys (menu automation).
+- `CT3_HEAPSTATS=1` reports every 30 s the guest heap top, its historical peak and its occupancy (`CT3_HEAPSTATS_MS` changes the period).
 
 Tests (each one is a program, run from `build/tests`):
 - `cpu/test_cpu`, `vec/test_vec`, `x87/test_x87` and `g2/test_g2` need no argument.

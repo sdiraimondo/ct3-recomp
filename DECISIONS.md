@@ -871,6 +871,94 @@ Outils ajoutés (build de traçage) : `CT3_MEMWATCH=lo-hi` (écritures dans une 
 - **Portée** : la sonde valide newlib/libnx, pas le matériel Switch ; les temps
   et le comportement de NVK restent à mesurer sur console.
 
+## D-076 : pic de heap invité et mode fenêtré de test (17 nov. 2026)
+
+- **Contexte** : le dimensionnement de l'arène Switch (S2) dépend du pic réel du
+  tas invité sous Linux (L1.1). Le jeu ne libère pas la totalité de son tas et
+  les mesures ponctuelles ne disent pas si le sommet continue de croître pendant
+  une longue session. Par ailleurs, une session sous Xvfb échoue au passage
+  plein écran D3D9 (`SDL_GetClosestDisplayMode`), ce qui interdit les tests
+  automatisés sur display virtuel.
+- **Instrumentation** : `rt_heap_alloc` et `rt_heap_free` mettent à jour
+  `heap_peak_top`, un sommet historique **monotone** ; `rt_heap_set_state`
+  (instantané utilisé par la vérification du portage natif) ne le réduit pas.
+  `CT3_HEAPSTATS=1` affiche toutes les 30 s (`CT3_HEAPSTATS_MS` pour changer) le
+  sommet courant, le pic, les octets utilisés, libres et le plus grand bloc.
+  Un rapport forcé est émis avant `rt_fatal("tas invité épuisé")`.
+- **Mode fenêtré** : `CT3_WINDOWED=1` force `Windowed=TRUE` et
+  `FullScreen_RefreshRateInHz=0` dans `CreateDevice` et `Reset`. Sans la
+  variable, le comportement du jeu est inchangé. Cela permet de lancer le jeu
+  sous Xvfb, où aucun mode plein écran n'est disponible.
+- **Mesure** : sous Xvfb + lavapipe, le premier `Present` est très lent et le
+  jeu ne dépasse pas une image en 90 s ; la mesure exploitable se fait sur le
+  display réel. Une course lancée par `CT3_KEYS=1200,1600,2000,2400` porte le
+  pic à **0x10A78EB0 (279 412 400 octets, ~266 Mio)** ; il plafonne ensuite.
+  Le détail de la session longue est consigné dans `docs/SWITCH_PORT.md` (S2).
+- **Portée** : `CT3_WINDOWED` est un outil de test, pas une option de jeu ; il
+  ne règle pas la résolution ni le mode sans bordure (chantier L6).
+
+## D-077 : exceptions FP du CRT sans SEH (17 nov. 2026)
+
+- **Contexte** : une session longue (manette virtuelle, 9 058 présentations)
+  s'arrête sur `RaiseException code=0xC000008F` (`STATUS_FLOAT_INEXACT_RESULT`),
+  levée par le chemin `_matherr`/`_handle_exc` du CRT après un `pow` du code de
+  rendu (`0x4D6994`). Le runtime n'implémente pas SEH : l'exception était
+  fatale. Le pic de heap à cet instant est de 239 620 240 octets
+  (`0x0E459B90`), loin de l'épuisement du tas.
+- **Décision** : dans le shim `KERNEL32!RaiseException`, les codes FP
+  `0xC000008D`–`0xC0000093` (denormal, division par zéro, inexact, invalide,
+  overflow, stack check, underflow) ne déroulent pas la pile : le shim rend la
+  main au CRT, dont le code après l'appel remet les drapeaux FP à zéro et
+  retourne au calcul. Les autres exceptions restent fatales et sont décodées
+  (code, arguments, type C++ éventuel, pile invitée).
+- **Portée** : ce n'est pas une implémentation d'SEH. Les exceptions C++
+  (`0xE06D7363`) et les violations d'accès restent non rattrapées ; si le jeu
+  dépend d'un filtre SEH précis, L1.2 devra fournir un déroulement réel. Le
+  contournement FP est celui observé sur le chemin de rendu.
+- **Validation** : session de 300 s sur l'écran de sélection AXEL (le chemin
+  qui produisait le crash) ; l'exception apparaît à la présentation 9059
+  (comme lors du crash initial, 9058) et le jeu continue au-delà de 10 000
+  présentations. Le pic de heap y est de 239 570 384 octets (`0x0E4799D0`).
+
+## D-078 : sortie du CRT MSVC sans SEH (17 nov. 2026)
+
+- **Contexte** : la sortie du jeu passe par le CRT statique. Le lanceur `atexit`
+  `0x5154B5` exécute les handlers du jeu (`0x514A27`, `0x5149AA`), puis
+  `_doexit` (`0x5178F0`) parcourt la table `_onexit` (`0x7DD0E8`) et `_cexit`
+  appelle `_flushall` puis `_fcloseall`. Ghidra n'a pas traduit les fonctions
+  atteintes uniquement par pointeur : `0x514919` (`_mtdeletelocks`),
+  `0x5164E5` (`_flushall`) et `0x5206C7` (`_fcloseall`). La première tentative
+  sautait sur une adresse non traduite, puis un retour natif laissait un mot sur
+  la pile et le `ret` suivant sautait au mauvais endroit.
+- **Décision** : `rt_unresolved` traite nativement le lanceur `atexit` et ces
+  trois nettoyages ; chaque fonction native dépile son adresse de retour comme
+  le `RET` traduit (`rt_unresolved_ret`). Les verrous et la table `FILE` du CRT
+  invité ne sont pas modélisés : `_mtdeletelocks` est sans effet,
+  `_flushall`/`_fcloseall` rendent 0.
+- **Validation** : fermeture de la fenêtre (SDL_QUIT → WM_CLOSE), handlers
+  `atexit` exécutés (`8 → 0x514A27`, `9 → 0x5149AA`), `ExitProcess(0)`, code
+  de sortie 0.
+- **Portée** : les fichiers encore ouverts dans la table `FILE` invitée ne sont
+  pas vidés ; le jeu ferme les siens dans ses handlers. À revoir si une
+  sauvegarde s'avère tronquée.
+
+## D-079 : libération des tampons DirectSound et arrêt du mixeur (17 nov. 2026)
+
+- **Contexte** : après une course, la sortie du jeu (SIGTERM → SDL_QUIT →
+  WM_CLOSE → `atexit` → `ExitProcess(0)`) provoquait une faute mémoire dans le
+  fil audio, à l'adresse invitée `0x0DC50034`, après `ExitProcess(0)`.
+  `IDirectSoundBuffer::Release` était un no-op : le fil SDL continuait de mixer
+  des entrées dont l'objet invité avait été libéré puis réutilisé, et lisait un
+  pointeur de stockage arbitraire.
+- **Décision** : `IDirectSoundBuffer::Release` retire l'entrée de `dsb_plays`
+  sous `ds_mutex` ; le mixeur borne en outre le stockage au tas invité
+  (`RT_HEAP_BASE`..`RT_HEAP_BASE+RT_HEAP_SIZE`) ; `ExitProcess` ferme le
+  périphérique audio (`ds_audio_stop`) avant `exit()`, ce qui attend la fin du
+  rappel de mixage.
+- **Validation** : course lancée (`CT3_KEYS`, `CT3_KEY_AT2=2800`), sortie par
+  SIGTERM à 80 s : `atexit` exécute `0x514A27` et `0x5149AA`, `ExitProcess(0)`,
+  code de sortie 0, aucune faute.
+
 ## Environnement (31 oct. 2026)
 
 - KWin (session Plasma/Wayland) ne mappe plus les fenêtres X11 nouvelles : constaté sur G1, glxgears et CT3. Une commande de rechargement de KWin (`org.kde.KWin.reconfigure`) a été lancée par erreur, sans effet visible. Non traité : redémarrer la session graphique (déconnexion/reconnexion) devrait suffire, à confirmer par l'utilisateur.

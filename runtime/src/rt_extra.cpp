@@ -521,9 +521,12 @@ uint32_t sh_FormatMessageA(cpu_t *c, const uint32_t *a) { (void)c; (void)a; retu
 uint32_t sh_GetUserDefaultLCID(cpu_t *c, const uint32_t *a) { (void)c; (void)a; return 0x0409; }
 uint32_t sh_GetLocaleInfoA(cpu_t *c, const uint32_t *a) { (void)c; (void)a; return 0; }
 
+extern "C" void ds_audio_stop();
+
 uint32_t sh_ExitProcess(cpu_t *c, const uint32_t *a)
 {
     (void)c;
+    ds_audio_stop();
     fflush(stdout);
     fflush(stderr);
     exit((int)a[0]);
@@ -836,10 +839,15 @@ void ds_mix(void *, Uint8 *stream, int len)
             dsb_play &p = kv.second;
             if (!p.playing) continue;
             uint32_t storage = get32(kv.first + 4), size = get32(kv.first + 8);
-            if (!storage || !size || p.align == 0) {
+            /* Le tampon vit dans le tas invité. Si l'objet a été libéré et réutilisé, ses champs
+             * sont arbitraires : borner évite une faute du fil audio (constatée à la sortie d'une
+             * course, adresse 0x0DC50034). La libération retire aussi l'entrée (sh_dsb_Release). */
+            if (!storage || !size || p.align == 0 ||
+                storage < RT_HEAP_BASE || storage >= RT_HEAP_BASE + RT_HEAP_SIZE) {
                 p.playing = false;
                 continue;
             }
+            if (size > RT_HEAP_BASE + RT_HEAP_SIZE - storage) size = RT_HEAP_BASE + RT_HEAP_SIZE - storage;
             double step = (double)(p.freq ? p.freq : p.rate) / 44100.0;
             float gain = (float)pow(10.0, p.volume / 2000.0);
             /* Atténuation 3D */
@@ -944,6 +952,17 @@ bool ds_audio_open()
     }
     SDL_PauseAudioDevice(ds_dev, 0);
     return true;
+}
+
+/* Arrêt du mixeur avant la sortie du processus : SDL ferme le fil audio et attend le rappel en
+ * cours. Évite qu'un rappel de mixage lise un tampon invité pendant le démontage (D-079). */
+extern "C" void ds_audio_stop()
+{
+    if (ds_dev) {
+        SDL_PauseAudioDevice(ds_dev, 1);
+        SDL_CloseAudioDevice(ds_dev);
+        ds_dev = 0;
+    }
 }
 
 /* Position de lecture d'un tampon (octets). Sous ds_mutex. */
@@ -1159,6 +1178,15 @@ uint32_t sh_ds_ok(cpu_t *c, const uint32_t *a) { (void)c; (void)a; return 0; }
 uint32_t sh_ds_zero(cpu_t *c, const uint32_t *a) { (void)c; (void)a; return 0; }
 uint32_t sh_ds_addref(cpu_t *c, const uint32_t *a) { (void)c; (void)a; return 2; }
 uint32_t sh_ds_release(cpu_t *c, const uint32_t *a) { (void)c; (void)a; return 1; }
+/* Release d'un tampon DirectSound : le retirer du mixage. Sans cela, le fil SDL continue de lire
+ * un objet invité que le jeu a libéré puis réutilisé (D-079). */
+uint32_t sh_dsb_Release(cpu_t *c, const uint32_t *a)
+{
+    (void)c;
+    std::lock_guard<std::mutex> lk(ds_mutex);
+    dsb_plays.erase(a[0]);
+    return 1;
+}
 static uint32_t sh_ds_objinpath(cpu_t *c, const uint32_t *a)
 {
     (void)c;
@@ -2462,7 +2490,7 @@ extern "C" const rt_shim_entry rt_extra_table[] = {
     {"dsoundcom3d::IDirectSound3DBuffer::SetPosition", 5, sh_ds3d_SetPosition},
     {"dsoundcom3d::IDirectSound3DBuffer::SetVelocity", 5, sh_ds3d_ok},
     {"dsoundcom::IDirectSoundBuffer::AddRef", 1, sh_ds_addref},
-    {"dsoundcom::IDirectSoundBuffer::Release", 1, sh_ds_release},
+    {"dsoundcom::IDirectSoundBuffer::Release", 1, sh_dsb_Release},
     {"dsoundcom::IDirectSoundBuffer::GetCaps", 2, sh_dsb_GetCaps},
     {"dsoundcom::IDirectSoundBuffer::GetCurrentPosition", 3, sh_dsb_GetCurrentPosition},
     {"dsoundcom::IDirectSoundBuffer::GetFormat", 4, sh_dsb_GetFormat},

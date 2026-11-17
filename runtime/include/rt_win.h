@@ -21,6 +21,8 @@ void *rt_win_host(uint32_t hwnd);
 uint32_t rt_win_guest(void *host);
 
 void rt_win_test_key(int down);
+/* Touche nommée pour les tests (CT3_KEY_HOLD) : up, down, left, right, return, x, s, space, escape. */
+void rt_win_test_key_named(const char *name, int down);
 void rt_win_key_states(uint8_t out[256]);  /* état clavier et manette par code DIK */
 /* diagnostic : bouton Start de la manette virtuelle (CT3_PAD_TEST, CT3_PAD_SEQ) */
 void rt_win_pad_test(int down, const char *name);

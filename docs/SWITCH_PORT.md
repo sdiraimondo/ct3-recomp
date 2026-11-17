@@ -167,6 +167,21 @@ mais pas de le peupler à la demande comme `mmap(PROT_NONE)` + `mprotect`. Trois
 3. Si la réservation contiguë reste impossible, introduire une **table de pages** derrière
    `guest_ld`/`guest_st`/`rt_gptr` : refactor plus lourd, à éviter tant que l'option 2 suffit.
 
+### Mesure du pic de heap (L1.1 / S2.1)
+
+Session de course de 130 s sur display réel, `CT3_WINDOWED=1`, navigation
+`CT3_KEYS=1200,1600,2000,2400` : le pic atteint **`0x10A78EB0` = 279 412 400 octets
+(~266 Mio)**, après le chargement de la course, puis plafonne.
+
+L'ancien arrêt à 9 058 présentations était une exception FP du CRT
+(`0xC000008F`, `STATUS_FLOAT_INEXACT_RESULT`, voir D-077), pas un épuisement du
+tas. Après le contournement, la même session dépasse 11 000 présentations ; le
+pic sur cet écran est de 239 570 384 octets (`0x0E4799D0`). La validation de
+course longue (30–60 min) reste à faire pour L1.3.
+
+Conséquence pour S2 : prévoir **au moins ~280 Mio de heap**, en plus de l'image
+(~3,9 Mo), du scratch (4 Mo) et des piles de threads.
+
 ## 4. Plan par jalons
 
 | Jalon | Contenu | Critère d'acceptation | Ordre de grandeur |

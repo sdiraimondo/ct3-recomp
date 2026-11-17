@@ -709,6 +709,80 @@ extern "C" uint32_t custom_IDirect3DDevice9_Present(cpu_t *c, const uint32_t *a)
             if ((long)present_count == pb.first) rt_win_pad_test(1, pb.second.c_str());
             if ((long)present_count == pb.first + 20) rt_win_pad_test(0, pb.second.c_str());
         }
+        /* CT3_KEY_SEQ=N:touche,N:touche,... : appuis discrets (maintenus 20 présentations) pour
+         * naviguer les menus au clavier. Touches : up, down, left, right, return, x, s, space, escape. */
+        static std::vector<std::pair<long, std::string>> key_seq;
+        static int key_seq_init = 0;
+        if (!key_seq_init) {
+            key_seq_init = 1;
+            const char *ks = getenv("CT3_KEY_SEQ");
+            while (ks && *ks) {
+                char *end = nullptr;
+                long n = strtol(ks, &end, 10);
+                if (end == ks || *end != ':') break;
+                ks = end + 1;
+                const char *name_end = ks;
+                while (*name_end && *name_end != ',') name_end++;
+                key_seq.push_back({n, std::string(ks, name_end)});
+                ks = *name_end ? name_end + 1 : name_end;
+            }
+        }
+        for (const auto &kb : key_seq) {
+            if ((long)present_count == kb.first) rt_win_test_key_named(kb.second.c_str(), 1);
+            if ((long)present_count == kb.first + 20) rt_win_test_key_named(kb.second.c_str(), 0);
+        }
+        /* CT3_PAD_HOLD=N:bouton,... : boutons maintenus à partir de la présentation N, sans relâchement
+         * (course automatisée pour la mesure du pic de heap). */
+        static std::vector<std::pair<long, std::string>> pad_hold;
+        static std::vector<char> pad_hold_done;
+        static int pad_hold_init = 0;
+        if (!pad_hold_init) {
+            pad_hold_init = 1;
+            const char *ps = getenv("CT3_PAD_HOLD");
+            while (ps && *ps) {
+                char *end = nullptr;
+                long n = strtol(ps, &end, 10);
+                if (end == ps || *end != ':') break;
+                ps = end + 1;
+                const char *name_end = ps;
+                while (*name_end && *name_end != ',') name_end++;
+                pad_hold.push_back({n, std::string(ps, name_end)});
+                ps = *name_end ? name_end + 1 : name_end;
+            }
+            pad_hold_done.assign(pad_hold.size(), 0);
+        }
+        for (size_t i = 0; i < pad_hold.size(); i++) {
+            if (!pad_hold_done[i] && (long)present_count >= pad_hold[i].first) {
+                pad_hold_done[i] = 1;
+                rt_win_pad_test(1, pad_hold[i].second.c_str());
+            }
+        }
+        /* CT3_KEY_HOLD=N:key,... : touches maintenues à partir de la présentation N, sans relâchement
+         * (course automatisée au clavier, sans manette virtuelle : voir CT3_KEY_HOLD=3600:up). */
+        static std::vector<std::pair<long, std::string>> key_hold;
+        static std::vector<char> key_hold_done;
+        static int key_hold_init = 0;
+        if (!key_hold_init) {
+            key_hold_init = 1;
+            const char *ks = getenv("CT3_KEY_HOLD");
+            while (ks && *ks) {
+                char *end = nullptr;
+                long n = strtol(ks, &end, 10);
+                if (end == ks || *end != ':') break;
+                ks = end + 1;
+                const char *name_end = ks;
+                while (*name_end && *name_end != ',') name_end++;
+                key_hold.push_back({n, std::string(ks, name_end)});
+                ks = *name_end ? name_end + 1 : name_end;
+            }
+            key_hold_done.assign(key_hold.size(), 0);
+        }
+        for (size_t i = 0; i < key_hold.size(); i++) {
+            if (!key_hold_done[i] && (long)present_count >= key_hold[i].first) {
+                key_hold_done[i] = 1;
+                rt_win_test_key_named(key_hold[i].second.c_str(), 1);
+            }
+        }
         /* CT3_KEYS=N1,N2,... : appuis sur Entrée aux présentations N1, N2, ... (maintenus 20 présentations). */
         static std::vector<long> keys;
         static int keys_init = 0;
@@ -752,11 +826,29 @@ extern "C" uint32_t custom_IDirect3DDevice9_Present(cpu_t *c, const uint32_t *a)
 
 // ---- Création et réinitialisation : fenêtre à la taille du back buffer -----
 
+/* CT3_WINDOWED=1 : force le mode fenêtré. Utile sous Xvfb, où aucun mode plein écran n'existe
+ * (SDL_GetClosestDisplayMode échoue). Désactivé par défaut : le jeu garde son comportement. */
+static int pp_force_windowed(D3DPRESENT_PARAMETERS &pp)
+{
+    static int on = -1;
+    if (on < 0) {
+        const char *s = getenv("CT3_WINDOWED");
+        on = s && atoi(s) != 0;
+    }
+    if (!on) return 0;
+    pp.Windowed = TRUE;
+    pp.FullScreen_RefreshRateInHz = 0;  /* D3D9 exige 0 en mode fenêtré */
+    return 1;
+}
+
 extern "C" uint32_t custom_IDirect3D9_CreateDevice(cpu_t *c, const uint32_t *a)
 {
     IDirect3D9 *self = rt_self<IDirect3D9>(a[0]);
     D3DPRESENT_PARAMETERS pp;
-    if (a[5]) rt_pp_in(a[5], pp);
+    if (a[5]) {
+        rt_pp_in(a[5], pp);
+        pp_force_windowed(pp);
+    }
     IDirect3DDevice9 *dev = nullptr;
     /* La swapchain est créée avec la taille de la fenêtre : la fenêtre est dimensionnée d'abord. */
     if (a[5]) rt_win_fit(a[3], pp.BackBufferWidth, pp.BackBufferHeight, pp.Windowed != 0);
@@ -771,7 +863,10 @@ extern "C" uint32_t custom_IDirect3DDevice9_Reset(cpu_t *c, const uint32_t *a)
     (void)c;
     IDirect3DDevice9 *self = rt_self<IDirect3DDevice9>(a[0]);
     D3DPRESENT_PARAMETERS pp;
-    if (a[1]) rt_pp_in(a[1], pp);
+    if (a[1]) {
+        rt_pp_in(a[1], pp);
+        pp_force_windowed(pp);
+    }
     if (a[1]) {
         D3DDEVICE_CREATION_PARAMETERS cp;
         if (SUCCEEDED(self->GetCreationParameters(&cp))) {

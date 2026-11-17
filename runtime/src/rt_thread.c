@@ -487,10 +487,17 @@ static void crash_handler(int sig, siginfo_t *info, void *ctx)
                 (unsigned long long)cpu_rd(t->cpu, 8, 4), (unsigned long long)cpu_rd(t->cpu, 12, 4),
                 (unsigned long long)cpu_rd(t->cpu, 16, 4), (unsigned long long)cpu_rd(t->cpu, 20, 4),
                 (unsigned long long)cpu_rd(t->cpu, 24, 4), (unsigned long long)cpu_rd(t->cpu, 28, 4));
-        /* Pile d'appels invitée (heuristique) : mots de la pile qui pointent dans le code du jeu. */
+        /* Pile d'appels invitée (heuristique) : mots de la pile qui pointent dans le code du jeu.
+         * La lecture est bornée à la pile du thread : au-delà de stack_top, la page n'est pas
+         * projetée et le diagnostic provoquerait une seconde faute (sans core exploitable). */
         uint32_t esp = (uint32_t)cpu_rd(t->cpu, 16, 4);
+        uint32_t limit = 0;
+        if (t->stack_low && t->stack_top && esp >= t->stack_low && esp < t->stack_top) {
+            limit = t->stack_top - esp;
+            if (limit > 0x800) limit = 0x800;
+        }
         int shown = 0;
-        for (uint32_t off = 0; off < 0x800 && shown < 12; off += 4) {
+        for (uint32_t off = 0; off + 4 <= limit && shown < 12; off += 4) {
             uint32_t v;
             memcpy(&v, rt_mem_base + esp + off, 4);
             if (v >= 0x401000u && v < 0x53b000u) {

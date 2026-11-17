@@ -23,8 +23,9 @@
 | Décompilation | ✅ suffisante | ~5 700 fonctions, ~443k instructions, 309 fonctions atteignables, aucun site p-code non supporté sur les chemins atteignables |
 | Runtime Linux | ✅ jouable | menus, course, son, manette ; tag `v0.1.0-linux` |
 | Spike AArch64 Linux | ✅ vert | `f80_crosscheck`, `test_x87`, `test_g2`, `test_cpu`, `test_vec` |
-| Toolchain Switch | ⬜ absente | devkitA64 non installé ; comportement de newlib inconnu |
-| Runtime Switch | ⬜ non commencé | dépend de S1–S7 |
+| Toolchain Switch | ✅ validée | devkitA64 15.2.0, libnx ; compilation et link d'une sonde Switch |
+| Sonde newlib (S1) | ✅ verte | binary128 LE, `ldexpl`/`frexpl` PASS, `char` non signé, `mmap` absent ; `tools/port/devkita64_probe.sh` |
+| Runtime Switch | ⬜ non commencé | dépend de S2–S7 (S1 faite) |
 | WSI Vulkan Switch | ⬜ non commencé | DXVK 3.1.1 n'a pas de backend Switch |
 | Mémoire invitée Switch | ⬜ non dimensionnée | hypothèse actuelle : 4 GiB contigus |
 
@@ -98,12 +99,12 @@ flowchart TB
   classDef done fill:#1f6f43,stroke:#39ff88,color:#fff
   classDef next fill:#1f4f8f,stroke:#66aaff,color:#fff
   classDef todo fill:#3a3a3a,stroke:#888,color:#ddd
-  class V done
-  class L1,S1,S2 next
+  class V,S1 done
+  class L1,S2 next
   class L2,L3,L4,L5,L6,L7,L8,L9,L10,L11,L12,S3,S4,S5,S6,S7,S8,S9,S10 todo
 ```
 
-**Chemin critique Switch** : `S1 → S2 → S4 → S5 → S8 → S9 → S10`.
+**Chemin critique Switch** : `S1 → S2 → S4 → S5 → S8 → S9 → S10` (`S1` faite le 17 nov. 2026).
 **Alimentation Linux → Switch** : `L1` fournit le pic de heap à `S2` ; `L3` et `L9` fournissent
 les dépendances et les imports à `S6` ; `L4` et `L12` fournissent les mesures de performance à `S9`.
 
@@ -135,6 +136,8 @@ gantt
   S9 performance            :s9, after s8, 28d
   S10 release               :s10, after s9, 14d
 ```
+
+`S1` a été exécutée le 17 novembre 2026, en avance sur le Gantt ; `G1` est franchie.
 
 Lecture : Linux et Switch avancent en parallèle. Le port Switch ne dépend pas de la fin des
 chantiers Linux, mais `L1` (pic de heap) et `L3`/`L9` (cinématiques, imports) réduisent ses risques.
@@ -199,11 +202,11 @@ chantiers Linux, mais `L1` (pic de heap) et `L3`/`L9` (cinématiques, imports) r
 
 | ID | Tâche | Critère d'acceptation | Dépend de | Est. | État | Réf. |
 |---|---|---|---|---|---|---|
-| **S1** | Sonde devkitA64/newlib | Résultats consignés : `sizeof(long double)`, `LDBL_MANT_DIG`, `LDBL_MAX_EXP`, boutisme, `ldexpl`/`frexpl`, `char`, `pthread`, `mmap`, `clock_gettime`, `__thread` | — | 1 sem. | ⬜ | SWITCH_PORT §2 |
+| **S1** | Sonde devkitA64/newlib | Résultats consignés : `sizeof(long double)`, `LDBL_MANT_DIG`, `LDBL_MAX_EXP`, boutisme, `ldexpl`/`frexpl`, `char`, `pthread`, `mmap`, `clock_gettime`, `__thread` | — | 1 sem. | ✅ | SWITCH_PORT §2, `tools/port/devkita64_probe.sh` |
 | **S2** | Mémoire invitée | Une fonction traduite s'exécute sur Switch dans une arène dimensionnée | L1.1, S1 | 2 sem. | ⬜ | SWITCH_PORT §3 |
 | S2.1 | Pic de heap | Pic mesuré (partagé avec L1.1) | L1.1 | — | ⬜ | — |
 | S2.2 | Abstraire `rt_va_reserve/commit/protect` | Implémentation Linux inchangée, interface commune | S1 | 1 sem. | ⬜ | rt_mem.c |
-| S2.3 | Arène Horizon (`virtmemReserve`, `svcMapMemory`) | Image + scratch + pile + heap + stubs mappés | S2.2 | 1 sem. | ⬜ | rt_proc.h |
+| S2.3 | Arène Horizon (`virtmemFindAslr` + `svcMapMemory`) | Image + scratch + pile + heap + stubs mappés | S2.2 | 1 sem. | ⬜ | rt_proc.h, S1 |
 | S2.4 | Valider pointeurs 32 bits et `test_g2` | `test_g2` vert sur AArch64 Linux ; smoke test Switch | S2.3 | 3 j | ⬜ | — |
 | **S3** | Threads et TLS | Démarrage, threads invités et sortie propres | S1 | 2 sem. | ⬜ | rt_thread.c |
 | S3.1 | Remplacer `pthread_cancel` | Annulation coopérative, aucun thread orphelin | — | 3 j | ⬜ | rt_thread.c:235 |
@@ -249,14 +252,14 @@ chantiers Linux, mais `L1` (pic de heap) et `L3`/`L9` (cinématiques, imports) r
 
 ## 7. Portes de décision
 
-| Porte | Question | Donnée d'entrée | Conséquence si « non » |
-|---|---|---|---|
-| **G1** | `long double` de newlib est-il binary128 little-endian ? | Sonde S1 | Type `extFloat80` logiciel, tests x87 supplémentaires |
-| **G2** | Le pic de heap tient-il dans une arène contiguë Horizon ? | Mesure L1.1 / S2.1 | Table de pages derrière `guest_ld`/`guest_st` |
-| **G3** | `mesa-switch` crée-t-il une surface et une swapchain stables ? | Smoke test S4.4 | Revoir le WSI ou la version de mesa |
-| **G4** | DXVK s'initialise-t-il sans loader Vulkan ? | S5.3 | Patch de chargement statique plus profond |
-| **G5** | Une course complète tient-elle en 720p ? | S8.3 | Réduire le périmètre du bring-up (cinématiques, replay) |
-| **G6** | Le seuil de performance est-il tenu ? | S9 | Résolution dynamique, overrides natifs, report de la release |
+| Porte | Question | Donnée d'entrée | Conséquence si « non » | État |
+|---|---|---|---|---|
+| **G1** | `long double` de newlib est-il binary128 little-endian ? | Sonde S1 | Type `extFloat80` logiciel, tests x87 supplémentaires | ✅ franchie : binary128 LE, 113 bits, exp 16384 |
+| **G2** | Le pic de heap tient-il dans une arène contiguë Horizon ? | Mesure L1.1 / S2.1 | Table de pages derrière `guest_ld`/`guest_st` | ⬜ en attente |
+| **G3** | `mesa-switch` crée-t-il une surface et une swapchain stables ? | Smoke test S4.4 | Revoir le WSI ou la version de mesa | ⬜ en attente |
+| **G4** | DXVK s'initialise-t-il sans loader Vulkan ? | S5.3 | Patch de chargement statique plus profond | ⬜ en attente |
+| **G5** | Une course complète tient-elle en 720p ? | S8.3 | Réduire le périmètre du bring-up (cinématiques, replay) | ⬜ en attente |
+| **G6** | Le seuil de performance est-il tenu ? | S9 | Résolution dynamique, overrides natifs, report de la release | ⬜ en attente |
 
 ## 8. Matrice de traçabilité
 
@@ -266,7 +269,8 @@ chantiers Linux, mais `L1` (pic de heap) et `L3`/`L9` (cinématiques, imports) r
 | Les cinématiques sont correctes | L3 | Captures avant/après, lecture des trois familles de fichiers | `TODO.md` |
 | Les 203 imports sont couverts | L9 | Journal sans « non résolu », tableau des imports | `TODO.md` |
 | Les réglages sont persistés | L6 | `Config.ini` relu après redémarrage | `TODO.md` |
-| Le port Switch démarre | S1–S8 | NRO qui boote, première course | `SWITCH_PORT.md` |
+| Le format `long double` est tranché | S1, G1 | Sonde `RESULT=PASS`, macros devkitA64, link libnx | `SWITCH_PORT.md`, `DECISIONS.md` |
+| Le port Switch démarre | S2–S8 | NRO qui boote, première course | `SWITCH_PORT.md` |
 | Le port Switch tient 30 fps | S9 | Profiling, captures de frame time | `SWITCH_PORT.md` |
 | Aucune donnée de jeu versionnée | L11, S10 | `git ls-files`, `.gitignore`, contrat du pack | `PACK.md` |
 | La base Linux est reproductible | L10 | Script unique + CI verte | `README.md` |
@@ -278,9 +282,9 @@ parallèle ; la trace donne l'ordre qui réduit le plus les risques.
 
 - [x] **M0** · base Linux figée, tag `v0.1.0-linux`
 - [x] **M1** · spike AArch64 (x87, G2, CPU, VEC, f80)
-- [ ] **S1** · sonde devkitA64 ← *prochaine action*
-- [ ] **L1.1** · pic de heap et reproduction 30 min
-- [ ] **G1** · format `long double` tranché
+- [x] **S1** · sonde devkitA64 (17 nov. 2026) — `tools/port/devkita64_probe.sh`, `RESULT=PASS`
+- [x] **G1** · format `long double` tranché : binary128 little-endian
+- [ ] **L1.1** · pic de heap et reproduction 30 min ← *prochaine action*
 - [ ] **S2** · mémoire invitée et arène
 - [ ] **G2** · taille d'arène validée
 - [ ] **S4** · WSI DXVK Switch
@@ -310,7 +314,8 @@ parallèle ; la trace donne l'ordre qui réduit le plus les risques.
 
 | Risque | Probabilité | Impact | Réduction |
 |---|---|---|---|
-| `long double` de newlib = `double` (53 bits) | moyenne | élevé | Sonde S1 tôt ; type `extFloat80` logiciel et tests x87 dédiés |
+| ~~`long double` de newlib = `double` (53 bits)~~ | — | — | Retiré par S1 : binary128 little-endian confirmé |
+| `char` non signé par défaut sur AArch64 | certaine | moyen | `-fsigned-char` dans la toolchain Switch (S1) |
 | Arène contiguë trop grande pour Horizon | moyenne | élevé | Mesure L1.1 ; repli sur table de pages |
 | NVK/mesa-switch instable sur les shaders de CT3 | moyenne | élevé | Smoke test S4.4 tôt ; versions de mesa épinglées |
 | SDL2 Switch incompatible avec Vulkan | moyenne | moyen | Backend libnx dédié (S6.3) |
@@ -321,14 +326,14 @@ parallèle ; la trace donne l'ordre qui réduit le plus les risques.
 
 ## 11. Prochaines actions (deux semaines)
 
-1. **S1** — Installer devkitA64 et exécuter la sonde newlib. Consigner les résultats dans
-   `SWITCH_PORT.md` (§2) et trancher **G1**.
-2. **L1.1 / S2.1** — Ajouter le compteur de pic de heap dans `rt_proc.c`, lancer une session de
+**S1 et G1 sont faites** (17 nov. 2026). Les prochaines actions sont :
+
+1. **L1.1 / S2.1** — Ajouter le compteur de pic de heap dans `rt_proc.c`, lancer une session de
    30 minutes et consigner le pic.
-3. **L1.2** — Reproduire le crash de 20–30 minutes avec `CT3_ALLOCLOG=1` et `CT3_HEAPCHK=1`.
-4. **S4.1** — Créer le squelette `src/wsi/switch/*` dans l'arbre DXVK local, sans engagement
+2. **L1.2** — Reproduire le crash de 20–30 minutes avec `CT3_ALLOCLOG=1` et `CT3_HEAPCHK=1`.
+3. **S4.1** — Créer le squelette `src/wsi/switch/*` dans l'arbre DXVK local, sans engagement
    fonctionnel : il permet de vérifier la compilation et l'interface `WsiDriver`.
-5. **L2** — Désassembler la fonction `atexit` à `0x5154b5` (tâche courte et indépendante).
+4. **L2** — Désassembler la fonction `atexit` à `0x5154b5` (tâche courte et indépendante).
 
 ## 12. Mise à jour
 

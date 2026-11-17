@@ -1,6 +1,6 @@
 # Portage Nintendo Switch — état, mesures et plan
 
-> Statut : note de travail, 17 novembre 2026.
+> Statut : note de travail, 17 novembre 2026. Spike AArch64 et sonde devkitA64 (S1) faits.
 > Objet : consigner le spike AArch64, les correctifs déjà appliqués et le plan de portage.
 > Ce document ne remplace pas `DECISIONS.md` (D-011 : backend séparé, Switch reporté) ; il le met à jour.
 > Le plan consolidé, avec les jalons `S1`–`S10`, les portes `G1`–`G6` et la matrice de traçabilité,
@@ -95,17 +95,46 @@ devkitA64/newlib. Premier test à faire sur la toolchain Switch :
 3. si newlib est en `long double` = `double` (53 bits), il faudra un type logiciel `extFloat80`
    et non `long double` : le correctif actuel ne suffira pas.
 
+### Sonde devkitA64 (S1) — 17 novembre 2026
+
+Environnement : image `devkitpro/devkita64`, gcc 15.2.0, newlib, libnx. La sonde
+bare-metal est exécutée par `qemu-system-aarch64` (`-M virt -cpu cortex-a57`) ;
+les fonctionnalités libnx sont vérifiées à la compilation et au link. Reproduction :
+`tools/port/devkita64_probe.sh` (aucune donnée de jeu).
+
+| Mesure | Résultat |
+|---|---|
+| `sizeof(long double)` | 16 |
+| `LDBL_MANT_DIG` | 113 |
+| `LDBL_MAX_EXP` / `LDBL_MIN_EXP` | 16384 / −16381 |
+| Boutisme | little-endian |
+| Précision | au-delà du double (`1.0L + LDBL_EPSILON != 1.0L`) |
+| `ldexpl` / `frexpl` | PASS : cas de base, signes, zéro, infini, bornes, aller-retour sur 33 exposants |
+| `char` | non signé (`CHAR_MIN = 0`) |
+| `pthread_create` / `pthread_join` | liés (libsysbase) |
+| `clock_gettime` / `gettimeofday` | liés |
+| `threadCreate` / `threadWaitForExit` (libnx) | liés |
+| `mmap` / `mprotect` / `munmap` | absents, pas de `sys/mman.h` |
+| `__thread` | OK, accès TLS émis (`-mtp=soft`) |
+
+**Porte G1 franchie** : newlib est binary128 little-endian, le chemin rapide de
+`rt_fp.h` s'applique sans type `extFloat80` ni `ldexpl`/`frexpl` pour la conversion
+x87. Deux conséquences pour le build Switch : `-fsigned-char` est obligatoire
+(le code invité suppose `char` signé), et la mémoire invitée ne peut pas utiliser
+`mmap`/`mprotect` : il faudra `virtmemFindAslr` + `svcMapMemory` (ou une arène
+contiguë réservée au démarrage).
+
 ## 3. Ce qui reste bloquant
 
 | Blocage | Poids | État / détail | Prochaine action |
 |---|---|---|---|
 | WSI DXVK Switch | **critique** | `rt_win.cpp:145` force `DXVK_WSI_DRIVER=SDL2`. DXVK 3.1.1 (commit `21fda8f`) a des backends SDL2/SDL3/GLFW/win32, aucun Switch. `mesa-switch` expose `VK_NN_vi_surface` + `NWindow`, sans copie CPU. | Ajouter `src/wsi/switch/*`, `DXVK_WSI_SWITCH`, `SwitchWSI` ; `createSurface` via `vkCreateViSurfaceNN` ; rendre DXVK loaderless. |
 | Vulkan loaderless | **critique** | `src/vulkan/vulkan_loader.cpp` fait `LoadLibraryA("libvulkan.so")`. mesa-switch est statique, sans loader. | Constructeur `LibraryLoader(PFN_vkGetInstanceProcAddr)` et injection de `vkGetInstanceProcAddr` au démarrage. |
-| Mémoire invitée | **critique** | `RT_GUEST_SIZE = 1<<32` (`rt.h:12`), `mmap` de 4 GiB (`rt_mem.c:17`), heap `0x40000000` + 960 MiB (`rt_proc.h:15-16`), accès partout via `rt_mem_base + addr`. Horizon n'a ni overcommit ni pagination à la demande. | Mesurer le pic réel du heap sous Linux ; abstraire `rt_va_reserve/commit/protect` ; dimensionner l'arène ; valider `svcMapMemory`/`virtmemReserve` sur devkitA64. |
-| Threads | moyen | `pthread_cancel` (`rt_thread.c:235`), TLS `__thread`, threads invités. | Backend thread Horizon + annulation coopérative ; tests de fin de partie et de sortie. |
+| Mémoire invitée | **critique** | `RT_GUEST_SIZE = 1<<32` (`rt.h:12`), `mmap` de 4 GiB (`rt_mem.c:17`), heap `0x40000000` + 960 MiB (`rt_proc.h:15-16`), accès partout via `rt_mem_base + addr`. Horizon n'a ni overcommit ni pagination à la demande ; `mmap`/`mprotect` sont absents de newlib/libnx (S1). | Mesurer le pic réel du heap sous Linux ; abstraire `rt_va_reserve/commit/protect` ; dimensionner l'arène ; utiliser `virtmemFindAslr` + `svcMapMemory` sur devkitA64. |
+| Threads | moyen | `pthread_cancel` (`rt_thread.c:235`), TLS `__thread`, threads invités. `pthread_create`/`pthread_join` et `__thread` sont disponibles (S1), mais `pthread_cancel` reste à remplacer. | Backend thread Horizon + annulation coopérative ; tests de fin de partie et de sortie. |
 | Performance | **élevé** | Conversion x87 par décalage de mantisse sur binary128 (aucune libm) ; mesure indicative sous qemu-user : ~208 ns par paire put+get, contre ~1 264 ns avec `ldexpl`/`frexpl` (émulation binary128 dominante, non représentatif du natif). 4× Cortex-A57 ~1 GHz contre le x86 actuel. | Profiler sur matériel ; overrides natifs `rt_filter.c` si le rendu reste limité par les conversions. |
 | Dépendances | moyen | fontconfig absent ; FFmpeg à cross-compiler ; SDL2 Switch incertain pour Vulkan. | Embarquer une police métrique (Liberation Sans) ; FFmpeg minimal ou cinématiques désactivées au premier bring-up ; backend fenêtre NWindow. |
-| Build Switch | moyen | Pas de toolchain devkitA64 configurée ; linkage statique ; pas de `dlopen`. | `cmake/toolchains/switch.cmake`, `-fsigned-char`, tests de fumée. |
+| Build Switch | moyen | Toolchain devkitA64 15.2.0 disponible (S1) ; linkage statique ; pas de `dlopen` ; `char` non signé par défaut. | `cmake/toolchains/switch.cmake`, `-fsigned-char`, `-mtp=soft`, `-fPIE`, tests de fumée. |
 | Hygiène des tests | — | Corrigé : `test_cpu` manquait `dispatch` sans code généré ; `tests/cpu/dispatch_stub.c` satisfait le symbole. Le test se relie et passe. | — |
 | Juridique | — | Pas de SDK Nintendo ni de code NDA. mesa-switch MIT, DXVK zlib, libnx BSD/Apache. Aucun asset ni code de jeu versionné. | Conserver le contrat du pack : `CT3.exe` fourni par l'utilisateur, pack généré localement. |
 
@@ -182,8 +211,9 @@ VEC OK (0 échec(s))
    méthodes COM vers DXVK ; le travail restant est le WSI et le loaderless.
 2. **Arène contiguë dimensionnée** (recommandé) plutôt qu'une table de pages, si le pic de heap
    mesuré le permet.
-3. **`long double` ou `extFloat80`** : à trancher après la sonde devkitA64. Si newlib est en
-   64 bits, prévoir un type logiciel et des tests de non-régression x87.
+3. **`long double`** : tranché par S1. newlib est binary128 little-endian (113 bits,
+   exposant 16384) ; le chemin rapide de `rt_fp.h` s'applique, sans type `extFloat80`.
+   Conserver les tests x87 comme non-régression.
 4. **Fenêtre NWindow dédiée** (recommandé) plutôt que SDL2 Switch pour le premier bring-up.
 5. **Cinématiques** : les désactiver au premier bring-up (le chemin FFmpeg est récent et non
    commité), puis les réintroduire après M4.
@@ -196,5 +226,8 @@ VEC OK (0 échec(s))
 - `~/.local/ct3-deps/src/dxvk` — DXVK 3.1.1, commit `21fda8f`.
 - `tools/port/aarch64_spike.sh` — reproduction du spike AArch64.
 - `tools/port/f80_crosscheck.c` — validation croisée x87 ↔ binary128 (motifs aléatoires).
+- `tools/port/devkita64_probe.sh` — sonde S1 : macros, newlib bare-metal, fonctionnalités libnx.
+- `tools/port/newlib_probe.c` — sonde exécutée par `qemu-system-aarch64` (format, `ldexpl`/`frexpl`).
+- `tools/port/switch_features.c` — vérification des symboles et du TLS côté Switch.
 - `docs/PACK.md` — contrat du pack de données.
 - `DECISIONS.md` D-011 — séparation backend/runtime, Switch reporté.

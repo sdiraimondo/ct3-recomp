@@ -843,6 +843,34 @@ Outils ajoutés (build de traçage) : `CT3_MEMWATCH=lo-hi` (écritures dans une 
 - **Portée** : le pack et le C généré restent des dérivés non versionnés
   (D-016). Format et contrat : `docs/PACK.md`.
 
+## D-075 : sonde devkitA64 et format de long double (17 nov. 2026)
+
+- **Contexte** : le port Switch suppose que `long double` de newlib est binary128
+  little-endian, comme sur Linux AArch64. La sonde S1 devait trancher la porte G1
+  et relever les primitives disponibles (threads, temps, mémoire, TLS).
+- **Méthode** : `tools/port/devkita64_probe.sh` compile et exécute une sonde
+  bare-metal avec `aarch64-none-elf-gcc` 15.2.0 (image `devkitpro/devkita64`),
+  sous `qemu-system-aarch64 -M virt -cpu cortex-a57`. Une seconde sonde
+  (`tools/port/switch_features.c`) est compilée et liée avec libnx pour vérifier
+  les symboles. Aucune donnée de jeu n'est utilisée.
+- **Résultats** : `sizeof(long double)=16`, `LDBL_MANT_DIG=113`,
+  `LDBL_MAX_EXP=16384`, `LDBL_MIN_EXP=-16381`, little-endian. `ldexpl`/`frexpl`
+  passent les cas de base, les bornes (débordement vers l'infini, sous-dépassement
+  vers zéro) et un aller-retour sur 33 exposants. `char` est non signé
+  (`CHAR_MIN=0`). `pthread_create`/`pthread_join`, `clock_gettime`,
+  `gettimeofday`, `threadCreate`/`threadWaitForExit` et `__thread` sont
+  disponibles (`-mtp=soft`). `mmap`/`mprotect`/`munmap` sont absents : pas de
+  `sys/mman.h`.
+- **Décision** : G1 est franchie ; le chemin rapide de `rt_fp.h` (binary128 par
+  décalage de mantisse) s'applique sur Switch, sans type `extFloat80` ni
+  `ldexpl`/`frexpl` pour la conversion x87. Le build Switch doit utiliser
+  `-fsigned-char`, `-mtp=soft` et `-fPIE` (specs libnx). La mémoire invitée
+  passera par `virtmemFindAslr` + `svcMapMemory`, pas par `mmap`/`mprotect`.
+- **Reproduction** : `tools/port/devkita64_probe.sh` (le script construit l'ELF
+  dans `build/port/` ; l'image QEMU locale est décrite dans son en-tête).
+- **Portée** : la sonde valide newlib/libnx, pas le matériel Switch ; les temps
+  et le comportement de NVK restent à mesurer sur console.
+
 ## Environnement (31 oct. 2026)
 
 - KWin (session Plasma/Wayland) ne mappe plus les fenêtres X11 nouvelles : constaté sur G1, glxgears et CT3. Une commande de rechargement de KWin (`org.kde.KWin.reconfigure`) a été lancée par erreur, sans effet visible. Non traité : redémarrer la session graphique (déconnexion/reconnexion) devrait suffire, à confirmer par l'utilisateur.

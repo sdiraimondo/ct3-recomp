@@ -28,6 +28,10 @@ An unofficial effort to decompile and statically recompile **Crazy Taxi 3** (Win
 
 ## Roadmap
 
+The consolidated, traceable plan — Linux finishing work (`L1`–`L12`), Nintendo Switch port (`S1`–`S10`),
+decision gates, dependencies, acceptance criteria and traceability matrix — is in
+[docs/ROADMAP.md](docs/ROADMAP.md). Short version:
+
 1. **In-game slowdowns.** Frame-time spikes during driving and camera changes. Next: measure them with DXVK's shader compilation log, then decide whether to precompile shaders at startup.
 2. **Startup time.** The first frame now appears about 10 seconds after launch. The remaining cost is mostly the DXT color block encoder, still translated.
 3. **Intro cinematics.** Still buggy. Movies do not play (the DirectShow playback is a stub that ends immediately), and some character polygons are wrong in the LV and SA cinematics.

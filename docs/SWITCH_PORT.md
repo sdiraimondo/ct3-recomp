@@ -3,6 +3,8 @@
 > Statut : note de travail, 17 novembre 2026.
 > Objet : consigner le spike AArch64, les correctifs déjà appliqués et le plan de portage.
 > Ce document ne remplace pas `DECISIONS.md` (D-011 : backend séparé, Switch reporté) ; il le met à jour.
+> Le plan consolidé, avec les jalons `S1`–`S10`, les portes `G1`–`G6` et la matrice de traçabilité,
+> est dans [`ROADMAP.md`](ROADMAP.md) ; les jalons `M0`–`M5` ci-dessous en sont la vue macroscopique.
 
 ## 1. Verdict
 

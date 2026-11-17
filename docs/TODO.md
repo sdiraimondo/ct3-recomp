@@ -1,7 +1,9 @@
 # TODO : Crazy Taxi 3 sous Linux
 
 Liste de travail, dans l'ordre de priorité indiqué par l'utilisateur. Le détail technique de chaque point est dans
-`DECISIONS.md` ; l'état d'ensemble est dans `docs/HANDOFF.md`. Mise à jour : 4 nov. 2026.
+`DECISIONS.md` ; l'état d'ensemble est dans [`HANDOFF.md`](HANDOFF.md). Le plan consolidé et traçable — chantiers
+Linux `L1`–`L12`, port Switch `S1`–`S10`, portes `G1`–`G6`, critères d'acceptation — est dans
+[`ROADMAP.md`](ROADMAP.md). Mise à jour : 17 nov. 2026.
 
 ## Terminé ou en place
 

@@ -30,6 +30,9 @@ extern uint32_t rt_cur_insn;
 extern uint32_t rt_probe_lo, rt_probe_span;
 void rt_probe_hit(cpu_t *c, uint32_t addr);
 void rt_probe_present(void);
+/* Cinématiques : avance la lecture de la vidéo en cours (décodage FFmpeg) et alimente la texture du
+ * filtre « INTRO TEXTURE RENDERER ». Appelé à chaque présentation. */
+void rt_movie_tick(cpu_t *c);
 /* Dossier du jeu (assets, Config.ini) : base des chemins Win32 et de l'écran de chargement. */
 void rt_set_game_dir(const char *dir);
 /* Écran de chargement (avi/loading.avi, FFmpeg) : démarré au lancement, arrêté à la première présentation. */
@@ -49,6 +52,7 @@ void rt_probe_dump(void);
 /* Diagnostic (CT3_MEMWATCH=lo-hi) : affiche chaque écriture invitée dans la plage. */
 extern uint32_t rt_memwatch_lo, rt_memwatch_span, rt_memwatch_val;
 void rt_memwatch_hit(cpu_t *c, uint32_t addr, unsigned size, uint64_t v);
+void rt_memwatch_block(uint32_t addr, const void *src, unsigned n);
 static inline void rt_probe(cpu_t *c, uint32_t addr)
 {
     if (addr - rt_probe_lo < rt_probe_span) rt_probe_hit(c, addr);
@@ -111,6 +115,29 @@ static inline void guest_st(cpu_t *c, uint32_t addr, unsigned size, uint64_t v)
 {
     if (__builtin_expect(addr - rt_memwatch_lo < rt_memwatch_span, 0) || (rt_memwatch_val && (uint32_t)v == rt_memwatch_val)) rt_memwatch_hit(c, addr, size, v);
     memcpy(rt_mem_base + addr, &v, size);
+}
+
+/* Écriture de plus de 8 octets (copie de bloc, flottant 80 bits) : même suivi que guest_st. */
+static inline void guest_write(uint32_t addr, const void *src, unsigned n)
+{
+    if (__builtin_expect(addr - rt_memwatch_lo < rt_memwatch_span, 0)) rt_memwatch_block(addr, src, n);
+    memcpy(rt_mem_base + addr, src, n);
+}
+void rt_memwatch_fill(uint32_t addr, int value, unsigned n);
+/* Remplissage (memset) de la mémoire invitée : même suivi. */
+static inline void guest_fill(uint32_t addr, int value, unsigned n)
+{
+    if (__builtin_expect(addr - rt_memwatch_lo < rt_memwatch_span, 0)) rt_memwatch_fill(addr, value, n);
+    memset(rt_mem_base + addr, value, n);
+}
+/* À appeler après une écriture faite directement sur rt_mem_base (lecture de fichier, copie de lignes). */
+static inline void guest_note(uint32_t addr, unsigned n)
+{
+    if (__builtin_expect(addr - rt_memwatch_lo < rt_memwatch_span, 0)) rt_memwatch_block(addr, rt_mem_base + addr, n);
+}
+static inline void guest_st_block(uint32_t addr, const void *src, unsigned n)
+{
+    guest_write(addr, src, n);
 }
 
 static inline uint64_t rt_mask(unsigned size)

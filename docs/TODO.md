@@ -25,8 +25,11 @@ Liste de travail, dans l'ordre de priorité indiqué par l'utilisateur. Le déta
 
 ## 2. Son : reste à faire
 
-- Atténuation 3D des tampons (absente : les méthodes 3D n'ont pas d'effet, `rt_extra.cpp`).
-- Interpolation du rééchantillonnage (plus proche voisin actuellement).
+- **Atténuation 3D (premier jet fait)** : position/min/max distance stockées dans `IDirectSound3DBuffer`, atténuation
+  par distance et panoramique basique dans le mixeur SDL (`rt_extra.cpp`). À vérifier en jeu et affiner (facteur de
+  chute, cônes, orientation, position de l'écouteur non renseignée par le jeu pour l'instant).
+- Interpolation du rééchantillonnage (plus proche voisin actuellement ; une version linéaire a été tentée puis retirée
+  à cause d'accès mémoire hors bornes).
 - Cinématiques : muettes, faute de flux DirectShow (D-061).
 
 ## 3. Ralentissements en jeu (compilation des shaders) : à traiter
@@ -49,24 +52,24 @@ Liste de travail, dans l'ordre de priorité indiqué par l'utilisateur. Le déta
 
 ## 5. Win32 : manques et implémentations partielles
 
-- Sur 203 imports de `CT3.exe`, 189 sont implémentés. 14 manquent : `DialogBoxParamA`, `EndDialog`, `GetDlgItem`,
-  `IsDlgButtonChecked`, `CheckRadioButton`, `RaiseException`, `RtlUnwind`, `CreateFileW`, `EnumSystemLocalesA`,
-  `GetLocaleInfoW`, `GetEnvironmentStrings`, `GetIconInfo`, et deux ordinaux (`COMCTL32 #17`, `DSOUND #11`).
-  Un appel à l'un d'eux arrête le runtime (code 3). Aucun n'apparaît dans nos journaux, mais leurs sites d'appel ne
-  sont pas vérifiés.
+- Sur 203 imports de `CT3.exe`, 191 sont implémentés. 12 manquent : `CreateFileW`, `EnumSystemLocalesA`,
+  `GetEnvironmentStrings`, `GetLocaleInfoW`, `RaiseException`, `RtlUnwind`, `DialogBoxParamA`, `EndDialog`,
+  `GetDlgItem`, `IsDlgButtonChecked`, `CheckRadioButton`, `GetIconInfo`. Les ordinaux `COMCTL32 #17` et `DSOUND #11`
+  sont couverts. Un appel à l'un des 12 arrête le runtime (code 3) ; aucun n'apparaît dans nos journaux, sites d'appel
+  non vérifiés.
+- Attention : des stubs naïfs de `RaiseException`/`RtlUnwind` (sortie immédiate, unwind sans effet) cassent la gestion
+  SEH/C++ du jeu et provoquent un crash après l'écran de chargement. Ne pas les réintroduire tels quels ; il faut une
+  vraie gestion des exceptions ou laisser l'import absent.
 - Implémentations partielles : `GetStringType` (type 1 seulement), `LCMapString` (indicateurs 0x100 et 0x200
   seulement).
-- À faire : vérifier les sites d'appel des 14 imports (le p-code) ; commencer par `CreateFileW`, `RaiseException` et
-  `RtlUnwind`.
 - Licence : le dépôt n'a pas encore de licence. Tant que ce n'est pas tranché, aucun code de Wine ne peut être copié.
   Une réimplémentation à partir de la documentation et des tests de Wine reste possible.
 
 ## 6. Cinématiques
 
-- Seule `avi/loading.avi` est présente dans la copie (D-004, D-005). Les cinématiques `sa_ic.avi`, `go_bb.avi` et
-  `go_an.avi` manquent : sans elles, le graphe DirectShow factice (D-061) termine la lecture immédiatement.
-- À faire quand les fichiers seront disponibles : identifier leur codec avec `ffprobe` et vérifier la lecture avec
-  FFmpeg (déjà compilé dans le préfixe, `tools/deps/build_ffmpeg.sh`).
+- **Fait** : les cinématiques sont lues par FFmpeg et envoyées directement au filtre « INTRO TEXTURE RENDERER » du jeu (Receive) en passant par un graphe DirectShow factice. Le décodeur est ouvert au Run, la texture est fournie par le jeu, les images BGR24 sont converties en BGRA avec le bon pas et retournées verticalement (DIB bas-en-haut). EC_COMPLETE n'est posté qu'à la fin réelle (ou immédiatement si le fichier manque) pour ne pas figer la scène SA. Rewind/loop fonctionne (`put_CurrentPosition(0.0)`). Audio des cinématiques non implémenté (hors point 2).
+- Tous les fichiers dans `avi/` sont présents : `loading.avi` (rawvideo 128×128), cinématiques titre (`go_*.avi`, `wc_*.avi`, `sa_*.avi`) en cinepak 640×480 et replay (`Movie_LV.avi`, `Movie_SA.avi`) en rawvideo 128×128. Vérifié en lecture : wc_ax/wc_bd.
+- Reste à faire : tests des cinématiques en jeu (sélection de voiture, replay), vérifier la synchronisation avec les états du réalisateur, et éventuellement corriger d'éventuels problèmes de format.
 
 ## 7. Runtime sans CT3.exe (lots 1 et 2 faits)
 
@@ -121,3 +124,14 @@ Liste de travail, dans l'ordre de priorité indiqué par l'utilisateur. Le déta
 
 - Un run s'est arrêté à 17:45 par `rt: tas invité épuisé`.
 - À faire : `CT3_ALLOCLOG=1` et `CT3_HEAPCHK=1` sur une session longue, pour trouver la fuite.
+
+### Crash à la fin d'une manche/round
+- Observé de manière intermittente à la fin d'une partie (temps écoulé). À reproduire et tracer (stack trace sous gdb).
+- Peut être lié à la libération/atexit ou à un état de jeu non géré.
+
+### Crashes DXVK/Vulkan intermittents
+- `VK_ERROR_DEVICE_LOST` observé avec DXVK (notamment sur BC-250/RADV). Peut provoquer un abort du processus.
+- À investiguer : options DXVK, gestion d'erreur, stabilité sur ce matériel.
+
+### Écran noir intermittent
+- Écran noir observé ponctuellement au démarrage/transitions. Généralement passager, à surveiller et tracer si récurrent.

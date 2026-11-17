@@ -14,6 +14,9 @@
 #include <string.h>
 
 extern int rt_trace_imports;
+uint32_t rt_cur_insn = 0;
+__thread unsigned rt_cs_depth = 0;
+__thread uint32_t rt_cs_stack[65536];
 uint32_t rt_probe_lo, rt_probe_span;
 
 /* CT3_RING=<n presents> : après ce nombre de présentations, les 256 dernières instructions sont gardées
@@ -141,3 +144,6 @@ void rt_diag_init(void)
     const char *pr = getenv("CT3_PROBE");
     if (pr && !getenv("CT3_PROBE_AFTER")) parse_range(pr, &rt_probe_lo, &rt_probe_span);
 }
+__attribute__((weak)) void rt_watch_entry(cpu_t *c, uint32_t addr) { (void)c; (void)addr; }
+void rt_memwatch_fill(uint32_t addr, int value, unsigned n) { (void)addr; (void)value; (void)n; }
+void rt_memwatch_block(uint32_t addr, const void *src, unsigned n) { (void)addr; (void)src; (void)n; }

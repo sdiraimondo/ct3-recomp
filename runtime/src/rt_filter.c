@@ -46,7 +46,7 @@ static uint32_t rd32(uint32_t a)
 
 static void wr32(uint32_t a, uint32_t v)
 {
-    memcpy(rt_mem_base + a, &v, 4);
+    guest_write(a, &v, 4);
 }
 
 static float rdf(uint32_t a)
@@ -58,7 +58,7 @@ static float rdf(uint32_t a)
 
 static void wrf(uint32_t a, float f)
 {
-    memcpy(rt_mem_base + a, &f, 4);
+    guest_write(a, &f, 4);
 }
 
 /* Appel d'une fonction invitée depuis le natif : args poussés (premier argument au sommet), RET de l'appelé,
@@ -209,7 +209,7 @@ static uint32_t filter_body(cpu_t *c, uint32_t P)
                             wr32(freel, 0);
                             freel = rd32(freel + 4);
                         }
-                        memset(rt_mem_base + rd32(e), 0, (size_t)((rd32(D + 0x68) & 0xfffffff) << 4));
+                        guest_fill(rd32(e), 0, (size_t)((rd32(D + 0x68) & 0xfffffff) << 4));
                     }
                 }
 
@@ -343,7 +343,7 @@ static void check_call(cpu_t *c, uint32_t P)
     uint8_t *memt = malloc(lent);
     memcpy(memt, rt_mem_base + RT_HEAP_BASE, lent);
 
-    memcpy(rt_mem_base + RT_HEAP_BASE, snap, len0);
+    guest_write(RT_HEAP_BASE, snap, len0);
     rt_heap_set_state(top0, bins0);
     *c = cs;
     cw_count = 0;
@@ -396,7 +396,7 @@ static void check_call(cpu_t *c, uint32_t P)
             rd32(rd32(rd32(P)) + 4), rd32(rd32(P) + 0x10), rd32(rd32(P) + 0x54), rd32(rd32(P) + 0x5C),
             rd32(rd32(rd32(P + 4)) + 8), rd32(rd32(P + 4) + 0x10), rd32(rd32(P + 4) + 0x54), rd32(rd32(P + 4) + 0x5C));
     /* Identique : on garde l'état traduit (même que le natif). */
-    memcpy(rt_mem_base + RT_HEAP_BASE, memt, lent);
+    guest_write(RT_HEAP_BASE, memt, lent);
     rt_heap_set_state(top_t, bins_t);
     *c = ct;
     free(snap);
@@ -448,7 +448,7 @@ static void dxt1_decode(uint32_t dst, uint32_t src)
         unsigned idx = (w >> (2 * t)) & 3u;
         memcpy(out[t], p[idx], sizeof out[t]);
     }
-    memcpy(rt_mem_base + dst, out, sizeof out);
+    guest_write(dst, out, sizeof out);
 }
 
 /* Point d'entrée traduit : args (dst, src) au sommet de la pile, RET 8. */
@@ -492,7 +492,7 @@ static void dither_prop(uint32_t self, uint32_t buf)
         uint32_t e = err + 16 * (t + 1), b = buf + 16 * t;
         for (int k = 0; k < 4; k++) wrf(b + 4 * k, (float)((long double)rdf(e + 4 * k) + rdf(b + 4 * k)));
     }
-    memset(rt_mem_base + err, 0, (size_t)(((W + 2) & 0xfffffff) << 4));
+    guest_fill(err, 0, (size_t)(((W + 2) & 0xfffffff) << 4));
 }
 
 /* FUN_004DDB6F (thiscall, RET 0xC) : args p2 (ligne ou passe, bit 0 = sens), p3 (ligne), buf (float4 × W). */

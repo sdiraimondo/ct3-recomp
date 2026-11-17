@@ -40,6 +40,9 @@ typedef struct rt_com_obj {
 rt_com_obj *rt_com_obj_of(uint32_t guest);
 int rt_com_iface_index(const char *name);
 
+/* Taille du niveau 0 d'une texture ou surface invitée (renvoie 1 si connue). */
+int rt_d3d9_guest_size(uint32_t guest, uint32_t *w, uint32_t *h);
+
 }  // extern "C"
 
 void rt_pp_in(uint32_t guest, D3DPRESENT_PARAMETERS &out);

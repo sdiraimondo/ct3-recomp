@@ -48,6 +48,6 @@ uint32_t rt_cpuid_block(cpu_t *c)
         break;
     }
 
-    memcpy(rt_mem_base + RT_CPUID_SCRATCH, r, sizeof r);
+    guest_write(RT_CPUID_SCRATCH, r, sizeof r);
     return RT_CPUID_SCRATCH;
 }

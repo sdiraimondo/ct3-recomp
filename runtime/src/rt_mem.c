@@ -41,5 +41,5 @@ int rt_mem_protect(uint32_t addr, uint32_t size, int prot)
 
 void rt_mem_fill(uint32_t addr, uint32_t size, uint8_t value)
 {
-    memset(rt_mem_base + addr, value, size);
+    guest_fill(addr, value, size);
 }

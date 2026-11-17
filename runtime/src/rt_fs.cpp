@@ -45,7 +45,7 @@ uint32_t get32(uint32_t addr)
 
 void put32(uint32_t addr, uint32_t v)
 {
-    memcpy(rt_mem_base + addr, &v, 4);
+    guest_write(addr, &v, 4);
 }
 
 std::string cstr(uint32_t addr, size_t max = 4096)
@@ -64,7 +64,7 @@ void put_cstr(uint32_t dst, const std::string &s, uint32_t max)
 {
     if (!max) return;
     uint32_t n = (uint32_t)s.size() < max - 1 ? (uint32_t)s.size() : max - 1;
-    memcpy(rt_mem_base + dst, s.data(), n);
+    guest_write(dst, s.data(), n);
     rt_mem_base[dst + n] = 0;
 }
 
@@ -80,7 +80,7 @@ void fill_find_data(uint32_t out, const std::string &dir, const char *name)
 {
     struct stat st;
     std::string full = dir + "/" + name;
-    memset(rt_mem_base + out, 0, 320);
+    guest_fill(out, 0, 320);
     bool ok = stat(full.c_str(), &st) == 0;
     bool isdir = ok && S_ISDIR(st.st_mode);
     uint64_t size = ok ? (uint64_t)st.st_size : 0;
@@ -180,7 +180,7 @@ uint32_t sh_GetFullPathNameA(cpu_t *c, const uint32_t *a)
     rt_file_resolve(cstr(a[0]).c_str(), resolved, sizeof resolved);
     size_t len = strlen(resolved);
     if (len + 1 > a[1]) return (uint32_t)(len + 1);
-    memcpy(rt_mem_base + a[2], resolved, len + 1);
+    guest_write(a[2], resolved, len + 1);
     if (a[3]) {
         const char *last = strrchr(resolved, '/');
         put32(a[3], a[2] + (uint32_t)(last ? last - resolved + 1 : 0));
@@ -229,7 +229,7 @@ uint32_t sh_GetFileTime(cpu_t *c, const uint32_t *a)
 uint32_t sh_FileTimeToLocalFileTime(cpu_t *c, const uint32_t *a)
 {
     (void)c;
-    memcpy(rt_mem_base + a[1], rt_mem_base + a[0], 8);
+    guest_write(a[1], rt_mem_base + a[0], 8);
     return 1;
 }
 
@@ -244,7 +244,7 @@ uint32_t sh_FileTimeToSystemTime(cpu_t *c, const uint32_t *a)
     uint16_t w[8] = {(uint16_t)(t.tm_year + 1900), (uint16_t)(t.tm_mon + 1), (uint16_t)t.tm_wday,
                      (uint16_t)t.tm_mday, (uint16_t)t.tm_hour, (uint16_t)t.tm_min, (uint16_t)t.tm_sec,
                      (uint16_t)((ft / 10000ULL) % 1000ULL)};
-    memcpy(rt_mem_base + a[1], w, sizeof w);
+    guest_write(a[1], w, sizeof w);
     return 1;
 }
 
@@ -290,6 +290,7 @@ uint32_t sh_MapViewOfFile(cpu_t *c, const uint32_t *a)
     while (got < size) {
         ssize_t r = pread(fd, rt_mem_base + dst + got, size - got, (off_t)(off + got));
         if (r <= 0) break;
+        guest_note(dst + (uint32_t)got, (unsigned)r);
         got += (size_t)r;
     }
     return dst;

@@ -90,12 +90,12 @@ static obj *find_obj(uint32_t h)
 static void init_teb(uint32_t teb, uint32_t stack_low, uint32_t stack_top)
 {
     uint32_t v;
-    memset(rt_mem_base + teb, 0, 0x1000);
-    v = 0xFFFFFFFFu; memcpy(rt_mem_base + teb + 0x00, &v, 4);
-    v = stack_top;   memcpy(rt_mem_base + teb + 0x04, &v, 4);
-    v = stack_low;   memcpy(rt_mem_base + teb + 0x08, &v, 4);
-    v = teb;         memcpy(rt_mem_base + teb + 0x18, &v, 4);
-    v = RT_PEB_BASE; memcpy(rt_mem_base + teb + 0x30, &v, 4);
+    guest_fill(teb, 0, 0x1000);
+    v = 0xFFFFFFFFu; guest_write(teb + 0x00, &v, 4);
+    v = stack_top;   guest_write(teb + 0x04, &v, 4);
+    v = stack_low;   guest_write(teb + 0x08, &v, 4);
+    v = teb;         guest_write(teb + 0x18, &v, 4);
+    v = RT_PEB_BASE; guest_write(teb + 0x30, &v, 4);
 }
 
 static void push_guest(cpu_t *c, uint32_t v)

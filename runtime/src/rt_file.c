@@ -123,6 +123,7 @@ int rt_file_read(uint32_t h, uint32_t buf, uint32_t n, uint32_t got_addr)
         return 0;
     }
     ssize_t r = read(fd, rt_mem_base + buf, n);
+    if (r > 0) guest_note(buf, (unsigned)r);
     if (r < 0) {
         rt_error = ERROR_ACCESS_DENIED;
         if (getenv("CT3_FILELOG")) fprintf(stderr, "[lecture-erreur] h=0x%x : lecture refusée\n", h);
@@ -130,7 +131,7 @@ int rt_file_read(uint32_t h, uint32_t buf, uint32_t n, uint32_t got_addr)
     }
     if (got_addr) {
         uint32_t got = (uint32_t)r;
-        memcpy(rt_mem_base + got_addr, &got, 4);
+        guest_write(got_addr, &got, 4);
     }
     {
         static int log = -1;
@@ -155,7 +156,7 @@ int rt_file_write(uint32_t h, uint32_t buf, uint32_t n, uint32_t got_addr)
     }
     if (got_addr) {
         uint32_t got = (uint32_t)w;
-        memcpy(rt_mem_base + got_addr, &got, 4);
+        guest_write(got_addr, &got, 4);
     }
     rt_error = 0;
     return 1;
@@ -182,7 +183,7 @@ uint32_t rt_file_seek(uint32_t h, uint32_t dist_low, uint32_t dist_high_addr, ui
     }
     if (dist_high_addr) {
         uint32_t high = (uint32_t)((uint64_t)pos >> 32);
-        memcpy(rt_mem_base + dist_high_addr, &high, 4);
+        guest_write(dist_high_addr, &high, 4);
     }
     rt_error = 0;
     return (uint32_t)pos;
@@ -198,7 +199,7 @@ uint32_t rt_file_size(uint32_t h, uint32_t high_addr)
     }
     if (high_addr) {
         uint32_t high = (uint32_t)((uint64_t)st.st_size >> 32);
-        memcpy(rt_mem_base + high_addr, &high, 4);
+        guest_write(high_addr, &high, 4);
     }
     rt_error = 0;
     return (uint32_t)st.st_size;

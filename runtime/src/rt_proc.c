@@ -1,5 +1,6 @@
 #include <stdio.h>
 #include <stdlib.h>
+#include "rt.h"
 #include "rt_proc.h"
 #include "rt_thread.h"
 void rt_diag_init(void);
@@ -11,10 +12,7 @@ int rt_mem_protect(uint32_t addr, uint32_t size, int prot);
 int rt_mem_init(void);
 
 /* Dernière instruction invitée exécutée (CT3_TRACE_INSN=1 à la traduction) : affichée au plantage. */
-uint32_t rt_cur_insn;
 
-__thread uint32_t rt_cs_stack[RT_CS_MAX];
-__thread unsigned rt_cs_depth;
 
 void rt_regs_save(cpu_t *c, uint32_t s[4])
 {
@@ -60,7 +58,7 @@ static uint32_t heap_bins[RT_HEAP_BINS];
 
 static void put32(uint32_t addr, uint32_t v)
 {
-    memcpy(rt_mem_base + addr, &v, 4);
+    guest_write(addr, &v, 4);
 }
 
 static uint32_t get32(uint32_t addr)
@@ -184,7 +182,7 @@ uint32_t rt_heap_alloc(uint32_t size, int zero)
     put32(block, cap);
     put32(block + 4, RT_BLOCK_USED);
     if (zero) {
-        memset(rt_mem_base + block + 8, 0, cap);
+        guest_fill(block + 8, 0, cap);
     }
     if (heap_trace()) fprintf(stderr, "[h+] 0x%08x 0x%x\n", block + 8, cap);
     heap_check("alloc");
@@ -200,7 +198,7 @@ void rt_heap_free(uint32_t p)
     static int poison = -1;
     if (poison < 0) poison = getenv("CT3_HEAPPOISON") != NULL;
     if (heap_trace()) fprintf(stderr, "[h-] 0x%08x 0x%x\n", p, get32(block));
-    if (poison) memset(rt_mem_base + p, 0xDB, get32(block));
+    if (poison) guest_fill(p, 0xDB, get32(block));
     uint32_t total = block_total(get32(block));
     uint32_t next = block + total;
     while (next < heap_next && get32(next + 4) == RT_BLOCK_FREE) {
@@ -229,7 +227,7 @@ uint32_t rt_heap_realloc(uint32_t p, uint32_t size)
     uint32_t q = rt_heap_alloc(size, 1);
     if (p) {
         uint32_t old = rt_heap_size(p);
-        memcpy(rt_mem_base + q, rt_mem_base + p, old < size ? old : size);
+        guest_write(q, rt_mem_base + p, old < size ? old : size);
         rt_heap_free(p);
     }
     return q;
@@ -254,7 +252,7 @@ int rt_process_init(cpu_t *c)
         return -1;
     }
     /* TEB : ExceptionList = fin de chaîne, StackBase/StackLimit, Self, PEB, TLS. */
-    memset(rt_mem_base + RT_TEB_BASE, 0, 0x1000);
+    guest_fill(RT_TEB_BASE, 0, 0x1000);
     put32(RT_TEB_BASE + 0x00, 0xFFFFFFFFu);
     put32(RT_TEB_BASE + 0x04, RT_STACK_TOP);
     put32(RT_TEB_BASE + 0x08, RT_STACK_LIMIT);
@@ -262,9 +260,9 @@ int rt_process_init(cpu_t *c)
     put32(RT_TEB_BASE + 0x30, RT_PEB_BASE);
     put32(RT_TEB_BASE + 0x2C, RT_TLS_BASE);
     /* PEB : ImageBaseAddress à 0x08. */
-    memset(rt_mem_base + RT_PEB_BASE, 0, 0x1000);
+    guest_fill(RT_PEB_BASE, 0, 0x1000);
     put32(RT_PEB_BASE + 0x08, RT_IMAGE_BASE);
-    memset(rt_mem_base + RT_TLS_BASE, 0, 0x1000);
+    guest_fill(RT_TLS_BASE, 0, 0x1000);
     cpu_wr(c, RT_FS_OFFSET_REG, 4, RT_TEB_BASE);
     rt_thread_main_init(c);
     rt_install_crash_handler();

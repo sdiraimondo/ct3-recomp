@@ -588,6 +588,41 @@ Outils ajoutés (build de traçage) : `CT3_MEMWATCH=lo-hi` (écritures dans une 
 - **Différence** : la valeur de `[rec+4]` est `0x3F800001` (au lieu de `0x3F800000` dans `crash4`), et la faute est à l'adresse `0x3F800001`. Le mot a donc changé d'un bit de plus. L'écrivain reste à identifier.
 - **Durée et position** : non mesurées (pas de `CT3_PRESENT_LOG` dans cette session).
 
+### Suivi des écritures au tas (CT3_WRITERS, 3 nov. 2026, suite de D-069)
+
+- **But** : savoir quelle instruction (ou quel appel) a écrit la dernière fois la case `[EBX+4]` du plantage A, sans build de traçage (`CT3_TRACE_INSN` ne donne pas l'instruction en course et ralentit).
+- **Mécanisme** : `CT3_WRITERS=1` étend le point de contrôle `guest_st` à tout le tas (`RT_HEAP_BASE`, `RT_HEAP_SIZE`). Chaque écriture est notée dans une table de hachage de 4 M entrées (adresse du mot, adresse exacte de l'écriture, valeur, deux plus récents appels de la pile `rt_cs`). Pas de sortie pendant le jeu.
+- **Au plantage** : `crash_handler` affiche `rt: dernière écriture de 0x... : en 0x..., valeur ..., appels 0x... 0x...` pour `EBX+4`, ou « inconnue » si la case a été écrasée ou écrite hors `guest_st`.
+- **Limites** : l'instruction exacte n'est pas connue (pas de `rt_cur_insn` hors traçage) : l'appel `cs0` est l'adresse de retour dans l'appelant de la routine qui écrit ; la routine elle-même est la cible de l'appel en `cs0` (à retrouver dans le désassemblage). Les copies de blocs de plus de 8 octets (`memcpy` du code généré, ligne 243 de `ct3rc.py`) et les routines natives ne passent pas par `guest_st` : une écriture manquante peut venir de là.
+- **Coût** : chaque écriture dans le tas passe par la table ; la vitesse baisse (non mesurée).
+- **Vérification** : tests `test_cpu`, `test_vec`, `test_x87`, `test_g2`, `g1_d3d9_triangle` verts (`build-check/`) ; manette virtuelle sur Xvfb `:99` avec `CT3_WRITERS=1` : 3 912 et 3 992 présentations, sans effet sur le jeu. Le rapport au plantage n'a pas été vu en course (la sortie `0x5154B5` a `EBX=0`, donc « non mappée »).
+- **Constat annexe** : la fermeture par `0x5154B5` (`exit(3)`) bloque parfois jusqu'au délai de `timeout` (une fois sur deux, avec et sans `CT3_WRITERS`). Pré-existant, non traité.
+- **Prochaine étape** : partie de l'utilisateur sur son écran avec `CT3_WRITERS=1`, puis lecture de « dernière écriture » et désassemblage de la routine appelante.
+
+### Suivi des écritures, suite (3 nov. 2026, suite de D-069)
+
+- **Premier rapport (plantage à 13 496 présentations)** : `[EBX+4]` = `0x45183DC8`, dernière écriture suivie `0` (appel `0x415693`), valeur actuelle `0x4E034C78`. Une écriture avait donc échappé au suivi. Le désassemblage confirme que `FUN_00414ED0` lit `[EBP+4]` à son entrée (`0x414ED6`) puis l'utilise sans appel intermédiaire (`0x414F01`).
+- **Second rapport (plantage à 4 836 présentations)** : même routine et même pile (retour `0x41571E` dans `FUN_00415670`). `EAX = 0x1C` à la faute, alors que `[EBX+4]` vaut `0x42EDC178` au moment du rapport. Dernière écriture suivie toujours `0`. Le registre et la mémoire ne concordent pas : soit une écriture non suivie, soit un registre périmé. Non tranché.
+- **Hypothèse retenue** : les écritures natives (shims, allocateur, lectures de fichiers, DirectInput, GDI) écrivaient directement dans `rt_mem_base`, sans passer par `guest_st`. Ce sont elles qui posent des valeurs de type pointeur ou flottant dans les objets.
+- **Changements** :
+  - `guest_write`, `guest_fill` et `guest_note` (`runtime/include/rt.h`) remplacent les `memcpy`, `memset` et `read` vers la mémoire invitée (une soixantaine de sites) ; le code généré utilise `guest_st_block` pour les stores de plus de 8 octets (`tools/recomp/ct3rc.py`, ligne 243).
+  - Le suivi est dans `runtime/src/rt_watch.c` (nouveau fichier). Il était dans `rt_diag.c`, mais le lien tirait alors tout le diagnostic dans `test_cpu` (échec d'édition de liens sur `dispatch`).
+  - Fenêtre suivie : `0x45100000-0x451FFFFF` par défaut (zone des objets des plantages A et B, D-069), table indexée directement (une case par mot) ; `CT3_WRITERS=lo-hi` la change. Les blocs de plus de 4 Ko ne sont pas suivis (textures, lectures de fichiers).
+  - Coût : avec la fenêtre, 2 203 présentations en 90 s (sans suivi : 2 371). Le suivi sur tout le tas réduisait le jeu à 2 présentations.
+- **Limites** : les écritures des routines natives qui n'utilisent pas ces fonctions (écritures d'octets dans `rt_shims.c`, écritures dans `rt_d3d9_custom.cpp` hors `copy_rows`) restent invisibles. Un objet hors de la fenêtre n'est pas suivi.
+- **Vérification** : `build-check/` et `build/` reconstruits, les cinq tests obligatoires verts. Partie de 90 s sur Xvfb (`:99`) sans erreur.
+- **Abandon (17 nov. 2026)** : le suivi n'est pas conservé. `runtime/src/rt_watch.c` n'a jamais été versionné ; les hooks restants (`rt_watch_init`, `rt_writers_report`, `rt_writers_on`) sont retirés. Les accesseurs `guest_write`, `guest_fill` et `guest_note` restent : ils centralisent les écritures invitées et serviront à l'abstraction mémoire du port Switch.
+
+### Plantage dans l'eau : GetObjectInPath renvoie un succès sans objet (4 nov. 2026, suite de D-069)
+
+- **Traçage** (`build-trace/`, `CT3_TRACE_INSN=1`, `CT3_NOREGCHK=1`) : la dernière instruction invitée est `0x414F7B`, `mov ecx,[eax]` avec `EAX = 0`. Le plantage précédent (`0x414F83`) était la même lecture, avec un pointeur d'interface invalide à la place de `0`.
+- **Appel fautif** : `0x414F6F`, `call [edx+0x5C]` sur `[rec+4]` (rec = enregistrement de voix). Arguments : GUID `{...9DE2 6C}` (`0x5CEF2C`), index `0`, GUID `{...16CB325}` (`0x5CEF3C`), pointeur de sortie. C'est `IDirectSoundBuffer8::GetObjectInPath` (slot 23).
+- **Cause** : le shim était `sh_ds_zero` (succès, sortie non écrite). Le jeu teste `eax` (`jne 0x414F92`) : en cas de succès, il lit le pointeur de sortie, resté à `0`, et plante.
+- **Correctif** : `sh_ds_objinpath` (`runtime/src/rt_extra.cpp`) écrit `0` et renvoie `E_NOINTERFACE` (`0x80004002`), chemin d'échec que le jeu gère (`0x414F92`).
+- **Hypothèse** : l'effet sonore de l'eau appelle cette méthode. Non vérifié en jeu ; à confirmer par une partie dans l'eau sur `build/`.
+- **Plantages antérieurs** (`0x3F800000`, `0x1C`, `0x42EDC178`) : même routine et même famille d'objets, sans doute la même cause (lecture de `[rec+4]` après un `GetObjectInPath` sans objet). Non vérifié.
+- **Vérification** : tests obligatoires verts, `build/` et `build-trace/` reconstruits.
+
 ### Mesure des saccades, première partie (3 nov. 2026, suite de la question sur la compilation des shaders)
 
 - **Conditions** : build normal `build/`, RADV, `DISPLAY=:0`, son activé, `DXVK_HUD=compiler,pipelines,fps`, `CT3_PRESENT_LOG=1`. Journal : `ct3-shots/mesure/mesure_cpf.err`. Partie jouée par l'utilisateur, fermée par lui.

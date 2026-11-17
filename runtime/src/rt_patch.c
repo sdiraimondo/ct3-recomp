@@ -37,7 +37,7 @@ static uint32_t rd32_(uint32_t a)
 
 static void wr32_(uint32_t a, uint32_t v)
 {
-    memcpy(rt_mem_base + a, &v, 4);
+    guest_write(a, &v, 4);
 }
 
 static float rdf_(uint32_t a)
@@ -49,7 +49,7 @@ static float rdf_(uint32_t a)
 
 static void wrf_(uint32_t a, float f)
 {
-    memcpy(rt_mem_base + a, &f, 4);
+    guest_write(a, &f, 4);
 }
 
 static void patch_trim(char *s)
@@ -147,15 +147,15 @@ void rt_patch_before_logo(cpu_t *c)
     (void)c;
     if (patch_skip_intro) {
         uint32_t v = PATCH_LOGO_DONE;
-        memcpy(rt_mem_base + PATCH_LOGO_COUNTER, &v, 4);
+        guest_write(PATCH_LOGO_COUNTER, &v, 4);
     }
 }
 
 /* Appelé à chaque présentation : la caméra relit ses globales à chaque image. */
 void rt_patch_frame(void)
 {
-    if (patch_aspect > 0.0f) memcpy(rt_mem_base + PATCH_CAM_ASPECT, &patch_aspect, 4);
-    if (patch_fov > 0.0f) memcpy(rt_mem_base + PATCH_CAM_FOV, &patch_fov, 4);
+    if (patch_aspect > 0.0f) guest_write(PATCH_CAM_ASPECT, &patch_aspect, 4);
+    if (patch_fov > 0.0f) guest_write(PATCH_CAM_FOV, &patch_fov, 4);
 }
 
 int rt_patch_ui_texcoord_enabled(void)

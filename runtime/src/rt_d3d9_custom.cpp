@@ -49,7 +49,7 @@ uint32_t get32(uint32_t addr)
 
 void put32(uint32_t addr, uint32_t v)
 {
-    memcpy(rt_mem_base + addr, &v, 4);
+    guest_write(addr, &v, 4);
 }
 
 uint32_t stage_alloc(uint32_t size)
@@ -181,7 +181,7 @@ void copy_rows(lock_rec *r, bool to_guest)
         uint8_t *host = r->host_bits + (size_t)row * r->pitch;
         uint8_t *guest = rt_mem_base + r->buf + (size_t)row * r->pitch;
         if (to_guest) {
-            memcpy(guest, host, r->rowbytes);
+            guest_write(r->buf + (uint32_t)((size_t)row * r->pitch), host, r->rowbytes);
         } else {
             memcpy(host, guest, r->rowbytes);
         }
@@ -396,7 +396,7 @@ static uint32_t lock_image(cpu_t *c, rt_com_obj *o, uint32_t sub, D3DFORMAT fmt,
     r.rw = rect ? (uint32_t)(rect->right - rect->left) : w;
     r.rh = rect ? (uint32_t)(rect->bottom - rect->top) : h;
     if (dxt) {
-        memset(rt_mem_base + buf, 0, size);
+        guest_fill(buf, 0, size);
     } else {
         copy_rows(&r, true);
     }
@@ -492,6 +492,27 @@ extern "C" uint32_t custom_IDirect3DTexture9_UnlockRect(cpu_t *c, const uint32_t
     IDirect3DTexture9 *self = rt_self<IDirect3DTexture9>(a[0]);
     unlock_image(rt_com_obj_of(a[0]), a[1]);
     return (uint32_t)self->UnlockRect(a[1]);
+}
+
+/* Taille du niveau 0 d'une texture ou surface invitée : utilisée pour calibrer la vidéo sur la
+ * texture que le jeu fournit au filtre « INTRO TEXTURE RENDERER ». */
+extern "C" int rt_d3d9_guest_size(uint32_t guest, uint32_t *w, uint32_t *h)
+{
+    rt_com_obj *o = rt_com_obj_of(guest);
+    if (!o || !o->host) return 0;
+    D3DSURFACE_DESC d;
+    memset(&d, 0, sizeof d);
+    if (o->ifidx == rt_com_iface_index("IDirect3DTexture9")) {
+        if (FAILED(static_cast<IDirect3DTexture9 *>(o->host)->GetLevelDesc(0, &d))) return 0;
+    } else if (o->ifidx == rt_com_iface_index("IDirect3DSurface9")) {
+        if (FAILED(static_cast<IDirect3DSurface9 *>(o->host)->GetDesc(&d))) return 0;
+    } else {
+        return 0;
+    }
+    if (!d.Width || !d.Height) return 0;
+    *w = d.Width;
+    *h = d.Height;
+    return 1;
 }
 
 extern "C" uint32_t custom_IDirect3DCubeTexture9_LockRect(cpu_t *c, const uint32_t *a)
@@ -594,9 +615,44 @@ void dump_backbuffer(IDirect3DDevice9 *dev, uint32_t frame)
 }
 }  // namespace
 
+static void rt_d3d9_preheat(IDirect3DDevice9 *dev)
+{
+    if (!dev) return;
+    static int done = 0;
+    if (done) return;
+    const char *ph = getenv("CT3_SHADER_PREHEAT");
+    if (!ph || atoi(ph) == 0) return;
+    done = 1;
+    IDirect3DSurface9 *rt = nullptr;
+    IDirect3DSurface9 *ds = nullptr;
+    if (SUCCEEDED(dev->GetRenderTarget(0, &rt))) {
+        if (SUCCEEDED(dev->GetDepthStencilSurface(&ds))) {
+            dev->SetRenderState(D3DRS_CULLMODE, D3DCULL_CCW);
+            dev->SetRenderState(D3DRS_LIGHTING, FALSE);
+            dev->SetRenderState(D3DRS_ZENABLE, D3DZB_TRUE);
+            dev->SetRenderState(D3DRS_ALPHABLENDENABLE, FALSE);
+            dev->SetSamplerState(0, D3DSAMP_MINFILTER, D3DTEXF_LINEAR);
+            dev->SetSamplerState(0, D3DSAMP_MAGFILTER, D3DTEXF_LINEAR);
+            dev->SetSamplerState(0, D3DSAMP_MIPFILTER, D3DTEXF_LINEAR);
+            dev->SetFVF(D3DFVF_XYZ | D3DFVF_TEX1);
+            struct V { float x,y,z,u,v; };
+            V v[4] = {{-1,-1,0,0,0},{1,-1,0,1,0},{-1,1,0,0,1},{1,1,0,1,1}};
+            dev->BeginScene();
+            dev->DrawPrimitiveUP(D3DPT_TRIANGLESTRIP, 2, v, sizeof(V));
+            dev->EndScene();
+            if (ds) ds->Release();
+            if (rt) rt->Release();
+        } else {
+            if (rt) rt->Release();
+        }
+    }
+}
+
 extern "C" uint32_t custom_IDirect3DDevice9_Present(cpu_t *c, const uint32_t *a)
 {
     rt_probe_present();
+    rt_movie_tick(c);
+    rt_d3d9_preheat(rt_self<IDirect3DDevice9>(a[0]));
     {
         /* CT3_TRACE_FROM=N, CT3_TRACE_TO=M : trace des imports seulement entre les présentations N et M. */
         static long tr_from = -2, tr_to = -1;

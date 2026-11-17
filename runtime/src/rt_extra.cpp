@@ -8,8 +8,21 @@
 #include "rt_shim.h"
 #include "rt_font.h"
 #include "rt_win.h"
+#include "rt_d3d9.h"
+#include "rt_file.h"
 
 #include <SDL.h>
+
+#if CT3_HAVE_FFMPEG
+/* Les en-têtes du préfixe de dépendances n'ont pas de garde extern "C" : sans elle, les symboles
+ * FFmpeg seraient décorés en C++ et l'édition de liens échouerait. */
+extern "C" {
+#include <libavcodec/avcodec.h>
+#include <libavformat/avformat.h>
+#include <libavutil/imgutils.h>
+#include <libswscale/swscale.h>
+}
+#endif
 
 #include <cmath>
 #include <map>
@@ -18,6 +31,7 @@
 #include <vector>
 
 #include <cctype>
+#include <cstdarg>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -774,11 +788,18 @@ struct dsb_play {
     int32_t volume = 0, pan = 0;       // centièmes de dB, comme DirectSound
     double start = 0;                  // repli horloge
     uint32_t base = 0;                 // repli horloge
+    /* 3D */
+    bool is3d = false;
+    float min_dist = 1.0f;
+    float max_dist = 1000000000.0f;
+    float pos_x = 0, pos_y = 0, pos_z = 0;
 };
 std::map<uint32_t, dsb_play> dsb_plays;
 std::mutex ds_mutex;
 SDL_AudioDeviceID ds_dev = 0;
 bool ds_audio_tried = false;
+/* Écouteur 3D (valeurs par défaut) */
+float ds_listener_x = 0, ds_listener_y = 0, ds_listener_z = 0;
 
 double mono_now()
 {
@@ -821,6 +842,24 @@ void ds_mix(void *, Uint8 *stream, int len)
             }
             double step = (double)(p.freq ? p.freq : p.rate) / 44100.0;
             float gain = (float)pow(10.0, p.volume / 2000.0);
+            /* Atténuation 3D */
+            if (p.is3d) {
+                float dx = p.pos_x - ds_listener_x;
+                float dy = p.pos_y - ds_listener_y;
+                float dz = p.pos_z - ds_listener_z;
+                float dist = sqrtf(dx*dx + dy*dy + dz*dz);
+                float d = dist;
+                if (d < p.min_dist) d = p.min_dist;
+                if (p.max_dist > 0 && d > p.max_dist) d = p.max_dist;
+                /* Modèle inverse distance avec facteur de chute 1.0 */
+                float atten = p.min_dist / (d <= 0 ? p.min_dist : d);
+                if (atten < 0) atten = 0;
+                if (atten > 1.0f) atten = 1.0f;
+                gain *= atten;
+                /* Panoramique simple basé sur la position X */
+                float pan = dx / (d > 0.0001f ? d : 1.0f); /* -1 à 1 */
+                p.pan = (int32_t)(pan * 10000.0f);
+            }
             float gl = gain, gr = gain;
             if (p.pan > 0) gl *= (float)pow(10.0, -p.pan / 2000.0);
             if (p.pan < 0) gr *= (float)pow(10.0, p.pan / 2000.0);
@@ -1136,7 +1175,9 @@ uint32_t sh_dsb_qi(cpu_t *c, const uint32_t *a)
     (void)c;
     if (!a[1] || !a[2]) return 0;
     if (memcmp(rt_mem_base + a[1], kIidDs3dBuffer, 16) == 0) {
-        if (!ds3d_obj) ds3d_obj = new_object(ds3d_vtable, 0);
+        if (!ds3d_obj) ds3d_obj = new_object(ds3d_vtable, 4);
+        /* stocker le tampon associé dans le stockage de l'objet 3D */
+        put32(get32(ds3d_obj + 4), a[0]);
         put32(a[2], ds3d_obj);
     } else {
         put32(a[2], a[0]);
@@ -1144,21 +1185,75 @@ uint32_t sh_dsb_qi(cpu_t *c, const uint32_t *a)
     return 0;
 }
 
-// Méthodes 3D sans effet : les paramètres ne sont pas appliqués au son (il est muet pour l'instant).
-// Les méthodes Get écrivent des zéros dans leurs sorties pour que le jeu lise des valeurs définies.
+// Méthodes 3D
+static uint32_t ds3d_get_buf(uint32_t ds3d_this)
+{
+    if (!ds3d_this) return 0;
+    /* stockage dans l'objet 3D */
+    uint32_t store = get32(ds3d_this + 4);
+    if (!store) return 0;
+    return get32(store);
+}
+static float f32_from_u32(uint32_t v) { float f; memcpy(&f, &v, 4); return f; }
+static uint32_t u32_from_f32(float f) { uint32_t v; memcpy(&v, &f, 4); return v; }
+
 uint32_t sh_ds3d_ok(cpu_t *c, const uint32_t *a) { (void)c; (void)a; return 0; }
-uint32_t sh_ds3d_get1(cpu_t *c, const uint32_t *a) { (void)c; if (a[1]) put32(a[1], 0); return 0; }
+uint32_t sh_ds3d_get1(cpu_t *c, const uint32_t *a)
+{
+    (void)c;
+    std::lock_guard<std::mutex> lk(ds_mutex);
+    uint32_t buf = ds3d_get_buf(a[0]);
+    if (buf && dsb_plays.count(buf)) {
+        if (a[1]) put32(a[1], u32_from_f32(dsb_plays[buf].min_dist)); /* par défaut min_dist pour GetMinDistance */
+        return 0;
+    }
+    if (a[1]) put32(a[1], u32_from_f32(1.0f));
+    return 0;
+}
 uint32_t sh_ds3d_get_vec(cpu_t *c, const uint32_t *a)
 {
     (void)c;
-    if (a[1]) { put32(a[1], 0); put32(a[1] + 4, 0); put32(a[1] + 8, 0); }
+    std::lock_guard<std::mutex> lk(ds_mutex);
+    uint32_t buf = ds3d_get_buf(a[0]);
+    float x=0,y=0,z=0;
+    if (buf && dsb_plays.count(buf)) { x = dsb_plays[buf].pos_x; y = dsb_plays[buf].pos_y; z = dsb_plays[buf].pos_z; }
+    if (a[1]) { put32(a[1], u32_from_f32(x)); put32(a[1]+4, u32_from_f32(y)); put32(a[1]+8, u32_from_f32(z)); }
     return 0;
 }
 uint32_t sh_ds3d_get_angles(cpu_t *c, const uint32_t *a)
 {
     (void)c;
-    if (a[1]) put32(a[1], 0);
-    if (a[2]) put32(a[2], 0);
+    if (a[1]) put32(a[1], u32_from_f32(0));
+    if (a[2]) put32(a[2], u32_from_f32(0));
+    return 0;
+}
+static uint32_t sh_ds3d_SetMinDistance(cpu_t *c, const uint32_t *a)
+{
+    (void)c;
+    std::lock_guard<std::mutex> lk(ds_mutex);
+    uint32_t buf = ds3d_get_buf(a[0]);
+    if (buf && dsb_plays.count(buf)) { dsb_plays[buf].min_dist = f32_from_u32(a[1]); dsb_plays[buf].is3d = true; }
+    return 0;
+}
+static uint32_t sh_ds3d_SetMaxDistance(cpu_t *c, const uint32_t *a)
+{
+    (void)c;
+    std::lock_guard<std::mutex> lk(ds_mutex);
+    uint32_t buf = ds3d_get_buf(a[0]);
+    if (buf && dsb_plays.count(buf)) { dsb_plays[buf].max_dist = f32_from_u32(a[1]); dsb_plays[buf].is3d = true; }
+    return 0;
+}
+static uint32_t sh_ds3d_SetPosition(cpu_t *c, const uint32_t *a)
+{
+    (void)c;
+    std::lock_guard<std::mutex> lk(ds_mutex);
+    uint32_t buf = ds3d_get_buf(a[0]);
+    if (buf && dsb_plays.count(buf)) {
+        dsb_plays[buf].pos_x = f32_from_u32(a[1]);
+        dsb_plays[buf].pos_y = f32_from_u32(a[2]);
+        dsb_plays[buf].pos_z = f32_from_u32(a[3]);
+        dsb_plays[buf].is3d = true;
+    }
     return 0;
 }
 
@@ -1466,12 +1561,12 @@ uint32_t sh_joy_notimpl(cpu_t *c, const uint32_t *a) { (void)c; (void)a; return 
 }  // namespace
 
 // Table des talons (consultée par rt_shims.c).
-// ---- DirectShow : graphe factice pour les vidéos (D-059) ------------------------------------
-// Les vidéos du jeu (Media/avi/*.avi) ne sont pas dans cette copie. Le graphe est créé comme le
-// fait le jeu (CLSID_FilterGraph, IGraphBuilder, IMediaControl, IMediaEvent, source, broche), mais
-// la lecture se termine aussitôt : un seul EC_COMPLETE, posé au premier Run. Le réalisateur attend
-// cet événement après un cue d'arrêt vidéo (pause de l'état 3, sous-état 2) : sans lui, la scène SA
-// reste figée à la position 181 (voir DECISIONS.md).
+// ---- DirectShow : graphe factice et cinématiques (D-059) --------------------------------------
+// Le graphe est créé comme le fait le jeu (CLSID_FilterGraph, IGraphBuilder, IMediaControl,
+// IMediaEvent, source, broche), mais il n'y a ni source ni filtre réels : les vidéos sont décodées
+// par FFmpeg et copiées dans la texture du jeu par son propre filtre « INTRO TEXTURE RENDERER »
+// (0x40CE00), appelé à chaque présentation. EC_COMPLETE n'est posté qu'à la fin réelle de la vidéo
+// (ou immédiatement si le fichier est absent, pour ne pas figer la scène SA à la position 181).
 const uint8_t kClsidFilterGraph[16] = {0xB3, 0xEB, 0x36, 0xE4, 0x4F, 0x52, 0xCE, 0x11,
                                        0x9F, 0x53, 0x00, 0x20, 0xAF, 0x0B, 0xA7, 0x70};
 const uint8_t kIidUnknown[16] = {0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
@@ -1503,12 +1598,427 @@ const char *const kDseMethods[] = {"QueryInterface", "AddRef", "Release", "GetTy
 const char *const kDsaMethods[] = {"QueryInterface", "AddRef", "Release", "GetTypeInfoCount", "GetTypeInfo",
                                    "GetIDsOfNames", "Invoke", "put_Volume"};
 const char *const kDsSimpleMethods[] = {"QueryInterface", "AddRef", "Release"};
+const char *const kDsposMethods[] = {"QueryInterface", "AddRef", "Release", "GetTypeInfoCount", "GetTypeInfo",
+                                     "GetIDsOfNames", "Invoke", "get_Duration", "put_CurrentPosition",
+                                     "get_CurrentPosition", "get_StopTime", "put_StopTime",
+                                     "get_PrerollTime", "put_PrerollTime", "put_Rate", "get_Rate"};
+// IMediaSample factice : seule GetPointer est utilisée par le filtre du jeu (vtable +0xC).
+const char *const kMsampleMethods[] = {"QueryInterface", "AddRef", "Release", "GetPointer"};
 const char *const kDssMethods[] = {"QueryInterface", "AddRef", "Release", "GetClassID", "Stop", "Pause",
                                    "Run", "GetState", "SetSyncSource", "GetSyncSource", "EnumPins", "FindPin"};
 
 uint32_t dsg_vtable, dsc_vtable, dse_vtable, dsa_vtable, dspos_vtable, dssrc_vtable, dspin_vtable;
 uint32_t dsc_obj, dse_obj, dsa_obj, dspos_obj, dssrc_obj, dspin_obj;
+uint32_t msample_vtable, msample_obj;
 bool ds_ec_posted, ds_ec_pending;
+
+namespace {
+
+// Une seule lecture à la fois (les objets DirectShow du runtime sont uniques). Le décodeur est
+// ouvert au Run et alimenté depuis Present, une fois que le jeu a fourni la texture au filtre.
+struct movie_state {
+    bool running;
+    bool paused;
+    bool started;
+    bool completed;
+    bool nofile;
+    uint32_t renderer;
+    uint32_t texture;
+    uint32_t buf;
+    uint32_t buf_cap;
+    std::vector<uint8_t> flip_row;
+    int out_w, out_h, out_stride;
+    long frame_count;
+    double clock_start;
+    double paused_at;
+    double paused_total;
+    char path[1024];
+    char open_path[1024];
+#if CT3_HAVE_FFMPEG
+    AVFormatContext *fmt;
+    AVCodecContext *dec;
+    SwsContext *sws;
+    AVFrame *frame;
+    AVPacket *pkt;
+    AVStream *stream;
+    AVRational tb;
+    int stream_index;
+    int video_w, video_h, pix_fmt;
+    double fps;
+    double duration;
+    double first_pts, next_pts, last_pts;
+    bool have_first_pts;
+    bool have_frame;
+    bool eof;
+    bool draining;
+    bool opened;
+#endif
+};
+
+movie_state g_movie;
+
+double movie_now_ms()
+{
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return ts.tv_sec * 1000.0 + ts.tv_nsec / 1000000.0;
+}
+
+void movie_logf(const char *fmt, ...)
+{
+    static int on = -1;
+    if (on < 0) on = getenv("CT3_MOVIE_LOG") != nullptr;
+    if (!on) return;
+    va_list ap;
+    va_start(ap, fmt);
+    vfprintf(stderr, fmt, ap);
+    va_end(ap);
+}
+
+void movie_free_ffmpeg()
+{
+#if CT3_HAVE_FFMPEG
+    movie_state &m = g_movie;
+    if (m.sws) {
+        sws_freeContext(m.sws);
+        m.sws = nullptr;
+    }
+    if (m.frame) av_frame_free(&m.frame);
+    if (m.pkt) av_packet_free(&m.pkt);
+    if (m.dec) avcodec_free_context(&m.dec);
+    if (m.fmt) avformat_close_input(&m.fmt);
+    m.stream = nullptr;
+    m.opened = false;
+    m.have_frame = m.eof = m.draining = m.have_first_pts = false;
+#endif
+}
+
+void movie_close_decoder()
+{
+    movie_free_ffmpeg();
+    g_movie.open_path[0] = 0;
+}
+
+void movie_reset_clock()
+{
+    movie_state &m = g_movie;
+    m.started = false;
+    m.clock_start = movie_now_ms();
+    m.paused_at = 0.0;
+    m.paused_total = 0.0;
+}
+
+#if CT3_HAVE_FFMPEG
+bool movie_open_decoder(const char *path)
+{
+    movie_state &m = g_movie;
+    movie_close_decoder();
+    if (!path || !*path) return false;
+    char host[1200];
+    rt_file_resolve(path, host, sizeof host);
+
+    if (avformat_open_input(&m.fmt, host, nullptr, nullptr) < 0) {
+        m.fmt = nullptr;
+        movie_logf("[movie] ouverture impossible : %s (%s)\n", path, host);
+        return false;
+    }
+    if (avformat_find_stream_info(m.fmt, nullptr) < 0) {
+        movie_logf("[movie] flux illisible : %s\n", path);
+        movie_close_decoder();
+        return false;
+    }
+    const AVCodec *codec = nullptr;
+    int si = av_find_best_stream(m.fmt, AVMEDIA_TYPE_VIDEO, -1, -1, &codec, 0);
+    if (si < 0 || !codec) {
+        movie_logf("[movie] pas de flux vidéo : %s\n", path);
+        movie_close_decoder();
+        return false;
+    }
+    m.stream = m.fmt->streams[si];
+    m.stream_index = si;
+    m.dec = avcodec_alloc_context3(codec);
+    if (!m.dec || avcodec_parameters_to_context(m.dec, m.stream->codecpar) < 0 ||
+        avcodec_open2(m.dec, codec, nullptr) < 0) {
+        movie_logf("[movie] décodeur indisponible : %s\n", path);
+        movie_close_decoder();
+        return false;
+    }
+    m.frame = av_frame_alloc();
+    m.pkt = av_packet_alloc();
+    if (!m.frame || !m.pkt) {
+        movie_close_decoder();
+        return false;
+    }
+    m.tb = m.stream->time_base;
+    m.video_w = m.dec->width;
+    m.video_h = m.dec->height;
+    m.pix_fmt = m.dec->pix_fmt;
+    AVRational fr = av_guess_frame_rate(m.fmt, m.stream, nullptr);
+    m.fps = (fr.num > 0 && fr.den > 0) ? av_q2d(fr) : 30.0;
+    m.duration = 0.0;
+    if (m.stream->duration != AV_NOPTS_VALUE)
+        m.duration = m.stream->duration * av_q2d(m.tb);
+    else if (m.fmt->duration != AV_NOPTS_VALUE)
+        m.duration = m.fmt->duration / (double)AV_TIME_BASE;
+    m.first_pts = m.next_pts = m.last_pts = 0.0;
+    m.have_first_pts = m.have_frame = m.eof = m.draining = false;
+    m.opened = true;
+    snprintf(m.open_path, sizeof m.open_path, "%s", path);
+    movie_logf("[movie] %s : %dx%d, %.2f s, %.2f i/s (%s)\n", path, m.video_w, m.video_h, m.duration, m.fps,
+               m.dec->codec->name);
+    return true;
+}
+
+// 1 = image décodée, 0 = fin, -1 = erreur.
+int movie_next_frame()
+{
+    movie_state &m = g_movie;
+    for (;;) {
+        int ret = avcodec_receive_frame(m.dec, m.frame);
+        if (ret == 0) {
+            double pts = (m.frame->best_effort_timestamp != AV_NOPTS_VALUE)
+                             ? m.frame->best_effort_timestamp * av_q2d(m.tb)
+                             : m.next_pts;
+            if (!m.have_first_pts) {
+                m.first_pts = pts;
+                m.have_first_pts = true;
+            }
+            pts -= m.first_pts;
+            if (pts < 0.0) pts = 0.0;
+            m.last_pts = pts;
+            m.next_pts = pts + (m.fps > 0.0 ? 1.0 / m.fps : 0.033);
+            return 1;
+        }
+        if (ret == AVERROR_EOF) return 0;
+        if (ret != AVERROR(EAGAIN)) return -1;
+        int r = av_read_frame(m.fmt, m.pkt);
+        if (r < 0) {
+            if (m.draining) return 0;
+            m.draining = true;
+            avcodec_send_packet(m.dec, nullptr);
+            continue;
+        }
+        if (m.pkt->stream_index == m.stream_index) avcodec_send_packet(m.dec, m.pkt);
+        av_packet_unref(m.pkt);
+    }
+}
+
+bool movie_configure(int ow, int oh)
+{
+    movie_state &m = g_movie;
+    if (ow <= 0 || oh <= 0) {
+        ow = m.video_w;
+        oh = m.video_h;
+    }
+    if (ow <= 0 || oh <= 0) return false;
+    if (ow > 4096) ow = 4096;
+    if (oh > 4096) oh = 4096;
+    m.out_w = ow;
+    m.out_h = oh;
+    m.out_stride = (ow * 3 + 3) & ~3;
+    m.flip_row.resize((size_t)m.out_stride);
+    uint32_t need = (uint32_t)m.out_stride * (uint32_t)oh;
+    if (need > m.buf_cap) {
+        m.buf = rt_heap_alloc(need ? need : 1, 0);
+        m.buf_cap = need;
+    }
+    if (m.sws) {
+        sws_freeContext(m.sws);
+        m.sws = nullptr;
+    }
+    return true;
+}
+
+bool movie_scale_frame()
+{
+    movie_state &m = g_movie;
+    if (!m.sws) {
+        int src_fmt = m.pix_fmt;
+        if (src_fmt <= AV_PIX_FMT_NONE) src_fmt = m.frame->format;
+        if (src_fmt <= AV_PIX_FMT_NONE) return false;
+        int flags = (m.out_w == m.video_w && m.out_h == m.video_h) ? SWS_POINT : SWS_BILINEAR;
+        m.sws = sws_getContext(m.video_w, m.video_h, (AVPixelFormat)src_fmt, m.out_w, m.out_h,
+                               AV_PIX_FMT_BGR24, flags, nullptr, nullptr, nullptr);
+        if (!m.sws) return false;
+    }
+    uint8_t *dst[4] = {rt_mem_base + m.buf, nullptr, nullptr, nullptr};
+    int dst_stride[4] = {m.out_stride, 0, 0, 0};
+    sws_scale(m.sws, m.frame->data, m.frame->linesize, 0, m.video_h, dst, dst_stride);
+    /* Le renderer du jeu attend une image DIB bas-en-haut (biHeight positif) : la texture est
+     * échantillonnée à l'envers. FFmpeg fournit des lignes de haut en bas, on inverse ici. */
+    uint8_t *base = rt_mem_base + m.buf;
+    for (int y = 0; y < m.out_h / 2; y++) {
+        uint8_t *a = base + (size_t)y * m.out_stride;
+        uint8_t *b = base + (size_t)(m.out_h - 1 - y) * m.out_stride;
+        memcpy(m.flip_row.data(), a, (size_t)m.out_stride);
+        memcpy(a, b, (size_t)m.out_stride);
+        memcpy(b, m.flip_row.data(), (size_t)m.out_stride);
+    }
+    return true;
+}
+
+void movie_seek_seconds(double pos)
+{
+    movie_state &m = g_movie;
+    if (!m.fmt || !m.dec) return;
+    if (pos < 0.0) pos = 0.0;
+    int64_t ts = (int64_t)(pos / av_q2d(m.tb));
+    if (av_seek_frame(m.fmt, m.stream_index, ts, AVSEEK_FLAG_BACKWARD) < 0)
+        av_seek_frame(m.fmt, m.stream_index, 0, AVSEEK_FLAG_BACKWARD);
+    avcodec_flush_buffers(m.dec);
+    m.have_first_pts = m.have_frame = m.eof = m.draining = false;
+    m.first_pts = m.next_pts = m.last_pts = 0.0;
+    m.started = false;
+    m.clock_start = movie_now_ms();
+    m.paused_total = 0.0;
+    m.paused_at = 0.0;
+}
+#else
+bool movie_open_decoder(const char *) { return false; }
+int movie_next_frame() { return 0; }
+bool movie_configure(int, int) { return false; }
+bool movie_scale_frame() { return false; }
+void movie_seek_seconds(double) {}
+#endif
+
+// Démarre une nouvelle lecture. Si le fichier est absent, EC_COMPLETE est posté immédiatement,
+// comme avant l'arrivée des vidéos, pour que le réalisateur ne reste pas bloqué.
+void movie_begin()
+{
+    movie_state &m = g_movie;
+    m.running = true;
+    m.paused = false;
+    m.completed = false;
+    m.nofile = false;
+    m.texture = 0;
+    ds_ec_posted = false;
+    ds_ec_pending = false;
+    movie_close_decoder();
+    movie_reset_clock();
+    if (!movie_open_decoder(m.path)) {
+        m.nofile = true;
+        m.completed = true;
+        ds_ec_posted = true;
+        ds_ec_pending = true;
+        movie_logf("[movie] lecture immédiate (fichier absent) : %s\n", m.path);
+    }
+}
+
+void movie_stop()
+{
+    movie_state &m = g_movie;
+    movie_close_decoder();
+    m.running = false;
+    m.paused = false;
+    m.completed = false;
+    m.nofile = false;
+    m.texture = 0;
+    m.renderer = 0;
+    movie_reset_clock();
+}
+
+bool movie_is_open()
+{
+#if CT3_HAVE_FFMPEG
+    return g_movie.opened;
+#else
+    return false;
+#endif
+}
+
+void movie_video_size(int *w, int *h)
+{
+#if CT3_HAVE_FFMPEG
+    *w = g_movie.video_w;
+    *h = g_movie.video_h;
+#else
+    *w = 0;
+    *h = 0;
+#endif
+}
+
+}  // namespace
+
+extern "C" void rt_movie_tick(cpu_t *c)
+{
+    movie_state &m = g_movie;
+    if (!m.running || m.paused || m.nofile) return;
+    if (!m.renderer) return;
+    uint32_t tex = get32(m.renderer + 0xE0);
+    if (!tex) return;
+#if CT3_HAVE_FFMPEG
+    if (!m.opened) return;
+#endif
+    if (tex != m.texture) {
+        uint32_t tw = 0, th = 0;
+        if (!rt_d3d9_guest_size(tex, &tw, &th)) {
+            int vw = 0, vh = 0;
+            movie_video_size(&vw, &vh);
+            tw = (uint32_t)(vw > 0 ? vw : 1);
+            th = (uint32_t)(vh > 0 ? vh : 1);
+        }
+        if (!tw || !th) return;
+        if (!movie_configure((int)tw, (int)th)) return;
+        m.texture = tex;
+        m.started = false;
+        /* Le graphe factice ne connecte pas la broche : SetMediaType (0x40CD60) n'est jamais
+         * appelé et le renderer garde une largeur, une hauteur et un pas de source non
+         * initialisés. Receive les utilise pour convertir l'image : on les renseigne d'après la
+         * texture cible, comme le ferait SetMediaType. */
+        put32(m.renderer + 0xE8, (uint32_t)m.out_w);
+        put32(m.renderer + 0xEC, (uint32_t)m.out_h);
+        put32(m.renderer + 0xF0, (uint32_t)(((m.out_w + 1) * 3) & ~3));
+        movie_logf("[movie] texture 0x%08x : %dx%d (pas source %d)\n", tex, m.out_w, m.out_h,
+                   ((m.out_w + 1) * 3) & ~3);
+    }
+    if (!m.started) {
+        m.started = true;
+        m.clock_start = movie_now_ms();
+        m.paused_total = 0.0;
+        m.paused_at = 0.0;
+        m.frame_count = 0;
+    }
+    double elapsed = (movie_now_ms() - m.clock_start - m.paused_total) / 1000.0;
+    if (elapsed < 0.0) elapsed = 0.0;
+    bool drew = false;
+    while (!m.eof) {
+        if (!m.have_frame) {
+            int r = movie_next_frame();
+            if (r <= 0) {
+                movie_logf("[movie] décodeur : %s (r=%d, dernière %.2f s)\n",
+                           r == 0 ? "fin de flux" : "erreur", r, m.last_pts);
+                m.eof = true;
+                break;
+            }
+            m.have_frame = true;
+        }
+        if (m.last_pts > elapsed + 0.0005) break;
+        if (!movie_scale_frame()) {
+            movie_logf("[movie] conversion impossible (format %d)\n", m.pix_fmt);
+            m.eof = true;
+            break;
+        }
+        m.have_frame = false;
+        drew = true;
+    }
+    if (drew && msample_obj) {
+        uint32_t save_ecx = (uint32_t)cpu_rd(c, 4, 4);
+        cpu_wr(c, 4, 4, m.renderer);
+        uint32_t sample = msample_obj;
+        rt_call_guest(c, 0x40CE00, &sample, 1);
+        cpu_wr(c, 4, 4, save_ecx);
+        m.frame_count++;
+        if (m.frame_count == 1 || m.frame_count % 60 == 0)
+            movie_logf("[movie] %ld images, t=%.2f s\n", m.frame_count, elapsed);
+    }
+    double end = m.duration > 0.0 ? m.duration : m.last_pts + 0.1;
+    if (!m.completed && m.eof && elapsed + 0.001 >= end) {
+        m.completed = true;
+        ds_ec_posted = true;
+        ds_ec_pending = true;
+        movie_logf("[movie] fin après %.2f s\n", elapsed);
+    }
+}
 
 void ds_graph_init()
 {
@@ -1517,16 +2027,19 @@ void ds_graph_init()
     dsc_vtable = make_vtable("dsc::", kDscMethods, 10);
     dse_vtable = make_vtable("dse::", kDseMethods, 13);
     dsa_vtable = make_vtable("dsa::", kDsaMethods, 8);
-    dspos_vtable = make_vtable("dspos::", kDsSimpleMethods, 3);
+    dspos_vtable = make_vtable("dspos::", kDsposMethods, 16);
     dssrc_vtable = make_vtable("dssrc::", kDssMethods, 12);
     dspin_vtable = make_vtable("dspin::", kDsSimpleMethods, 3);
+    msample_vtable = make_vtable("msample::", kMsampleMethods, 4);
     dsc_obj = new_object(dsc_vtable, 0);
     dse_obj = new_object(dse_vtable, 0);
     dsa_obj = new_object(dsa_vtable, 0);
     dspos_obj = new_object(dspos_vtable, 0);
     dssrc_obj = new_object(dssrc_vtable, 0);
     dspin_obj = new_object(dspin_vtable, 0);
+    msample_obj = new_object(msample_vtable, 0);
 }
+
 
 // CoCreateInstance(rclsid, pUnkOuter, dwClsContext, riid, ppv)
 uint32_t sh_CoCreateInstance(cpu_t *c, const uint32_t *a)
@@ -1535,6 +2048,7 @@ uint32_t sh_CoCreateInstance(cpu_t *c, const uint32_t *a)
     if (!guest_guid_is(a[0], kClsidFilterGraph)) return 0x80040111u;  // CLASS_E_CLASSNOTAVAILABLE
     if (!guest_guid_is(a[3], kIidGraphBuilder) && !guest_guid_is(a[3], kIidUnknown)) return 0x80004002u;
     ds_graph_init();
+    movie_stop();
     ds_ec_posted = false;
     ds_ec_pending = false;
     put32(a[4], new_object(dsg_vtable, 0));
@@ -1559,10 +2073,48 @@ uint32_t sh_dsg_QueryInterface(cpu_t *c, const uint32_t *a)
     return 0;
 }
 
+std::string wide_path(uint32_t p)
+{
+    std::string out;
+    if (!p) return out;
+    const uint16_t *w = reinterpret_cast<const uint16_t *>(rt_mem_base + p);
+    for (size_t i = 0; i < 1024 && w[i]; i++) {
+        uint16_t cp = w[i];
+        if (cp < 0x80) {
+            out.push_back((char)cp);
+        } else if (cp < 0x800) {
+            out.push_back((char)(0xC0 | (cp >> 6)));
+            out.push_back((char)(0x80 | (cp & 0x3F)));
+        } else {
+            out.push_back((char)(0xE0 | (cp >> 12)));
+            out.push_back((char)(0x80 | ((cp >> 6) & 0x3F)));
+            out.push_back((char)(0x80 | (cp & 0x3F)));
+        }
+    }
+    return out;
+}
+
+// IGraphBuilder::AddFilter : le filtre du jeu est le renderer à filter+0xC (base à filter-0xC).
+uint32_t sh_dsg_AddFilter(cpu_t *c, const uint32_t *a)
+{
+    (void)c;
+    if (a[1]) {
+        g_movie.renderer = a[1] - 0xC;
+        g_movie.texture = 0;
+        movie_logf("[movie] renderer 0x%08x\n", g_movie.renderer);
+    }
+    return 0;
+}
+
 uint32_t sh_dsg_AddSourceFilter(cpu_t *c, const uint32_t *a)
 {
     (void)c;
-    put32(a[3], dssrc_obj);
+    std::string p = wide_path(a[1]);
+    if (!p.empty()) {
+        snprintf(g_movie.path, sizeof g_movie.path, "%s", p.c_str());
+        movie_logf("[movie] source %s\n", p.c_str());
+    }
+    if (a[3]) put32(a[3], dssrc_obj);
     return 0;
 }
 
@@ -1573,14 +2125,107 @@ uint32_t sh_dssrc_FindPin(cpu_t *c, const uint32_t *a)
     return 0;
 }
 
-// IMediaControl::Run : première lecture du graphe, fin immédiate (EC_COMPLETE en file).
+// IMediaControl::Run : ouvre le décodeur et attend que le jeu fournisse la texture (SetSurface).
 uint32_t sh_dsc_Run(cpu_t *c, const uint32_t *a)
 {
     (void)c;
     (void)a;
-    if (!ds_ec_posted) {
-        ds_ec_posted = true;
-        ds_ec_pending = true;
+    movie_state &m = g_movie;
+    movie_logf("[movie] Run (running=%d paused=%d started=%d completed=%d)\n", m.running, m.paused,
+               m.started, m.completed);
+    if (!m.running) {
+        movie_begin();
+    } else if (m.paused) {
+        m.paused = false;
+        m.paused_total += movie_now_ms() - m.paused_at;
+        m.paused_at = 0.0;
+        if (!m.started) m.clock_start = movie_now_ms();
+    } else if (m.completed && movie_is_open()) {
+        m.completed = false;
+        ds_ec_posted = false;
+        ds_ec_pending = false;
+        movie_seek_seconds(0.0);
+        movie_logf("[movie] reprise après EC_COMPLETE\n");
+    }
+    return 0;
+}
+
+uint32_t sh_dsc_Pause(cpu_t *c, const uint32_t *a)
+{
+    (void)c;
+    (void)a;
+    movie_state &m = g_movie;
+    movie_logf("[movie] Pause (running=%d paused=%d)\n", m.running, m.paused);
+    if (m.running && !m.paused) {
+        m.paused = true;
+        m.paused_at = movie_now_ms();
+    }
+    return 0;
+}
+
+uint32_t sh_dsc_Stop(cpu_t *c, const uint32_t *a)
+{
+    (void)c;
+    (void)a;
+    movie_logf("[movie] Stop\n");
+    movie_stop();
+    ds_ec_pending = false;
+    return 0;
+}
+
+// IMediaSample factice : GetPointer renvoie la dernière image décodée (BGR24).
+uint32_t sh_msample_qi(cpu_t *c, const uint32_t *a)
+{
+    (void)c;
+    if (a[2]) put32(a[2], a[0]);
+    return 0;
+}
+
+uint32_t sh_msample_GetPointer(cpu_t *c, const uint32_t *a)
+{
+    (void)c;
+    if (a[1]) put32(a[1], g_movie.buf);
+    return 0;
+}
+
+// IMediaPosition : 0.0 rembobine et relance (boucle des vidéos de replay).
+uint32_t sh_dspos_put_CurrentPosition(cpu_t *c, const uint32_t *a)
+{
+    (void)c;
+    uint64_t bits = ((uint64_t)a[2] << 32) | a[1];
+    double pos = 0.0;
+    memcpy(&pos, &bits, sizeof pos);
+    movie_state &m = g_movie;
+    if (m.running && movie_is_open()) {
+        if (pos < 0.0) pos = 0.0;
+        m.completed = false;
+        ds_ec_posted = false;
+        ds_ec_pending = false;
+        movie_seek_seconds(pos);
+        movie_logf("[movie] position -> %.2f s\n", pos);
+    }
+    return 0;
+}
+
+uint32_t sh_dspos_get_Duration(cpu_t *c, const uint32_t *a)
+{
+    (void)c;
+    if (a[1]) {
+        double d = 0.0;
+#if CT3_HAVE_FFMPEG
+        d = g_movie.duration;
+#endif
+        memcpy(rt_mem_base + a[1], &d, sizeof d);
+    }
+    return 0;
+}
+
+uint32_t sh_dspos_get_CurrentPosition(cpu_t *c, const uint32_t *a)
+{
+    (void)c;
+    if (a[1]) {
+        double d = 0.0;
+        memcpy(rt_mem_base + a[1], &d, sizeof d);
     }
     return 0;
 }
@@ -1591,6 +2236,7 @@ uint32_t sh_dse_GetEvent(cpu_t *c, const uint32_t *a)
     (void)c;
     if (!ds_ec_pending) return 0x80004004u;  // E_ABORT : aucun événement
     ds_ec_pending = false;
+    movie_logf("[movie] GetEvent -> EC_COMPLETE\n");
     if (a[1]) put32(a[1], 1);  // EC_COMPLETE
     if (a[2]) put32(a[2], 0);
     if (a[3]) put32(a[3], 0);
@@ -1699,7 +2345,7 @@ extern "C" const rt_shim_entry rt_extra_table[] = {
     {"dsg::QueryInterface", 3, sh_dsg_QueryInterface},
     {"dsg::AddRef", 1, sh_ds_addref},
     {"dsg::Release", 1, sh_ds_release},
-    {"dsg::AddFilter", 3, sh_ds_ok},
+    {"dsg::AddFilter", 3, sh_dsg_AddFilter},
     {"dsg::RemoveFilter", 2, sh_ds_ok},
     {"dsg::EnumFilters", 2, sh_ds_zero},
     {"dsg::FindFilterByName", 3, sh_ds_zero},
@@ -1722,8 +2368,8 @@ extern "C" const rt_shim_entry rt_extra_table[] = {
     {"dsc::GetIDsOfNames", 6, sh_ds_zero},
     {"dsc::Invoke", 8, sh_ds_zero},
     {"dsc::Run", 1, sh_dsc_Run},
-    {"dsc::Pause", 1, sh_ds_ok},
-    {"dsc::Stop", 1, sh_ds_ok},
+    {"dsc::Pause", 1, sh_dsc_Pause},
+    {"dsc::Stop", 1, sh_dsc_Stop},
     {"dse::QueryInterface", 3, sh_ds_qi},
     {"dse::AddRef", 1, sh_ds_addref},
     {"dse::Release", 1, sh_ds_release},
@@ -1748,6 +2394,23 @@ extern "C" const rt_shim_entry rt_extra_table[] = {
     {"dspos::QueryInterface", 3, sh_ds_qi},
     {"dspos::AddRef", 1, sh_ds_addref},
     {"dspos::Release", 1, sh_ds_release},
+    {"dspos::GetTypeInfoCount", 2, sh_ds_zero},
+    {"dspos::GetTypeInfo", 4, sh_ds_zero},
+    {"dspos::GetIDsOfNames", 6, sh_ds_zero},
+    {"dspos::Invoke", 8, sh_ds_zero},
+    {"dspos::get_Duration", 2, sh_dspos_get_Duration},
+    {"dspos::put_CurrentPosition", 3, sh_dspos_put_CurrentPosition},
+    {"dspos::get_CurrentPosition", 2, sh_dspos_get_CurrentPosition},
+    {"dspos::get_StopTime", 2, sh_ds_zero},
+    {"dspos::put_StopTime", 3, sh_ds_ok},
+    {"dspos::get_PrerollTime", 2, sh_ds_zero},
+    {"dspos::put_PrerollTime", 3, sh_ds_ok},
+    {"dspos::put_Rate", 3, sh_ds_ok},
+    {"dspos::get_Rate", 2, sh_ds_zero},
+    {"msample::QueryInterface", 3, sh_msample_qi},
+    {"msample::AddRef", 1, sh_ds_addref},
+    {"msample::Release", 1, sh_ds_release},
+    {"msample::GetPointer", 2, sh_msample_GetPointer},
     {"dspin::QueryInterface", 3, sh_ds_qi},
     {"dspin::AddRef", 1, sh_ds_addref},
     {"dspin::Release", 1, sh_ds_release},
@@ -1793,10 +2456,10 @@ extern "C" const rt_shim_entry rt_extra_table[] = {
     {"dsoundcom3d::IDirectSound3DBuffer::SetConeAngles", 4, sh_ds3d_ok},
     {"dsoundcom3d::IDirectSound3DBuffer::SetConeOrientation", 5, sh_ds3d_ok},
     {"dsoundcom3d::IDirectSound3DBuffer::SetConeOutsideVolume", 3, sh_ds3d_ok},
-    {"dsoundcom3d::IDirectSound3DBuffer::SetMaxDistance", 3, sh_ds3d_ok},
-    {"dsoundcom3d::IDirectSound3DBuffer::SetMinDistance", 3, sh_ds3d_ok},
+    {"dsoundcom3d::IDirectSound3DBuffer::SetMaxDistance", 3, sh_ds3d_SetMaxDistance},
+    {"dsoundcom3d::IDirectSound3DBuffer::SetMinDistance", 3, sh_ds3d_SetMinDistance},
     {"dsoundcom3d::IDirectSound3DBuffer::SetMode", 3, sh_ds3d_ok},
-    {"dsoundcom3d::IDirectSound3DBuffer::SetPosition", 5, sh_ds3d_ok},
+    {"dsoundcom3d::IDirectSound3DBuffer::SetPosition", 5, sh_ds3d_SetPosition},
     {"dsoundcom3d::IDirectSound3DBuffer::SetVelocity", 5, sh_ds3d_ok},
     {"dsoundcom::IDirectSoundBuffer::AddRef", 1, sh_ds_addref},
     {"dsoundcom::IDirectSoundBuffer::Release", 1, sh_ds_release},

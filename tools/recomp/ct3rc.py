@@ -240,7 +240,7 @@ class FunctionTranslator:
         if m == "LOAD" and osz > 8:
             return "memcpy(%s, rt_mem_base + (uint32_t)%s, %d);" % (self.ptr(out), self.int_val(ins[1]), osz)
         if m == "STORE" and asz(2) > 8:
-            return "memcpy(rt_mem_base + (uint32_t)%s, %s, %d);" % (self.int_val(ins[1]), self.ptr(ins[2]), asz(2))
+            return "guest_st_block((uint32_t)%s, %s, %d);" % (self.int_val(ins[1]), self.ptr(ins[2]), asz(2))
         if m == "SUBPIECE" and asz(0) > 8:
             k = ins[1]["o"]
             if osz > 8:

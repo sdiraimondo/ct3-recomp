@@ -19,7 +19,7 @@ uint32_t vtable_guest[64];
 
 void put32(uint32_t addr, uint32_t v)
 {
-    memcpy(rt_mem_base + addr, &v, 4);
+    guest_write(addr, &v, 4);
 }
 
 uint32_t get32(uint32_t addr)

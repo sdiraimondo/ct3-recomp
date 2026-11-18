@@ -152,7 +152,7 @@ chantiers Linux, mais `L1` (pic de heap) et `L3`/`L9` (cinématiques, imports) r
 | L1.3 | Corriger et vérifier | 60 min de course, aucun message « tas invité épuisé » | L1.2 | 3 j | 🔄 | pic 285 737 072 o (272,5 Mio), sortie propre 300 s post-course ; run 60 min à faire |
 | **L2** | Crash à la sortie (`0x5154b5`, table `atexit`) | Sortie propre depuis le menu et depuis une course, code 0 | — | 1 sem. | 🔄 | D-078 |
 | L2.1 | Lanceur `atexit` et nettoyages CRT (`0x514919`, `0x5164E5`, `0x5206C7`) | Fermeture de fenêtre : handlers exécutés, `ExitProcess(0)`, code 0 | — | 2 j | ✅ | D-078 |
-| L2.2 | Sortie par le menu EXIT et depuis une course | Même résultat que L2.1 par les deux chemins | L2.1 | 3 j | ⬜ | — |
+| L2.2 | Sortie par le menu EXIT et depuis une course | Même résultat que L2.1 par les deux chemins | L2.1 | 3 j | 🔄 | menu EXIT: `atexit` OK, `ExitProcess(13)`, code 13 ; SIGTERM en course: `ExitProcess(0)`, code 0 |
 | **L3** | Cinématiques | Intro, sélection de voiture et replay sans défaut visuel majeur | — | 3 sem. | 🔄 | D-061, TODO |
 | L3.1 | Relever le défaut exact (capture `CT3_SHOT`) | Capture horodatée du bug, fichier et moment identifiés | — | 2 j | ⬜ | TODO |
 | L3.2 | Graphe DirectShow factice : formats, `EC_COMPLETE`, boucle | cinepak 640×480 et rawvideo 128×128 lus sans figer la scène | L3.1 | 1 sem. | 🔄 | D-061 |

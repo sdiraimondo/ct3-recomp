@@ -192,9 +192,13 @@ L'ancien arrêt à 9 058 présentations était une exception FP du CRT
 (`0xC000008F`, `STATUS_FLOAT_INEXACT_RESULT`, voir D-077), pas un épuisement du
 tas. Après le contournement, la même session dépasse 17 000 présentations (D-077).
 
-Conséquence pour S2 : prévoir **au moins ~450 Mio de heap** comme base prudente
-tant que L1.3 n'est pas entièrement validé (marge supplémentaire recommandée),
-en plus de l'image (~3,9 Mo), du scratch (4 Mo) et des piles de threads.
+Conséquence pour S2 : prévoir **au moins ~450 Mio de heap** comme base prudente,
+avec une **marge de planification recommandée de 512 Mio** pour l'arène tant que
+L1.3 n'est pas entièrement validé (G2). Le runtime signale désormais la
+croissance du pic (`CT3_HEAP_WARN_MB`, défaut 448, et `CT3_HEAP_WARN_STEP_MB`,
+défaut 64), ce qui permet un contournement de suivi sans bloquer le bring-up
+sur un test de 60 min continu. Prévoir en plus l'image (~3,9 Mo), le scratch
+(4 Mo) et les piles de threads.
 
 ## 4. Plan par jalons
 

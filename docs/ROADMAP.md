@@ -257,7 +257,7 @@ chantiers Linux, mais `L1` (pic de heap) et `L3`/`L9` (cinématiques, imports) r
 | Porte | Question | Donnée d'entrée | Conséquence si « non » | État |
 |---|---|---|---|---|
 | **G1** | `long double` de newlib est-il binary128 little-endian ? | Sonde S1 | Type `extFloat80` logiciel, tests x87 supplémentaires | ✅ franchie : binary128 LE, 113 bits, exp 16384 |
-| **G2** | Le pic de heap tient-il dans une arène contiguë Horizon ? | Mesure L1.1 / S2.1 | Table de pages derrière `guest_ld`/`guest_st` | ⬜ en attente |
+| **G2** | Le pic de heap tient-il dans une arène contiguë Horizon ? | Mesure L1.1 / S2.1 | Table de pages derrière `guest_ld`/`guest_st` | ⬜ en attente (contournement : planifier 512 Mio, alertes `CT3_HEAP_WARN_*`, valider pic stabilisé après correction L1.3) |
 | **G3** | `mesa-switch` crée-t-il une surface et une swapchain stables ? | Smoke test S4.4 | Revoir le WSI ou la version de mesa | ⬜ en attente |
 | **G4** | DXVK s'initialise-t-il sans loader Vulkan ? | S5.3 | Patch de chargement statique plus profond | ⬜ en attente |
 | **G5** | Une course complète tient-elle en 720p ? | S8.3 | Réduire le périmètre du bring-up (cinématiques, replay) | ⬜ en attente |
@@ -332,10 +332,10 @@ parallèle ; la trace donne l'ordre qui réduit le plus les risques.
 
 **S1/G1 franchies ; L1.1, L1.2, L2.1, S2.1 (mesure initiale), S4.1 (squelette) avancés** (18 nov. 2026). Prochaines actions :
 
-1. **L1.3** — Investiguer la croissance tardive du tas observée sur run long (pic 448 Mio, `/tmp/opencode/ct3_l1_3.log`) : reproduire une session 60 min continue en course, identifier fuite/fragmentation (`CT3_ALLOCLOG`, `CT3_HEAPSTATS`), corriger et revalider.
+1. **L1.3** — Investiguer la croissance tardive du tas observée sur run long (pic 448 Mio, `/tmp/opencode/ct3_l1_3.log`) : reproduire les cycles/transitions tardives (scénario court ciblé) avec `CT3_ALLOCLOG`, `CT3_HEAPCHK`, `CT3_HEAPSTATS` ; corriger fuite/fragmentation et re-mesurer un pic stabilisé (le soak 60 min continu reste la clôture finale, non bloquante pour S2 grâce aux alertes `CT3_HEAP_WARN_*` et à la marge 512 Mio).
 2. **L2/L2.2** — Confirmer le code de sortie nominal du menu EXIT (13 observé, teardown propre) ou ajuster la séquence pour atteindre l'item EXIT exact ; clôturer L2 si les chemins jeu sont propres.
 3. **S4.1** — Valider la compilation du squelette DXVK Switch avec `-Dnative_switch=true` en cross devkitA64/libnx (`tools/port/dxvk-3.1.1-switch-wsi-s4.1.patch`) ; corriger les points de build.
-4. **S2.2** — Abstraire `rt_va_reserve/commit/protect` (interface commune, comportement Linux inchangé) en préparation de l'arène Horizon.
+4. **S2.2** — Abstraire `rt_va_reserve/commit/protect` (interface commune, comportement Linux inchangé) en préparation de l'arène Horizon, en planifiant 512 Mio de marge.
 
 ## 12. Mise à jour
 

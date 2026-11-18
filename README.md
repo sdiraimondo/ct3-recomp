@@ -115,7 +115,8 @@ Useful runtime settings:
 - `CT3_WINDOWED=1` forces a windowed swapchain (useful under Xvfb, which has no fullscreen modes).
 - `CT3_KEY_HOLD=3600:up` holds a keyboard key from the given frame (automated test runs).
 - `CT3_KEY_SEQ=2100:down,2200:return` presses and releases keyboard keys (menu automation).
-- `CT3_HEAPSTATS=1` reports every 30 s the guest heap top, its historical peak and its occupancy (`CT3_HEAPSTATS_MS` changes the period).
+- `CT3_HEAPSTATS=1` reports every 30 s the guest heap top, its historical peak (bytes and MiB) and its occupancy (`CT3_HEAPSTATS_MS` changes the period).
+- `CT3_HEAP_WARN_MB` / `CT3_HEAP_WARN_STEP_MB` emit warnings when the heap peak crosses a threshold (default 448 MiB) and then every step (default 64 MiB), to track growth without a 60-minute soak test (L1.3/S2 workaround).
 
 Tests (each one is a program, run from `build/tests`):
 - `cpu/test_cpu`, `vec/test_vec`, `x87/test_x87` and `g2/test_g2` need no argument.

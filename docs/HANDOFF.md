@@ -93,7 +93,8 @@ passent** au dernier commit.
 | `CT3_UNRESDBG=1` | À un appel non traduit, affiche l'objet `[0x724E10]` et sa vtable |
 | `CT3_ALLOCLOG=1` | Journal des allocations et libérations avec appelants du jeu |
 | `CT3_HEAPCHK=1` | Vérification de cohérence du tas après chaque opération (lent) |
-| `CT3_HEAPSTATS=1` | Toutes les 30 s : sommet, **pic historique**, occupation et plus grand bloc libre du tas invité (`CT3_HEAPSTATS_MS` change la période, minimum 1 s) |
+| `CT3_HEAPSTATS=1` | Toutes les 30 s : sommet, **pic historique** (octets et Mio), occupation et plus grand bloc libre du tas invité (`CT3_HEAPSTATS_MS` change la période, minimum 1 s) |
+| `CT3_HEAP_WARN_MB` / `CT3_HEAP_WARN_STEP_MB` | Alerte quand le pic de tas franchit un seuil (défaut 448 Mio) puis à chaque palier (défaut 64 Mio) ; contournement de suivi L1.3/S2 sans test 60 min continu |
 | `CT3_WINDOWED=1` | Force le mode fenêtré à la création et à chaque `Reset` (tests sous Xvfb, où aucun mode plein écran n'existe) |
 | `CT3_PAD_HOLD=N:bouton,...` | Avec `CT3_PAD_TEST=1`, maintient des boutons de la manette virtuelle à partir de la présentation N (course automatisée) |
 | `CT3_KEY_HOLD=N:touche,...` | Maintient des touches clavier à partir de la présentation N (`up`, `down`, `left`, `right`, `return`, `x`, `s`, `space`, `escape`), sans manette virtuelle |

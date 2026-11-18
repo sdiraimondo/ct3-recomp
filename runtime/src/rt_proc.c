@@ -137,6 +137,31 @@ static int heap_trace(void)
     return on;
 }
 
+static void heap_maybe_warn_peak(void)
+{
+    static uint32_t last_warned = 0;
+    static long warn_mb = -1;
+    static long step_mb = -1;
+    if (warn_mb < 0) {
+        const char *w = getenv("CT3_HEAP_WARN_MB");
+        const char *s = getenv("CT3_HEAP_WARN_STEP_MB");
+        warn_mb = w ? strtol(w, NULL, 10) : 448;   /* contournement L1.3/S2 : pic observé tardif */
+        step_mb = s ? strtol(s, NULL, 10) : 64;
+        if (warn_mb < 0) warn_mb = 0;
+        if (step_mb <= 0) step_mb = 64;
+    }
+    uint32_t peak = heap_peak_top - RT_HEAP_BASE;
+    uint32_t threshold = (uint32_t)warn_mb * 1024u * 1024u;
+    uint32_t step = (uint32_t)step_mb * 1024u * 1024u;
+    if (peak < threshold) return;
+    uint32_t level = threshold + ((peak - threshold) / step) * step;
+    if (level <= last_warned) return;
+    last_warned = level;
+    fprintf(stderr,
+            "rt: alerte tas pic=%u octets (%u Mio) >= %u Mio (CT3_HEAP_WARN_MB/STEP pour ajuster, contournement L1.3)\n",
+            peak, peak / (1024u * 1024u), level / (1024u * 1024u));
+}
+
 /* CT3_HEAPSTATS=1 : toutes les 30 s (CT3_HEAPSTATS_MS pour changer), une ligne avec le sommet
  * courant, le pic historique et l'occupation. Le pic sert à dimensionner l'arène Switch (S2) ;
  * les octets comptent les en-têtes. */
@@ -174,8 +199,10 @@ static void heap_report(const char *where, int force)
         blocks++;
         b += total;
     }
-    fprintf(stderr, "rt: tas %s sommet=0x%08x pic=0x%08x utilise=%u libre=%u plus_grand=%u blocs=%u\n",
-            where, heap_next - RT_HEAP_BASE, heap_peak_top - RT_HEAP_BASE, used, free_bytes, largest, blocks);
+    uint32_t peak = heap_peak_top - RT_HEAP_BASE;
+    fprintf(stderr,
+            "rt: tas %s sommet=0x%08x pic=0x%08x (%u Mio) utilise=%u libre=%u plus_grand=%u blocs=%u\n",
+            where, heap_next - RT_HEAP_BASE, peak, peak / (1024u * 1024u), used, free_bytes, largest, blocks);
 }
 
 /* État du tas côté hôte (sommet et listes libres), pour la vérification du portage natif (rt_filter.c). */
@@ -188,7 +215,10 @@ void rt_heap_get_state(uint32_t *top, uint32_t *bins)
 void rt_heap_set_state(uint32_t top, const uint32_t *bins)
 {
     heap_next = top;
-    if (top > heap_peak_top) heap_peak_top = top;
+    if (top > heap_peak_top) {
+        heap_peak_top = top;
+        heap_maybe_warn_peak();
+    }
     memcpy(heap_bins, bins, sizeof heap_bins);
 }
 
@@ -224,7 +254,10 @@ uint32_t rt_heap_alloc(uint32_t size, int zero)
         }
         block = heap_next;
         heap_next += total;
-        if (heap_next > heap_peak_top) heap_peak_top = heap_next;
+        if (heap_next > heap_peak_top) {
+            heap_peak_top = heap_next;
+            heap_maybe_warn_peak();
+        }
     }
     uint32_t cap = total - 8;
     put32(block, cap);

@@ -102,6 +102,28 @@ directory, `pack/`, `../pack`, `../../pack`, next to the binary, or via
 
 The first build runs the whole translation of `CT3.exe` and takes several minutes.
 
+### Local release bundle
+
+`tools/release/make_release.sh` assembles a relocatable bundle from a Release
+build:
+
+```sh
+cmake -S . -B build-release -G Ninja \
+    -DCT3_EXE="/path/to/your/Crazy Taxi 3/CT3.exe" \
+    -DCMAKE_BUILD_TYPE=Release \
+    -DCT3_RPATH='$ORIGIN/../lib' \
+    -DCMAKE_BUILD_WITH_INSTALL_RPATH=ON
+cmake --build build-release --target ct3_run
+tools/release/make_release.sh
+```
+
+The bundle and its archive land in `dist/` (ignored by Git), together with
+`SHA256SUMS`. It contains the launcher, the pack generator, the non-system
+libraries (SDL2, DXVK, FFmpeg) and their licences, but neither `CT3.exe` nor
+the pack: generate the pack locally with `bin/ct3-mkpack`. The executable links
+the translated game code, so the bundle is a derivative of the game and is
+meant for local use only. See `tools/release/README.md`.
+
 Useful runtime settings:
 - `Config.ini` also holds the game settings (read from the same place):
   - `[Patches] SkipIntro=1` skips the logo sequence (`0` keeps it).

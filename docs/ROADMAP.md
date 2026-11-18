@@ -149,7 +149,7 @@ chantiers Linux, mais `L1` (pic de heap) et `L3`/`L9` (cinématiques, imports) r
 | **L1** | Crash après 20–30 min et « tas invité épuisé » | Session de 60 min sans faute ni épuisement du heap | — | 2 sem. | ⬜ | D-069, TODO |
 | L1.1 | Instrumenter le pic de heap (`rt_proc.c`, `CT3_ALLOCLOG`, `CT3_HEAPCHK`) | Pic mesuré et consigné (octets, scénario) | — | 2 j | ✅ | D-076, SWITCH_PORT §3 |
 | L1.2 | Reproduire et localiser la fuite ou la corruption | Cause identifiée (fuite, écriture hors bornes, objet non libéré) | L1.1 | 1 sem. | ✅ | D-077, D-078, D-079 |
-| L1.3 | Corriger et vérifier | 60 min de course, aucun message « tas invité épuisé » | L1.2 | 3 j | 🔄 | pic 285 737 072 o (272,5 Mio), sortie propre 300 s post-course ; run 60 min à faire |
+| L1.3 | Corriger et vérifier | 60 min de course, aucun message « tas invité épuisé » | L1.2 | 3 j | 🔄 | run long (18 nov.): pas de faute/épuisement, `ExitProcess(13)` propre, mais croissance tardive du tas, pic observé 448 173 056 o (~427,4 Mio) — fuite/croissance à investiguer, validation 60 min continue requise |
 | **L2** | Crash à la sortie (`0x5154b5`, table `atexit`) | Sortie propre depuis le menu et depuis une course, code 0 | — | 1 sem. | 🔄 | D-078 |
 | L2.1 | Lanceur `atexit` et nettoyages CRT (`0x514919`, `0x5164E5`, `0x5206C7`) | Fermeture de fenêtre : handlers exécutés, `ExitProcess(0)`, code 0 | — | 2 j | ✅ | D-078 |
 | L2.2 | Sortie par le menu EXIT et depuis une course | Même résultat que L2.1 par les deux chemins | L2.1 | 3 j | 🔄 | menu EXIT: `atexit` OK, `ExitProcess(13)`, code 13 ; SIGTERM en course: `ExitProcess(0)`, code 0 |
@@ -206,7 +206,7 @@ chantiers Linux, mais `L1` (pic de heap) et `L3`/`L9` (cinématiques, imports) r
 |---|---|---|---|---|---|---|
 | **S1** | Sonde devkitA64/newlib | Résultats consignés : `sizeof(long double)`, `LDBL_MANT_DIG`, `LDBL_MAX_EXP`, boutisme, `ldexpl`/`frexpl`, `char`, `pthread`, `mmap`, `clock_gettime`, `__thread` | — | 1 sem. | ✅ | SWITCH_PORT §2, `tools/port/devkita64_probe.sh` |
 | **S2** | Mémoire invitée | Une fonction traduite s'exécute sur Switch dans une arène dimensionnée | L1.1, S1 | 2 sem. | ⬜ | SWITCH_PORT §3 |
-| S2.1 | Pic de heap | Pic mesuré (partagé avec L1.1) | L1.1 | — | ✅ | D-076, SWITCH_PORT §3 |
+| S2.1 | Pic de heap | Pic mesuré (partagé avec L1.1) | L1.1 | — | 🔄 | D-076, SWITCH_PORT §3 : pic observé monté à 448 Mio (L1.3), marge à confirmer |
 | S2.2 | Abstraire `rt_va_reserve/commit/protect` | Implémentation Linux inchangée, interface commune | S1 | 1 sem. | ⬜ | rt_mem.c |
 | S2.3 | Arène Horizon (`virtmemFindAslr` + `svcMapMemory`) | Image + scratch + pile + heap + stubs mappés | S2.2 | 1 sem. | ⬜ | rt_proc.h, S1 |
 | S2.4 | Valider pointeurs 32 bits et `test_g2` | `test_g2` vert sur AArch64 Linux ; smoke test Switch | S2.3 | 3 j | ⬜ | — |
@@ -286,9 +286,11 @@ parallèle ; la trace donne l'ordre qui réduit le plus les risques.
 - [x] **M1** · spike AArch64 (x87, G2, CPU, VEC, f80)
 - [x] **S1** · sonde devkitA64 (17 nov. 2026) — `tools/port/devkita64_probe.sh`, `RESULT=PASS`
 - [x] **G1** · format `long double` tranché : binary128 little-endian
-- [ ] **L1.1** · pic de heap et reproduction 30 min ← *prochaine action*
+- [x] **L1.1** · instrumentation et mesure du pic de heap
+- [ ] **L1.3** · validation 60 min continue et correction de la croissance du tas ← *prochaine action*
 - [ ] **S2** · mémoire invitée et arène
 - [ ] **G2** · taille d'arène validée
+- [ ] **S4.1** · squelette WSI DXVK Switch (patch déposé, build cross à valider)
 - [ ] **S4** · WSI DXVK Switch
 - [ ] **S5** · Vulkan loaderless
 - [ ] **G3/G4** · surface, swapchain et DXVK sans loader
@@ -328,14 +330,12 @@ parallèle ; la trace donne l'ordre qui réduit le plus les risques.
 
 ## 11. Prochaines actions (deux semaines)
 
-**S1 et G1 sont faites** (17 nov. 2026). Les prochaines actions sont :
+**S1/G1 franchies ; L1.1, L1.2, L2.1, S2.1 (mesure initiale), S4.1 (squelette) avancés** (18 nov. 2026). Prochaines actions :
 
-1. **L1.1 / S2.1** — Ajouter le compteur de pic de heap dans `rt_proc.c`, lancer une session de
-   30 minutes et consigner le pic.
-2. **L1.2** — Reproduire le crash de 20–30 minutes avec `CT3_ALLOCLOG=1` et `CT3_HEAPCHK=1`.
-3. **S4.1** — Créer le squelette `src/wsi/switch/*` dans l'arbre DXVK local, sans engagement
-   fonctionnel : il permet de vérifier la compilation et l'interface `WsiDriver`.
-4. **L2** — Désassembler la fonction `atexit` à `0x5154b5` (tâche courte et indépendante).
+1. **L1.3** — Investiguer la croissance tardive du tas observée sur run long (pic 448 Mio, `/tmp/opencode/ct3_l1_3.log`) : reproduire une session 60 min continue en course, identifier fuite/fragmentation (`CT3_ALLOCLOG`, `CT3_HEAPSTATS`), corriger et revalider.
+2. **L2/L2.2** — Confirmer le code de sortie nominal du menu EXIT (13 observé, teardown propre) ou ajuster la séquence pour atteindre l'item EXIT exact ; clôturer L2 si les chemins jeu sont propres.
+3. **S4.1** — Valider la compilation du squelette DXVK Switch avec `-Dnative_switch=true` en cross devkitA64/libnx (`tools/port/dxvk-3.1.1-switch-wsi-s4.1.patch`) ; corriger les points de build.
+4. **S2.2** — Abstraire `rt_va_reserve/commit/protect` (interface commune, comportement Linux inchangé) en préparation de l'arène Horizon.
 
 ## 12. Mise à jour
 

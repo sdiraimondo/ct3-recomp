@@ -179,13 +179,22 @@ Session post-course plus longue (300 s, `CT3_KEY_AT2=2800` pour valider AXEL,
 code 0 (D-079). Les valeurs de tas observées en fin de session :
 sommet `0x10E2C160`, utilisé ~273,5 Mio, plus grand bloc libre ~248,8 Kio.
 
+Session longue L1.3 (18 nov. 2026, `CT3_HEAPSTATS_MS=60000`, navigation/course
+automatisée) : pas de faute mémoire, pas d'« tas invité épuisé », exceptions FP
+CRT ignorées (D-077), sortie par `ExitProcess(13)` (atexit exécuté). Le tas se
+stabilise un temps autour de ~269 Mio puis connaît une croissance tardive ;
+**pic historique observé `0x1AB89C00` = 448 173 056 octets (~427,4 Mio)**, utilisé
+~447,2 Mio, plus grand bloc libre ~114,9 Kio (fin de log, `/tmp/opencode/ct3_l1_3.log`).
+La tendance ascendante en fin de session indique un risque de fuite/croissance à
+confirmer sur une session de 60 min réellement continue.
+
 L'ancien arrêt à 9 058 présentations était une exception FP du CRT
 (`0xC000008F`, `STATUS_FLOAT_INEXACT_RESULT`, voir D-077), pas un épuisement du
 tas. Après le contournement, la même session dépasse 17 000 présentations (D-077).
 
-Conséquence pour S2 : prévoir **au moins ~286 Mio de heap** (marge à confirmer
-par L1.3, session 60 min), en plus de l'image (~3,9 Mo), du scratch (4 Mo) et
-des piles de threads.
+Conséquence pour S2 : prévoir **au moins ~450 Mio de heap** comme base prudente
+tant que L1.3 n'est pas entièrement validé (marge supplémentaire recommandée),
+en plus de l'image (~3,9 Mo), du scratch (4 Mo) et des piles de threads.
 
 ## 4. Plan par jalons
 

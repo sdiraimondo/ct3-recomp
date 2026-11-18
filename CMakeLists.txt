@@ -11,7 +11,10 @@ endif()
 
 set(CT3_DEPS_PREFIX "$ENV{HOME}/.local/ct3-deps/prefix" CACHE PATH "Préfixe des dépendances locales (SDL2, dxvk-native)")
 list(APPEND CMAKE_PREFIX_PATH "${CT3_DEPS_PREFIX}")
-set(CMAKE_BUILD_RPATH "${CT3_DEPS_PREFIX}/lib64")
+set(CT3_RPATH "${CT3_DEPS_PREFIX}/lib64" CACHE STRING
+    "RPATH des binaires ; utiliser $ORIGIN/../lib pour une release relocalisable")
+set(CMAKE_BUILD_RPATH "${CT3_RPATH}")
+set(CMAKE_INSTALL_RPATH "${CT3_RPATH}")
 
 set(CT3_TRACE_INSN "0" CACHE STRING "1 : trace de la dernière instruction invitée (build de débogage)")
 set(CT3_EXE "" CACHE FILEPATH "CT3.exe de référence, de votre propre copie (lecture seule)")

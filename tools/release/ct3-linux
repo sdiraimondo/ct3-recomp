@@ -1,0 +1,18 @@
+#!/bin/sh
+# Lanceur du bundle ct3-linux.
+# - place lib/ en tête de LD_LIBRARY_PATH (le binaire est aussi lié avec
+#   RUNPATH=$ORIGIN/../lib, mais le lanceur reste nécessaire si l'archive est
+#   déplacée ou si un lanceur externe nettoie l'environnement) ;
+# - utilise share/ct3/pack/ct3_data.bin s'il existe ;
+# - transmet le dossier du jeu (argument ou CT3_DATA_DIR) à ct3_run.
+set -eu
+
+here=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+export LD_LIBRARY_PATH="$here/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+
+if [ -z "${CT3_PACK:-}" ] && [ -f "$here/share/ct3/pack/ct3_data.bin" ]; then
+    CT3_PACK="$here/share/ct3/pack/ct3_data.bin"
+    export CT3_PACK
+fi
+
+exec "$here/bin/ct3_run" "$@"

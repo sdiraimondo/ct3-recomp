@@ -137,6 +137,168 @@ static int heap_trace(void)
     return on;
 }
 
+/* CT3_ALLOCSTATS=1 : profil des blocs vivants par site appelant (diagnostic de fuite L1.3).
+ * Le shim d'allocation fournit l'adresse de retour invitée du code du jeu ; une table
+ * adresse -> site permet d'attribuer chaque libération au site qui a alloué le bloc, même
+ * lorsqu'un autre site le libère. Les sites 0 (allocations internes au runtime) sont regroupés. */
+#define RT_ALLOC_MAP_SIZE 262144u  /* puissance de deux, > 2 x blocs vivants attendus */
+#define RT_ALLOC_TOMB 1u           /* adresse sentinelle : case libérée */
+#define RT_SITE_MAX 4096u
+
+struct alloc_rec {
+    uint32_t addr;
+    uint32_t size;
+    uint32_t site;
+};
+
+struct site_stat {
+    uint32_t site;
+    uint64_t live;
+    uint64_t total;
+    uint64_t freed;
+    uint32_t live_n;
+    uint32_t total_n;
+};
+
+static struct alloc_rec alloc_map[RT_ALLOC_MAP_SIZE];
+static struct site_stat site_stats[RT_SITE_MAX];
+static unsigned site_used;
+/* Site de l'allocation en cours : renseigné par les shims autour de rt_heap_alloc. */
+static _Thread_local uint32_t heap_alloc_site;
+
+static int allocstats_enabled(void)
+{
+    static int on = -1;
+    if (on < 0) on = getenv("CT3_ALLOCSTATS") != NULL;
+    return on;
+}
+
+void rt_heap_set_site(uint32_t site)
+{
+    heap_alloc_site = site;
+}
+
+static struct site_stat *site_slot(uint32_t site)
+{
+    for (unsigned i = 0; i < site_used; i++) {
+        if (site_stats[i].site == site) return &site_stats[i];
+    }
+    if (site_used >= RT_SITE_MAX) return NULL;
+    site_stats[site_used].site = site;
+    return &site_stats[site_used++];
+}
+
+static uint32_t alloc_hash(uint32_t addr)
+{
+    return (addr * 2654435761u) & (RT_ALLOC_MAP_SIZE - 1u);
+}
+
+static struct alloc_rec *alloc_map_find(uint32_t addr)
+{
+    for (uint32_t n = 0, i = alloc_hash(addr); n < RT_ALLOC_MAP_SIZE; n++, i = (i + 1) & (RT_ALLOC_MAP_SIZE - 1u)) {
+        struct alloc_rec *r = &alloc_map[i];
+        if (r->addr == addr) return r->addr == RT_ALLOC_TOMB ? NULL : r;
+        if (r->addr == 0) return NULL;
+    }
+    return NULL;
+}
+
+static void alloc_map_insert(uint32_t addr, uint32_t size, uint32_t site)
+{
+    struct alloc_rec *tomb = NULL;
+    for (uint32_t n = 0, i = alloc_hash(addr); n < RT_ALLOC_MAP_SIZE; n++, i = (i + 1) & (RT_ALLOC_MAP_SIZE - 1u)) {
+        struct alloc_rec *r = &alloc_map[i];
+        if (r->addr == addr && r->addr != RT_ALLOC_TOMB) {
+            r->size = size;
+            r->site = site;
+            return;
+        }
+        if (r->addr == RT_ALLOC_TOMB) {
+            if (!tomb) tomb = r;
+        } else if (r->addr == 0) {
+            r = tomb ? tomb : r;
+            r->addr = addr;
+            r->size = size;
+            r->site = site;
+            return;
+        }
+    }
+    if (tomb) {
+        tomb->addr = addr;
+        tomb->size = size;
+        tomb->site = site;
+    }
+}
+
+static void site_note_alloc(uint32_t addr, uint32_t size, uint32_t site)
+{
+    if (!allocstats_enabled()) return;
+    struct site_stat *s = site_slot(site);
+    if (!s) return;
+    s->live += size;
+    s->total += size;
+    s->live_n++;
+    s->total_n++;
+    alloc_map_insert(addr, size, site);
+}
+
+static void site_note_free(uint32_t addr)
+{
+    if (!allocstats_enabled()) return;
+    struct alloc_rec *r = alloc_map_find(addr);
+    if (!r) return;
+    struct site_stat *s = site_slot(r->site);
+    if (s) {
+        if (s->live >= r->size) s->live -= r->size;
+        else s->live = 0;
+        s->freed += r->size;
+        if (s->live_n) s->live_n--;
+    }
+    r->addr = RT_ALLOC_TOMB;
+    r->size = 0;
+    r->site = 0;
+}
+
+/* Affiche les sites qui retiennent le plus d'octets vivants (top 12). */
+void rt_heap_dump_sites(const char *why)
+{
+    if (!allocstats_enabled()) return;
+    uint64_t live = 0, total = 0, freed = 0;
+    unsigned live_n = 0;
+    for (unsigned i = 0; i < site_used; i++) {
+        live += site_stats[i].live;
+        total += site_stats[i].total;
+        freed += site_stats[i].freed;
+        live_n += site_stats[i].live_n;
+    }
+    fprintf(stderr,
+            "rt: allocstats %s : vivant=%llu o (%u Mio) en %u blocs, total_alloue=%llu o, libere=%llu o, sites=%u\n",
+            why, (unsigned long long)live, (unsigned)(live / (1024u * 1024u)), live_n,
+            (unsigned long long)total, (unsigned long long)freed, site_used);
+    unsigned char printed[RT_SITE_MAX];
+    memset(printed, 0, sizeof printed);
+    for (unsigned n = 0; n < 12; n++) {
+        int best = -1;
+        for (unsigned i = 0; i < site_used; i++) {
+            if (printed[i] || site_stats[i].live == 0) continue;
+            if (best < 0 || site_stats[i].live > site_stats[best].live) best = (int)i;
+        }
+        if (best < 0) break;
+        printed[best] = 1;
+        const struct site_stat *s = &site_stats[best];
+        fprintf(stderr,
+                "rt: allocstats   site=0x%08x%s vivant=%llu o (%u Mio, %u blocs) total=%llu o (%u blocs) libere=%llu o\n",
+                s->site, (s->site & 0x80000000u) ? " (hôte)" : "",
+                (unsigned long long)s->live, (unsigned)(s->live / (1024u * 1024u)), s->live_n,
+                (unsigned long long)s->total, s->total_n, (unsigned long long)s->freed);
+    }
+}
+
+static void allocstats_atexit(void)
+{
+    rt_heap_dump_sites("sortie");
+}
+
 static void heap_maybe_warn_peak(void)
 {
     static uint32_t last_warned = 0;
@@ -177,13 +339,17 @@ static void heap_report(const char *where, int force)
         if (period_ms < 1000) period_ms = 1000;
     }
     static struct timespec last;
+    static struct timespec start;
     struct timespec now;
     clock_gettime(CLOCK_MONOTONIC, &now);
+    if (!start.tv_sec) start = now;
     if (!force && last.tv_sec != 0) {
         long ms = (now.tv_sec - last.tv_sec) * 1000L + (now.tv_nsec - last.tv_nsec) / 1000000L;
         if (ms < period_ms) return;
     }
     last = now;
+    long elapsed_ms = (now.tv_sec - start.tv_sec) * 1000L + (now.tv_nsec - start.tv_nsec) / 1000000L;
+    if (elapsed_ms < 0) elapsed_ms = 0;
 
     uint32_t used = 0, free_bytes = 0, largest = 0;
     unsigned blocks = 0;
@@ -201,8 +367,9 @@ static void heap_report(const char *where, int force)
     }
     uint32_t peak = heap_peak_top - RT_HEAP_BASE;
     fprintf(stderr,
-            "rt: tas %s sommet=0x%08x pic=0x%08x (%u Mio) utilise=%u libre=%u plus_grand=%u blocs=%u\n",
-            where, heap_next - RT_HEAP_BASE, peak, peak / (1024u * 1024u), used, free_bytes, largest, blocks);
+            "rt: tas %s t=%lds sommet=0x%08x pic=0x%08x (%u Mio) utilise=%u libre=%u plus_grand=%u blocs=%u\n",
+            where, elapsed_ms / 1000, heap_next - RT_HEAP_BASE, peak, peak / (1024u * 1024u), used, free_bytes, largest, blocks);
+    rt_heap_dump_sites(where);
 }
 
 /* État du tas côté hôte (sommet et listes libres), pour la vérification du portage natif (rt_filter.c). */
@@ -262,6 +429,12 @@ uint32_t rt_heap_alloc(uint32_t size, int zero)
     uint32_t cap = total - 8;
     put32(block, cap);
     put32(block + 4, RT_BLOCK_USED);
+    /* Site invité fourni par le shim ; sinon site hôte (adresse de retour runtime) pour identifier
+     * les allocations internes. Les sites hôtes portent le bit 31 pour ne pas les confondre avec
+     * les adresses invitées. */
+    uint32_t site = heap_alloc_site;
+    if (!site) site = 0x80000000u | (uint32_t)(uintptr_t)__builtin_return_address(0);
+    site_note_alloc(block + 8, cap, site);
     if (zero) {
         guest_fill(block + 8, 0, cap);
     }
@@ -277,6 +450,7 @@ void rt_heap_free(uint32_t p)
     uint32_t block = p - 8;
     /* Seuls les blocs alloués sont libérables : double libération et pointeurs intérieurs sont ignorés. */
     if (block < RT_HEAP_BASE || block >= heap_next || get32(block + 4) != RT_BLOCK_USED) return;
+    site_note_free(p);
     static int poison = -1;
     if (poison < 0) poison = getenv("CT3_HEAPPOISON") != NULL;
     if (heap_trace()) fprintf(stderr, "[h-] 0x%08x 0x%x\n", p, get32(block));
@@ -351,6 +525,13 @@ int rt_process_init(cpu_t *c)
     rt_thread_main_init(c);
     rt_install_crash_handler();
     rt_diag_init();
+    if (allocstats_enabled()) {
+        static int registered;
+        if (!registered) {
+            registered = 1;
+            atexit(allocstats_atexit);
+        }
+    }
     return 0;
 }
 

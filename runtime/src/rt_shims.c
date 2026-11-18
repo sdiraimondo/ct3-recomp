@@ -81,6 +81,17 @@ static uint32_t sh_HeapCreate(cpu_t *c, const uint32_t *a) { (void)c; (void)a; r
 /* CT3_ALLOCLOG=1 : journal des allocations et libérations avec les adresses de retour de code du jeu
  * trouvées sur la pile (diagnostic de fuite). */
 static int alloclog = -1;
+/* Première adresse de retour invitée du code du jeu trouvée sur la pile (hors CRT) : site appelant
+ * utilisé par CT3_ALLOCSTATS. 0 si la pile ne contient aucune adresse reconnaissable. */
+static uint32_t guest_callsite(cpu_t *c)
+{
+    uint32_t esp = (uint32_t)cpu_rd(c, 16, 4);
+    for (uint32_t k = 0; k < 160 && esp + 4 * k < 0x103FFF00u; k++) {
+        uint32_t v = (uint32_t)guest_ld(c, esp + 4 * k, 4);
+        if (v >= 0x401000u && v < 0x540000u && (v < 0x514000u || v >= 0x51F000u)) return v;
+    }
+    return 0;
+}
 static void log_heap(cpu_t *c, const char *what, uint32_t size, uint32_t addr)
 {
     if (alloclog < 0) alloclog = getenv("CT3_ALLOCLOG") != NULL;
@@ -99,13 +110,22 @@ static void log_heap(cpu_t *c, const char *what, uint32_t size, uint32_t addr)
 }
 static uint32_t sh_HeapAlloc(cpu_t *c, const uint32_t *a)
 {
+    rt_heap_set_site(guest_callsite(c));
     uint32_t p = rt_heap_alloc(a[2], (a[1] & 0x8) != 0);
+    rt_heap_set_site(0);
     log_heap(c, "alloc", a[2], p);
     return p;
 }
 static uint32_t sh_HeapFree(cpu_t *c, const uint32_t *a) { log_heap(c, "libre", a[2] ? rt_heap_size(a[2]) : 0, a[2]); rt_heap_free(a[2]); return 1; }
 static uint32_t sh_HeapSize(cpu_t *c, const uint32_t *a) { (void)c; return rt_heap_size(a[2]); }
-static uint32_t sh_HeapReAlloc(cpu_t *c, const uint32_t *a) { (void)c; return rt_heap_realloc(a[2], a[3]); }
+static uint32_t sh_HeapReAlloc(cpu_t *c, const uint32_t *a)
+{
+    rt_heap_set_site(guest_callsite(c));
+    uint32_t p = rt_heap_realloc(a[2], a[3]);
+    rt_heap_set_site(0);
+    log_heap(c, "realloc", a[3], p);
+    return p;
+}
 static uint32_t sh_GetEnvironmentStringsW(cpu_t *c, const uint32_t *a) { (void)c; (void)a; static uint32_t p; if (!p) { p = rt_scratch_alloc(4); memset(rt_mem_base + p, 0, 4); } return p; }
 static uint32_t sh_FreeEnvironmentStringsW(cpu_t *c, const uint32_t *a) { (void)c; (void)a; return 1; }
 static uint32_t sh_GetACP(cpu_t *c, const uint32_t *a) { (void)c; (void)a; return 1252; }
@@ -159,8 +179,59 @@ static uint32_t sh_ReadFile(cpu_t *c, const uint32_t *a) { (void)c; return (uint
 static uint32_t sh_WriteFile(cpu_t *c, const uint32_t *a) { (void)c; return (uint32_t)rt_file_write(a[0], a[1], a[2], a[3]); }
 static uint32_t sh_SetFilePointer(cpu_t *c, const uint32_t *a) { (void)c; return rt_file_seek(a[0], a[1], a[2], a[3]); }
 static uint32_t sh_GetFileSize(cpu_t *c, const uint32_t *a) { (void)c; return rt_file_size(a[0], a[1]); }
-static uint32_t sh_VirtualAlloc(cpu_t *c, const uint32_t *a) { (void)c; return rt_heap_alloc(a[1], 1); }
-static uint32_t sh_VirtualFree(cpu_t *c, const uint32_t *a) { (void)c; (void)a; return 1; }
+/* Adresses rendues par VirtualAlloc et pas encore libérées : évite de libérer un bloc étranger
+ * ou déjà libéré (double MEM_RELEASE). Table hôte, sans effet sur le tas invité. */
+static uint32_t *valloc_addrs;
+static unsigned valloc_count, valloc_cap;
+
+static void valloc_track(uint32_t p)
+{
+    if (valloc_count == valloc_cap) {
+        unsigned cap = valloc_cap ? valloc_cap * 2 : 64;
+        uint32_t *n = (uint32_t *)realloc(valloc_addrs, cap * sizeof *n);
+        if (!n) return;
+        valloc_addrs = n;
+        valloc_cap = cap;
+    }
+    valloc_addrs[valloc_count++] = p;
+}
+
+static int valloc_untrack(uint32_t p)
+{
+    for (unsigned i = 0; i < valloc_count; i++) {
+        if (valloc_addrs[i] == p) {
+            valloc_addrs[i] = valloc_addrs[--valloc_count];
+            return 1;
+        }
+    }
+    return 0;
+}
+
+static uint32_t sh_VirtualAlloc(cpu_t *c, const uint32_t *a)
+{
+    rt_heap_set_site(guest_callsite(c));
+    uint32_t p = rt_heap_alloc(a[1], 1);
+    rt_heap_set_site(0);
+    if (p) valloc_track(p);
+    if (alloclog < 0) alloclog = getenv("CT3_ALLOCLOG") != NULL;
+    if (alloclog)
+        fprintf(stderr, "[valloc] demande=0x%08x taille=0x%x type=0x%x prot=0x%x -> 0x%08x\n",
+                a[0], a[1], a[2], a[3], p);
+    return p;
+}
+static uint32_t sh_VirtualFree(cpu_t *c, const uint32_t *a)
+{
+    (void)c;
+    if (alloclog < 0) alloclog = getenv("CT3_ALLOCLOG") != NULL;
+    if (alloclog) fprintf(stderr, "[vfree] adresse=0x%08x taille=0x%x type=0x%x\n", a[0], a[1], a[2]);
+    /* CT3_VIRTUALFREE_NOOP=1 : reproduit l'ancien comportement (no-op) pour l'analyse A/B. */
+    static int noop = -1;
+    if (noop < 0) noop = getenv("CT3_VIRTUALFREE_NOOP") != NULL;
+    /* MEM_RELEASE (0x8000) : le bloc provient de sh_VirtualAlloc, donc du tas invité. MEM_DECOMMIT
+     * (0x4000) reste sans effet : le bloc demeure réservé jusqu'à sa libération. */
+    if (!noop && (a[2] & 0x8000u) && valloc_untrack(a[0])) rt_heap_free(a[0]);
+    return 1;
+}
 static uint32_t sh_InitializeCriticalSectionAndSpinCount(cpu_t *c, const uint32_t *a) { (void)c; memset(rt_mem_base + a[0], 0, 24); rt_cs_init(a[0]); return 1; }
 /* Fiber local storage : un seul fil, valeurs stockées par index. */
 static uint32_t fls_values[256];

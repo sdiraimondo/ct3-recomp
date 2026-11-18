@@ -11,6 +11,7 @@
 #include <ctime>
 #include <cstdlib>
 #include <cstring>
+#include <iterator>
 #include <map>
 #include <string>
 #include <vector>
@@ -23,6 +24,7 @@ struct lock_rec {
     rt_com_obj *obj;
     uint32_t sub;       // niveau (texture), ou face<<16 | niveau (cube)
     uint32_t buf;       // zone de transit invitée
+    uint32_t cap;       // capacité réelle du tampon (pour la réutilisation)
     uint32_t pitch;
     uint32_t rows;
     uint32_t rowbytes;
@@ -33,7 +35,12 @@ struct lock_rec {
 };
 
 std::vector<lock_rec> locks;
-std::multimap<uint32_t, uint32_t> free_bufs;  // taille -> zone de transit libre
+std::multimap<uint32_t, uint32_t> free_bufs;  // capacité -> zone de transit libre
+size_t stage_cached;                          // octets actuellement dans free_bufs
+/* Plafond du cache de zones de transit : au-delà, les plus grandes zones sont rendues au tas.
+ * Sans plafond, les tailles de verrouillage variées (textures, cinématiques, chargements)
+ * accumulent des tampons pendant toute la session (L1.3). */
+constexpr size_t kStageCacheMax = 64u << 20;
 
 bool same_iid(const IID &a, const IID &b)
 {
@@ -52,15 +59,31 @@ void put32(uint32_t addr, uint32_t v)
     guest_write(addr, &v, 4);
 }
 
-uint32_t stage_alloc(uint32_t size)
+void stage_trim(void)
 {
+    while (stage_cached > kStageCacheMax && !free_bufs.empty()) {
+        auto it = std::prev(free_bufs.end());  // plus grande zone
+        rt_heap_free(it->second);
+        stage_cached -= it->first;
+        free_bufs.erase(it);
+    }
+}
+
+uint32_t stage_alloc(uint32_t size, uint32_t *cap)
+{
+    /* Meilleur ajustement : la plus petite zone libre suffisante, sans limite de taille.
+     * Une zone plus grande que demandé reste utilisable ; la réutiliser évite d'accumuler
+     * des tampons de tailles voisines. */
     auto it = free_bufs.lower_bound(size);
-    if (it != free_bufs.end() && it->first < size * 2) {
+    if (it != free_bufs.end()) {
         uint32_t buf = it->second;
+        *cap = it->first;
+        stage_cached -= it->first;
         free_bufs.erase(it);
         return buf;
     }
-    return rt_heap_alloc(size ? size : 1, 0);
+    *cap = size ? size : 1;
+    return rt_heap_alloc(*cap, 0);
 }
 
 lock_rec *find_lock(rt_com_obj *o, uint32_t sub)
@@ -73,7 +96,9 @@ lock_rec *find_lock(rt_com_obj *o, uint32_t sub)
 
 void release_lock(lock_rec *r)
 {
-    free_bufs.insert({r->pitch * r->rows, r->buf});
+    free_bufs.insert({r->cap, r->buf});
+    stage_cached += r->cap;
+    stage_trim();
     *r = locks.back();
     locks.pop_back();
 }
@@ -314,8 +339,9 @@ static uint32_t lock_buffer(cpu_t *c, rt_com_obj *o, uint32_t off, uint32_t size
         if (out_addr) guest_st(c, out_addr, 4, 0);
         return (uint32_t)hr;
     }
-    uint32_t buf = stage_alloc(size);
-    lock_rec r{o, 0, buf, size, 1, size, static_cast<uint8_t *>(host_ptr)};
+    uint32_t cap = 0;
+    uint32_t buf = stage_alloc(size, &cap);
+    lock_rec r{o, 0, buf, cap, size, 1, size, static_cast<uint8_t *>(host_ptr)};
     (void)off;
     copy_rows(&r, true);
     locks.push_back(r);
@@ -390,8 +416,9 @@ static uint32_t lock_image(cpu_t *c, rt_com_obj *o, uint32_t sub, D3DFORMAT fmt,
     uint32_t rows = 0, rowbytes = 0;
     region_of(fmt, w, h, rect, (uint32_t)hl.Pitch, rows, rowbytes);
     uint32_t size = (uint32_t)hl.Pitch * rows;
-    uint32_t buf = stage_alloc(size);
-    lock_rec r{o, sub, buf, (uint32_t)hl.Pitch, rows, rowbytes, static_cast<uint8_t *>(hl.pBits)};
+    uint32_t cap = 0;
+    uint32_t buf = stage_alloc(size, &cap);
+    lock_rec r{o, sub, buf, cap, (uint32_t)hl.Pitch, rows, rowbytes, static_cast<uint8_t *>(hl.pBits)};
     r.dxt = dxt;
     r.rw = rect ? (uint32_t)(rect->right - rect->left) : w;
     r.rh = rect ? (uint32_t)(rect->bottom - rect->top) : h;

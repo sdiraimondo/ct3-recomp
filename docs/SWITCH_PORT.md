@@ -1,6 +1,6 @@
 # Portage Nintendo Switch — état, mesures et plan
 
-> Statut : note de travail, 17 novembre 2026. Spike AArch64 et sonde devkitA64 (S1) faits.
+> Statut : note de travail, 18 novembre 2026. Spike AArch64 et sonde devkitA64 (S1) faits.
 > Objet : consigner le spike AArch64, les correctifs déjà appliqués et le plan de portage.
 > Ce document ne remplace pas `DECISIONS.md` (D-011 : backend séparé, Switch reporté) ; il le met à jour.
 > Le plan consolidé, avec les jalons `S1`–`S10`, les portes `G1`–`G6` et la matrice de traçabilité,
@@ -8,14 +8,21 @@
 
 ## 1. Verdict
 
-La décompilation n'est plus le facteur limitant : ~5 700 fonctions traduites, ~443k instructions,
+La **traduction** n'est plus le facteur limitant : ~5 700 fonctions traduites, ~443k instructions,
 309 fonctions atteignables, aucun site p-code non supporté sur les chemins atteignables.
 
-Le portage Switch est un **projet de portage du runtime**, pas de reprise de la décompilation :
+Pour autant, la **décompilation n'est pas close** : la complétude du projet est définie par la
+vérification sémantique fonction par fonction (chantier `V1`–`V4`, `ROADMAP.md` §6, D-080). Ce
+chantier est **hors du chemin critique** des exécutables Linux et Switch et avance en parallèle.
 
-- le recompilateur produit du C, recompilé par le compilateur hôte ;
+Le portage Switch est un **projet de portage du runtime** ; il ne reprend pas la décompilation et
+ne la clôt pas :
+
+- le recompilateur produit du C, recompilé par le compilateur de la cible (ici devkitA64) ;
 - le pack de données est indépendant de l'architecture ;
-- `CT3.exe` reste un artefact de build, jamais une dépendance d'exécution.
+- `CT3.exe` reste un artefact de build, jamais une dépendance d'exécution ;
+- le code généré est le même que celui vérifié par `V*` : la vérification s'applique au port
+  Switch sans travail supplémentaire, et le port ne bloque pas la vérification.
 
 `mesa-switch` fournit du Vulkan natif homebrew (NVK sur GM20B, WSI `VK_NN_vi_surface` avec scanout
 direct par `NWindow`). Le chemin graphique réaliste est donc **DXVK Native + un backend WSI Switch**,
@@ -130,7 +137,7 @@ contiguë réservée au démarrage).
 |---|---|---|---|
 | WSI DXVK Switch | **critique** | `rt_win.cpp:145` force `DXVK_WSI_DRIVER=SDL2`. DXVK 3.1.1 (commit `21fda8f`) a des backends SDL2/SDL3/GLFW/win32, aucun Switch. `mesa-switch` expose `VK_NN_vi_surface` + `NWindow`, sans copie CPU. | Ajouter `src/wsi/switch/*`, `DXVK_WSI_SWITCH`, `SwitchWSI` ; `createSurface` via `vkCreateViSurfaceNN` ; rendre DXVK loaderless. |
 | Vulkan loaderless | **critique** | `src/vulkan/vulkan_loader.cpp` fait `LoadLibraryA("libvulkan.so")`. mesa-switch est statique, sans loader. | Constructeur `LibraryLoader(PFN_vkGetInstanceProcAddr)` et injection de `vkGetInstanceProcAddr` au démarrage. |
-| Mémoire invitée | **critique** | `RT_GUEST_SIZE = 1<<32` (`rt.h:12`), `mmap` de 4 GiB (`rt_mem.c:17`), heap `0x40000000` + 960 MiB (`rt_proc.h:15-16`), accès partout via `rt_mem_base + addr`. Horizon n'a ni overcommit ni pagination à la demande ; `mmap`/`mprotect` sont absents de newlib/libnx (S1). | Mesurer le pic réel du heap sous Linux ; abstraire `rt_va_reserve/commit/protect` ; dimensionner l'arène ; utiliser `virtmemFindAslr` + `svcMapMemory` sur devkitA64. |
+| Mémoire invitée | **critique** | `RT_GUEST_SIZE = 1<<32` (`rt.h:12`), `mmap` de 4 GiB (`rt_mem.c:17`), heap `0x40000000` + 960 MiB (`rt_proc.h:15-16`), accès partout via `rt_mem_base + addr`. Horizon n'a ni overcommit ni pagination à la demande ; `mmap`/`mprotect` sont absents de newlib/libnx (S1). | Pic mesuré et stabilisé à 161 Mio (D-081) ; abstraire `rt_va_reserve/commit/protect` ; dimensionner l'arène (planification 512 Mio) ; utiliser `virtmemFindAslr` + `svcMapMemory` sur devkitA64. |
 | Threads | moyen | `pthread_cancel` (`rt_thread.c:235`), TLS `__thread`, threads invités. `pthread_create`/`pthread_join` et `__thread` sont disponibles (S1), mais `pthread_cancel` reste à remplacer. | Backend thread Horizon + annulation coopérative ; tests de fin de partie et de sortie. |
 | Performance | **élevé** | Conversion x87 par décalage de mantisse sur binary128 (aucune libm) ; mesure indicative sous qemu-user : ~208 ns par paire put+get, contre ~1 264 ns avec `ldexpl`/`frexpl` (émulation binary128 dominante, non représentatif du natif). 4× Cortex-A57 ~1 GHz contre le x86 actuel. | Profiler sur matériel ; overrides natifs `rt_filter.c` si le rendu reste limité par les conversions. |
 | Dépendances | moyen | fontconfig absent ; FFmpeg à cross-compiler ; SDL2 Switch incertain pour Vulkan. | Embarquer une police métrique (Liberation Sans) ; FFmpeg minimal ou cinématiques désactivées au premier bring-up ; backend fenêtre NWindow. |
@@ -185,20 +192,39 @@ CRT ignorées (D-077), sortie par `ExitProcess(13)` (atexit exécuté). Le tas s
 stabilise un temps autour de ~269 Mio puis connaît une croissance tardive ;
 **pic historique observé `0x1AB89C00` = 448 173 056 octets (~427,4 Mio)**, utilisé
 ~447,2 Mio, plus grand bloc libre ~114,9 Kio (fin de log, `/tmp/opencode/ct3_l1_3.log`).
-La tendance ascendante en fin de session indique un risque de fuite/croissance à
-confirmer sur une session de 60 min réellement continue.
+La tendance ascendante en fin de session a ensuite été expliquée par les arènes
+`VirtualAlloc` jamais libérées et par le cache de transit D3D9 non borné ; le
+correctif et l'A/B sont ci-dessous (D-081).
+
+Contre-mesure (18 nov. 2026, run de 20 min, `CT3_ALLOCSTATS=1`, `VirtualFree`
+honoré) : le tas reste **stable à ~160,5 Mio utilisés** (pic `0x0B22D9D0` =
+186 767 824 o, ~178 Mio) de t=160 s à t=1199 s, sans faute ni épuisement ;
+sortie par SIGTERM (`ExitProcess(0)`, code 0). Le profil par site montre
+**84,7 Mio alloués via `VirtualAlloc` et 79,7 Mio effectivement libérés** (le
+`VirtualFree` était auparavant un no-op), plus ~71 Mio de zones de transit D3D9
+vivantes (cache non encore borné sur ce run).
+
+Run court A/B (360 s, même scénario, `CT3_ALLOCSTATS=1`) : **143,9 Mio utilisés,
+pic 161 Mio** avec le correctif, contre **240,4 Mio utilisés, pic 243 Mio** avec
+`CT3_VIRTUALFREE_NOOP=1`. Le site `VirtualAlloc` passe de **84,7 Mio alloués /
+0 libéré** (80 Mio vivants) à **84,7 Mio alloués / 79,7 Mio libérés** (5 Mio
+vivants) : la récupération des arènes est prouvée par l'A/B, à scénario égal.
+Le cache de transit D3D9 est en outre borné à 64 Mio (meilleur ajustement, élagage
+des plus grosses zones). La croissance à 448 Mio ne s'est pas reproduite sur ces
+runs. Le test de changement de ville (West Coast → Glitter Oasis) n'a pas chargé
+de seconde ville avec la séquence de touches actuelle : il reste à rendre
+déterministe, ou à accepter l'A/B + le soak 60 min comme clôture de L1.3.
 
 L'ancien arrêt à 9 058 présentations était une exception FP du CRT
 (`0xC000008F`, `STATUS_FLOAT_INEXACT_RESULT`, voir D-077), pas un épuisement du
 tas. Après le contournement, la même session dépasse 17 000 présentations (D-077).
 
-Conséquence pour S2 : prévoir **au moins ~450 Mio de heap** comme base prudente,
-avec une **marge de planification recommandée de 512 Mio** pour l'arène tant que
-L1.3 n'est pas entièrement validé (G2). Le runtime signale désormais la
-croissance du pic (`CT3_HEAP_WARN_MB`, défaut 448, et `CT3_HEAP_WARN_STEP_MB`,
-défaut 64), ce qui permet un contournement de suivi sans bloquer le bring-up
-sur un test de 60 min continu. Prévoir en plus l'image (~3,9 Mo), le scratch
-(4 Mo) et les piles de threads.
+Conséquence pour S2 : le pic stabilisé est de **161 Mio** après le correctif L1.3 (D-081), mais
+l'arène est planifiée à **512 Mio** tant que le soak de 60 min n'a pas confirmé l'absence de
+croissance sur session longue (G2). Le runtime signale la croissance du pic
+(`CT3_HEAP_WARN_MB`, défaut 448, et `CT3_HEAP_WARN_STEP_MB`, défaut 64), ce qui permet un
+contournement de suivi sans bloquer le bring-up sur un test de 60 min continu. Prévoir en plus
+l'image (~3,9 Mo), le scratch (4 Mo) et les piles de threads.
 
 ## 4. Plan par jalons
 

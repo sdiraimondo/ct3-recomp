@@ -35,9 +35,10 @@ decision gates, dependencies, acceptance criteria and traceability matrix — is
 1. **In-game slowdowns.** Frame-time spikes during driving and camera changes. Next: measure them with DXVK's shader compilation log, then decide whether to precompile shaders at startup.
 2. **Startup time.** The first frame now appears about 10 seconds after launch. The remaining cost is mostly the DXT color block encoder, still translated.
 3. **Intro cinematics.** Still buggy. Movies do not play (the DirectShow playback is a stub that ends immediately), and some character polygons are wrong in the LV and SA cinematics.
-4. **Crashes.** A crash after about 20 to 30 minutes of play (memory fault in the game's object code, cause not yet found) and a crash when quitting the game.
+4. **Crashes.** The 20–30 minute crash came from guest arenas that `VirtualFree` never returned; the runtime now honours `MEM_RELEASE` and bounds the D3D9 staging cache (L1.3, D-081), with an A/B proof. A 60-minute soak remains for closure. Quitting is clean (D-078, D-079).
 5. **Settings.** Window resolution and borderless mode in `Config.ini`, then the settings editable from the game's Options menu.
 6. **Nintendo Switch port.** Feasibility, measured AArch64 spike, devkitA64/newlib probe and plan: [docs/SWITCH_PORT.md](docs/SWITCH_PORT.md).
+7. **Decompilation completeness.** The translation covers the whole binary; function-by-function semantic verification (differential against the original code) is tracked as `V1`–`V4` in the roadmap, off the critical path of the Linux and Switch executables.
 
 ## How it works
 
@@ -117,6 +118,8 @@ Useful runtime settings:
 - `CT3_KEY_SEQ=2100:down,2200:return` presses and releases keyboard keys (menu automation).
 - `CT3_HEAPSTATS=1` reports every 30 s the guest heap top, its historical peak (bytes and MiB) and its occupancy (`CT3_HEAPSTATS_MS` changes the period).
 - `CT3_HEAP_WARN_MB` / `CT3_HEAP_WARN_STEP_MB` emit warnings when the heap peak crosses a threshold (default 448 MiB) and then every step (default 64 MiB), to track growth without a 60-minute soak test (L1.3/S2 workaround).
+- `CT3_ALLOCSTATS=1` profiles live heap blocks by caller (guest return address, or host site `0x8…` for runtime-internal allocations), dumping the top sites with each heap report and at exit (leak investigation).
+- `CT3_VIRTUALFREE_NOOP=1` restores the old no-op `VirtualFree` (A/B analysis of the `VirtualAlloc` arena recovery, L1.3).
 
 Tests (each one is a program, run from `build/tests`):
 - `cpu/test_cpu`, `vec/test_vec`, `x87/test_x87` and `g2/test_g2` need no argument.

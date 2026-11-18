@@ -63,7 +63,7 @@ Journal des décisions du portage. Une entrée par décision, avec la date et la
 
 - Décision : le portage Switch est une étape ultérieure. Le portage Linux PC est traité en premier.
 - Conséquence d'architecture à respecter dès maintenant : la couche D3D9 et le backend de rendu sont séparés, pour qu'un backend autre que Vulkan (Switch) puisse remplacer dxvk-native plus tard. Le code généré reste du C portable, sans assembleur en ligne. La couche plateforme passe par une interface.
-- Mise à jour (17 nov. 2026) : l'hypothèse « backend autre que Vulkan » ne tient plus. `mesa-switch` fournit NVK Vulkan homebrew avec `VK_NN_vi_surface` (scanout direct NWindow) ; le chemin retenu est DXVK Native + backend WSI Switch, pas deko3d. Le port reste une étape ultérieure, mais la décompilation est jugée suffisante et le spike AArch64 est fait. Mesures et plan : `docs/SWITCH_PORT.md`.
+- Mise à jour (17 nov. 2026) : l'hypothèse « backend autre que Vulkan » ne tient plus. `mesa-switch` fournit NVK Vulkan homebrew avec `VK_NN_vi_surface` (scanout direct NWindow) ; le chemin retenu est DXVK Native + backend WSI Switch, pas deko3d. Le port reste une étape ultérieure ; le spike AArch64 est fait. La traduction est complète, mais **la décompilation n'est pas close** : sa complétude est définie par la vérification sémantique fonction par fonction (D-080), hors du chemin critique des exécutables Linux et Switch. Mesures et plan : `docs/SWITCH_PORT.md`.
 - Source : réponse de l'utilisateur (point 6) ; mise à jour du 17 nov. 2026.
 
 ## D-012 : xboxrecomp non retenu comme base du traducteur (30 oct. 2026)
@@ -958,6 +958,46 @@ Outils ajoutés (build de traçage) : `CT3_MEMWATCH=lo-hi` (écritures dans une 
 - **Validation** : course lancée (`CT3_KEYS`, `CT3_KEY_AT2=2800`), sortie par
   SIGTERM à 80 s : `atexit` exécute `0x514A27` et `0x5149AA`, `ExitProcess(0)`,
   code de sortie 0, aucune faute.
+
+## D-080 : complétude de la décompilation = vérification sémantique fonction par fonction (18 nov. 2026)
+
+- **Contexte** : la traduction couvre ~5 700 fonctions et 309 fonctions atteignables, mais aucune
+  vérification systématique ne prouve que le C généré se comporte comme le code d'origine. Une
+  mention « décompilation suffisante » avait été introduite sans arbitrage ; elle est retirée.
+- **Décision** : la décompilation est déclarée complète quand **chaque fonction** du binaire est
+  couverte par une vérification sémantique — différentielle entre `CT3.exe` exécuté sous Unicorn
+  x86-32 et le C traduit, à état initial identique — avec 0 écart non expliqué sur les fonctions
+  atteignables et leur fermeture d'appels. Le chantier est `V1`–`V4` (`docs/ROADMAP.md` §6), avec
+  une définition de « décompilation complète », un rapport `docs/VERIF_SEMANTIQUE.md` et une
+  non-régression en CI.
+- **Chemin critique** : ce chantier est **hors du chemin critique** des exécutables Linux et
+  Switch. Aucune porte `G*` ne l'attend ; il avance en parallèle de `L*`/`S*`. L'ordre reste :
+  décompilation complète et propre → exécutable Linux → exécutable Switch ; la vérification
+  sémantique ne bloque ni la compilation Linux ni la compilation Switch.
+- **Conséquence** : le port Switch réutilise le même code généré ; la vérification s'applique donc
+  aussi au port sans travail supplémentaire.
+- Source : réponse de l'utilisateur (18 nov. 2026).
+
+## D-081 : récupération des arènes VirtualAlloc et cache de transit borné (18 nov. 2026)
+
+- **Contexte** : le run long L1.3 montrait une croissance tardive jusqu'à 448 173 056 o
+  (~427,4 Mio). `VirtualFree` était un no-op : les arènes rendues par `VirtualAlloc` (chargements
+  de ville, transitions) restaient vivantes. Le cache de zones de transit D3D9 accumulait en
+  outre des tampons de tailles variées pendant toute la session.
+- **Décision** :
+  - `VirtualFree(MEM_RELEASE)` libère le bloc du tas invité, avec suivi des adresses rendues par
+    `VirtualAlloc` (pas de double libération, pas de bloc étranger) ; `MEM_DECOMMIT` reste sans
+    effet.
+  - Le cache de transit D3D9 est borné à 64 Mio (`kStageCacheMax`) : meilleur ajustement sans
+    limite de taille, puis élagage des plus grosses zones au-delà du plafond.
+  - `CT3_VIRTUALFREE_NOOP=1` reproduit l'ancien no-op pour l'analyse A/B ; `CT3_ALLOCSTATS=1`
+    profile les blocs vivants par site appelant (adresse invitée, ou site hôte `0x8…`).
+- **Validation** (même scénario, 360 s) : **143,9 Mio utilisés / pic 161 Mio** avec le correctif
+  contre **240,4 Mio / pic 243 Mio** avec `CT3_VIRTUALFREE_NOOP=1`. Site `VirtualAlloc` :
+  84,7 Mio alloués, **79,7 Mio libérés** (5 Mio vivants) contre **0 libéré** (80 Mio vivants).
+  Run de 20 min stable à ~160,5 Mio, `ExitProcess(0)`.
+- **Portée** : le soak de 60 min reste la clôture de L1.3 ; il n'est pas bloquant pour S2, l'arène
+  Switch étant planifiée à 512 Mio avec alertes `CT3_HEAP_WARN_*`.
 
 ## Environnement (31 oct. 2026)
 

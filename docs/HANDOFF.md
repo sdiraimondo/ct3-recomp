@@ -4,11 +4,28 @@ Document destiné à un autre agent (ou à une autre personne) qui reprend le pr
 ce qui est établi, ce qui a été corrigé à tort, les décisions prises, et ce qui reste à faire. Le détail des
 décisions est dans `DECISIONS.md` (D-001 à D-050 et notes datées). Ce document ne le remplace pas.
 
+> **Mise à jour du 18 novembre 2026 — lire en premier.**
+> L'état courant fait foi dans [`POINT_SITUATION.md`](POINT_SITUATION.md) et [`ROADMAP.md`](ROADMAP.md) ;
+> les sections ci-dessous décrivent l'historique jusqu'au 1er novembre et restent utiles pour le
+> diagnostic, mais plusieurs points sont depuis corrigés :
+> - **Objectif** : décompilation complète et propre → exécutable Linux → exécutable Switch.
+>   « Complète » = vérification sémantique fonction par fonction (D-080), chantier `V1`–`V4`
+>   **hors du chemin critique** des deux exécutables.
+> - **Tas** : `VirtualFree(MEM_RELEASE)` était un no-op et le jeu libère ses arènes par ce chemin ;
+>   corrigé avec suivi des adresses `VirtualAlloc`, cache de transit D3D9 borné à 64 Mio (D-081).
+>   A/B : 143,9 Mio utilisés / pic 161 Mio contre 240,4 Mio / 243 Mio (témoin `CT3_VIRTUALFREE_NOOP=1`).
+>   Le soak de 60 min reste la clôture de L1.3, non bloquant pour S2.
+> - **Sortie** : `atexit` natif et nettoyages CRT (D-078), tampons DirectSound libérés avant `exit()`
+>   (D-079) ; fermeture de fenêtre/SIGTERM → code 0, menu EXIT → code 13 (à confirmer comme nominal).
+> - **Switch** : `S1/G1` franchies (newlib binary128 LE) ; WSI DXVK Switch en cours (S4.1),
+>   build cross devkitA64/libnx non validé sur l'hôte.
+
 ## 1. Objectif et contraintes
 
 - **But** : faire tourner `CT3.exe` (Crazy Taxi 3, PE32 i386, version modifiée 16:9) nativement sous Linux x86_64,
   rendu Vulkan, par **recompilation statique** (x86 vers C) avec un traducteur maison. Le portage Switch est
-  reporté (D-011).
+  une étape ultérieure (D-011, mise à jour du 17 nov. 2026) ; la complétude de la décompilation est définie
+  par la vérification sémantique fonction par fonction (D-080), hors du chemin critique des exécutables.
 - **Contraintes de l'utilisateur** (à respecter) :
   - Ne jamais modifier `CT3.exe` ni `CT3.original.exe` (lecture seule). Ne pas copier les assets du jeu dans le dépôt :
     le jeu les lit depuis le dossier de la copie de l'utilisateur (chemin passé en `CT3_EXE`, jamais versionné).
@@ -91,7 +108,9 @@ passent** au dernier commit.
 | `CT3_WATCH=42e140` | Une ligne par appel du dispatcher : état, sous-état, trame, alpha de fondu, état du chargeur (`[0x71EF8C]`), drapeau `[0x717889]` |
 | `CT3_LOCKDBG=1` | Une ligne par déverrouillage de surface ou texture (objet, hôte, nombre d'octets non nuls) |
 | `CT3_UNRESDBG=1` | À un appel non traduit, affiche l'objet `[0x724E10]` et sa vtable |
-| `CT3_ALLOCLOG=1` | Journal des allocations et libérations avec appelants du jeu |
+| `CT3_ALLOCLOG=1` | Journal des allocations et libérations avec appelants du jeu ; inclut les appels `VirtualAlloc`/`VirtualFree` (taille, type) |
+| `CT3_ALLOCSTATS=1` | Profil des blocs **vivants** du tas par site appelant (adresse invitée, ou site hôte `0x8…` pour les allocations internes) ; dump à chaque rapport `CT3_HEAPSTATS` et à la sortie |
+| `CT3_VIRTUALFREE_NOOP=1` | Reproduit l'ancien `VirtualFree` sans effet (analyse A/B de la récupération des arènes `VirtualAlloc`) |
 | `CT3_HEAPCHK=1` | Vérification de cohérence du tas après chaque opération (lent) |
 | `CT3_HEAPSTATS=1` | Toutes les 30 s : sommet, **pic historique** (octets et Mio), occupation et plus grand bloc libre du tas invité (`CT3_HEAPSTATS_MS` change la période, minimum 1 s) |
 | `CT3_HEAP_WARN_MB` / `CT3_HEAP_WARN_STEP_MB` | Alerte quand le pic de tas franchit un seuil (défaut 448 Mio) puis à chaque palier (défaut 64 Mio) ; contournement de suivi L1.3/S2 sans test 60 min continu |

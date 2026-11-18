@@ -2,7 +2,8 @@
 
 Liste de travail, dans l'ordre de priorité indiqué par l'utilisateur. Le détail technique de chaque point est dans
 `DECISIONS.md` ; l'état d'ensemble est dans [`HANDOFF.md`](HANDOFF.md). Le plan consolidé et traçable — chantiers
-Linux `L1`–`L12`, port Switch `S1`–`S10`, portes `G1`–`G6`, critères d'acceptation — est dans
+Linux `L1`–`L12`, vérification sémantique `V1`–`V4` (hors chemin critique), port Switch `S1`–`S10`, portes
+`G1`–`G6`, critères d'acceptation — est dans
 [`ROADMAP.md`](ROADMAP.md). Le point de situation courant est consigné dans
 [`POINT_SITUATION.md`](POINT_SITUATION.md). Mise à jour : 18 nov. 2026.
 
@@ -95,6 +96,15 @@ Linux `L1`–`L12`, port Switch `S1`–`S10`, portes `G1`–`G6`, critères d'ac
   60 s. Aucun `open`/`fopen` de `CT3.exe` observé par intercepteur `LD_PRELOAD`. Tests `cpu`, `vec`, `g2`, `x87`
   et `g1_d3d9_triangle` verts.
 
+## 8. Vérification sémantique de la décompilation (nouveau, hors chemin critique)
+
+- La traduction est complète, mais la décompilation n'est pas close : chaque fonction doit être vérifiée
+  sémantiquement (différentiel entre `CT3.exe` sous Unicorn et le C traduit, à état initial identique).
+  Chantier `V1`–`V4` de la roadmap (§6, D-080), avec 0 écart non expliqué sur les fonctions atteignables.
+- **Aucune action bloquante pour les exécutables Linux et Switch** : le chantier avance en parallèle et
+  ne conditionne aucune porte `G*`.
+- Prochaine étape : `V1.1`, `diff_func` sur 10 fonctions témoins, en étendant `tools/ref/diff_run.py`.
+
 ## Constats à traiter (hors liste de l'utilisateur)
 
 ### Plantage A (D-069) : faute à 0x3F800000 au bout de 5 à 12 min de course
@@ -125,8 +135,12 @@ Linux `L1`–`L12`, port Switch `S1`–`S10`, portes `G1`–`G6`, critères d'ac
 
 ### « Tas invité épuisé » après environ 20 minutes
 
-- Un run s'est arrêté à 17:45 par `rt: tas invité épuisé`.
-- À faire : `CT3_ALLOCLOG=1` et `CT3_HEAPCHK=1` sur une session longue, pour trouver la fuite.
+- Cause identifiée (18 nov.) : `VirtualFree(MEM_RELEASE)` était un no-op et le jeu libère ses arènes par ce
+  chemin (~80 Mio par cycle course/menu/ville) ; le cache de transit D3D9 accumulait en outre des tampons
+  de tailles variées. Corrigé (D-081) : arènes récupérées, cache borné à 64 Mio.
+- A/B à scénario égal (360 s) : 143,9 Mio utilisés / pic 161 Mio contre 240,4 Mio / 243 Mio avec
+  `CT3_VIRTUALFREE_NOOP=1` ; run de 20 min stable à ~160,5 Mio.
+- À faire : soak de 60 min (`CT3_HEAPSTATS=1`, `CT3_ALLOCSTATS=1`) pour clore L1.3 ; non bloquant pour S2.
 
 ### Crash à la fin d'une manche/round
 - Observé de manière intermittente à la fin d'une partie (temps écoulé). À reproduire et tracer (stack trace sous gdb).

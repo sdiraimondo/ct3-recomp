@@ -4,7 +4,7 @@ Document destiné à un autre agent (ou à une autre personne) qui reprend le pr
 ce qui est établi, ce qui a été corrigé à tort, les décisions prises, et ce qui reste à faire. Le détail des
 décisions est dans `DECISIONS.md` (D-001 à D-050 et notes datées). Ce document ne le remplace pas.
 
-> **Mise à jour du 18 novembre 2026 — lire en premier.**
+> **Mise à jour du 19 novembre 2026 — lire en premier.**
 > L'état courant fait foi dans [`POINT_SITUATION.md`](POINT_SITUATION.md) et [`ROADMAP.md`](ROADMAP.md) ;
 > les sections ci-dessous décrivent l'historique jusqu'au 1er novembre et restent utiles pour le
 > diagnostic, mais plusieurs points sont depuis corrigés :
@@ -18,8 +18,10 @@ décisions est dans `DECISIONS.md` (D-001 à D-050 et notes datées). Ce documen
 > - **Sortie** : `atexit` natif et nettoyages CRT (D-078), tampons DirectSound libérés avant `exit()`
 >   (D-079) ; fermeture de fenêtre/SIGTERM → code 0, menu EXIT → code du dernier message (13 au
 >   clavier, 88 à la manette : `VK_X`, D-083), teardown propre dans les deux cas.
-> - **Switch** : `S1/G1` franchies (newlib binary128 LE) ; WSI DXVK Switch en cours (S4.1),
->   build cross devkitA64/libnx non validé sur l'hôte.
+> - **Switch** : `S1/G1` franchies (newlib binary128 LE) ; squelette WSI DXVK Switch (S4.1) **compilé
+>   en cross** devkitA64/libnx (D-084, `tools/port/dxvk_switch_wsi_build.sh`) ; l'archive
+>   `libwsi.a` reste bloquée par le cœur DXVK (`src/util/thread.h`, prérequis S7). Aucune validation
+>   matérielle Switch.
 > - **Licence et publication** : code original sous GPL-3.0-or-later (D-082) ; publication
 >   **source seule**. Le bundle `dist/` reste local-only car il lie le code traduit du jeu.
 >   Voir `LEGAL.md`, `PUBLISHING.md`, `THIRD_PARTY.md` et `tools/check_no_game_data.sh`.

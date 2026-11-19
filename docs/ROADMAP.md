@@ -34,7 +34,7 @@
 | Toolchain Switch | ✅ validée | devkitA64 15.2.0, libnx ; compilation et link d'une sonde Switch |
 | Sonde newlib (S1) | ✅ verte | binary128 LE, `ldexpl`/`frexpl` PASS, `char` non signé, `mmap` absent ; `tools/port/devkita64_probe.sh` |
 | Runtime Switch | ⬜ non commencé | dépend de S2–S7 (S1 faite) |
-| WSI Vulkan Switch | ⬜ non commencé | DXVK 3.1.1 n'a pas de backend Switch |
+| WSI Vulkan Switch | 🔄 squelette compilé | cross devkitA64/libnx vert : `-DDXVK_WSI_SWITCH`, 3 TU, patch 11 fichiers (S4.1, D-084) ; présentation à faire (S4.2–S4.4) |
 | Mémoire invitée Switch | 🔄 dimensionnée (planification) | pic mesuré 161 Mio après correctif L1.3 ; arène planifiée à 512 Mio tant que G2 n'est pas franchie (D-081) |
 
 ## 3. Vue d'ensemble
@@ -300,7 +300,7 @@ de modèle d'exécution). Le corpus est généré localement depuis la copie de 
 | S3.2 | Backend Horizon (`svcCreateThread`, TLS) | Threads invités fonctionnels | S3.1 | 1 sem. | ⬜ | — |
 | S3.3 | Tests de sortie et de session longue | Sortie propre ; pas de fuite de threads | S3.2 | 3 j | ⬜ | — |
 | **S4** | WSI DXVK Switch | Swapchain 720p présentée, puis triangle DXVK | S2 | 4 sem. | ⬜ | SWITCH_PORT §3 |
-| S4.1 | Squelette `src/wsi/switch/*` + option meson | Compilation avec `-DDXVK_WSI_SWITCH` | — | 3 j | 🔄 | DXVK 3.1.1 local (`~/.local/ct3-deps/src/dxvk`) |
+| S4.1 | Squelette `src/wsi/switch/*` + option meson | Compilation avec `-DDXVK_WSI_SWITCH` | — | 3 j | ✅ | D-084 : cross devkitA64 15.2.0 / meson 1.12.1 vert en conteneur (`localhost/devkitpro-mesa-rust`), `native_switch : true`, `-DDXVK_WSI_SWITCH: YES`, 3 objets `switch_wsi_*` compilés (58 symboles `SwitchWsi`) ; patch `tools/port/dxvk-3.1.1-switch-wsi-s4.1.patch` (11 fichiers) appliqué sur DXVK 3.1.1 `21fda8f` ; reproduction `tools/port/dxvk_switch_wsi_build.sh`. Archive `libwsi.a` bloquée par `src/util/thread.h` (cœur DXVK, S7) |
 | S4.2 | `createSurface` via `vkCreateViSurfaceNN` | Surface créée avec un `NWindow*` | S4.1 | 1 sem. | ⬜ | `wsi_platform.h` |
 | S4.3 | Fenêtre NWindow sans SDL | Fenêtre plein écran 720p/1080p, pas de redimensionnement | S4.1 | 1 sem. | ⬜ | rt_win.cpp:145 |
 | S4.4 | Smoke test Vulkan puis triangle DXVK | Image présentée à l'écran | S4.2, S4.3 | 1 sem. | ⬜ | — |
@@ -315,7 +315,7 @@ de modèle d'exécution). Le corpus est généré localement depuis la copie de 
 | S6.4 | zlib et autres dépendances | Link statique vert | — | 3 j | ⬜ | — |
 | **S7** | Build devkitA64 | `cmake --build` produit un NRO qui démarre | S1 | 2 sem. | ⬜ | — |
 | S7.1 | `cmake/toolchains/switch.cmake` | Configure et compile la runtime | — | 1 sem. | ⬜ | — |
-| S7.2 | `-fsigned-char`, link statique, sans `dlopen` | Aucun avertissement bloquant | S7.1 | 3 j | ⬜ | — |
+| S7.2 | `-fsigned-char`, link statique, sans `dlopen` | Aucun avertissement bloquant | S7.1 | 3 j | ⬜ | D-084 : porter le cœur DXVK pour Horizon ; premier point connu `src/util/thread.h:375` (`::pthread_setschedparam`), qui bloque `src/wsi/libwsi.a` via `wsi_edid.cpp` |
 | S7.3 | Empaquetage NRO | NRO lancé sur matériel homebrew | S7.2 | 3 j | ⬜ | — |
 | **S8** | Bring-up CT3 | Menus 2D puis une course jouable en 720p | S3, S5, S6, S7 | 6 sem. | ⬜ | — |
 | S8.1 | Premier affichage (clear screen) | Image stable, pas de crash | S7.3 | 1 sem. | ⬜ | — |
@@ -378,7 +378,7 @@ parallèle ; la trace donne l'ordre qui réduit le plus les risques.
 - [ ] **L1.3** · validation 60 min continue (correctif appliqué : `VirtualFree` honoré, cache borné — D-081) ← *prochaine action*
 - [ ] **S2** · mémoire invitée et arène
 - [ ] **G2** · taille d'arène validée
-- [ ] **S4.1** · squelette WSI DXVK Switch (patch déposé, build cross à valider)
+- [x] **S4.1** · squelette WSI DXVK Switch compilé en cross devkitA64 (D-084)
 - [ ] **S4** · WSI DXVK Switch
 - [ ] **S5** · Vulkan loaderless
 - [ ] **G3/G4** · surface, swapchain et DXVK sans loader
@@ -424,11 +424,11 @@ parallèle ; la trace donne l'ordre qui réduit le plus les risques.
 
 ## 12. Prochaines actions (deux semaines)
 
-**S1/G1 franchies ; L1.1, L1.2, L1.3 (correctif), L2.1, L2.2, S2.1 (pic stabilisé), S4.1 (squelette) avancés** (19 nov. 2026). Prochaines actions :
+**S1/G1 franchies ; L1.1, L1.2, L1.3 (correctif), L2.1, L2.2, S2.1 (pic stabilisé), S4.1 (close) avancés** (19 nov. 2026). Prochaines actions :
 
 1. **L1.3 — clôture** : soak de 60 min avec le correctif (`VirtualFree` honoré, cache de transit D3D9 borné à 64 Mio), `CT3_HEAPSTATS=1`, `CT3_ALLOCSTATS=1` ; consigner plateau, pic et `ExitProcess`. **Reporté à une session de jeu réelle** (le soak automatisé ne recharge pas les menus de façon déterministe) ; non bloquant pour S2 (marge 512 Mio).
 2. **L2/L2.2** — closes (D-083) : le code de sortie est le `wParam` du dernier message (13 au clavier, 88 à la manette) ; le critère retenu est le teardown propre, vérifié dans les deux chemins.
-3. **S4.1** — Valider la compilation du squelette DXVK Switch avec `-Dnative_switch=true` en cross devkitA64/libnx (`tools/port/dxvk-3.1.1-switch-wsi-s4.1.patch`) ; corriger les points de build.
+3. **S4.2/S4.3** — le squelette WSI Switch compile en cross (S4.1, D-084) ; stabiliser la convention `HWND` ↔ `NWindow*` (`createSurface` réel via `vkCreateViSurfaceNN`) et la fenêtre plein écran sans SDL, puis viser le smoke test S4.4 (porte G3).
 4. **S2.2** — Abstraire `rt_va_reserve/commit/protect` (interface commune, comportement Linux inchangé) en préparation de l'arène Horizon, en planifiant 512 Mio de marge.
 5. **V1** — Démarrer le harnais différentiel **en parallèle** (hors chemin critique) : `diff_func` sur 10 fonctions témoins, replay des imports, puis V2. Aucune attente entre `V*` et `L*`/`S*`.
 

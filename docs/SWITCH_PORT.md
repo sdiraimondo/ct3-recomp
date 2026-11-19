@@ -1,6 +1,7 @@
 # Portage Nintendo Switch — état, mesures et plan
 
-> Statut : note de travail, 18 novembre 2026. Spike AArch64 et sonde devkitA64 (S1) faits.
+> Statut : note de travail, 19 novembre 2026. Spike AArch64 et sonde devkitA64 (S1) faits ;
+> squelette WSI Switch (S4.1) compilé en cross devkitA64/libnx.
 > Objet : consigner le spike AArch64, les correctifs déjà appliqués et le plan de portage.
 > Ce document ne remplace pas `DECISIONS.md` (D-011 : backend séparé, Switch reporté) ; il le met à jour.
 > Le plan consolidé, avec les jalons `S1`–`S10`, les portes `G1`–`G6` et la matrice de traçabilité,
@@ -135,7 +136,7 @@ contiguë réservée au démarrage).
 
 | Blocage | Poids | État / détail | Prochaine action |
 |---|---|---|---|
-| WSI DXVK Switch | **critique** | `rt_win.cpp:145` force `DXVK_WSI_DRIVER=SDL2`. DXVK 3.1.1 (commit `21fda8f`) a des backends SDL2/SDL3/GLFW/win32, aucun Switch. `mesa-switch` expose `VK_NN_vi_surface` + `NWindow`, sans copie CPU. | Ajouter `src/wsi/switch/*`, `DXVK_WSI_SWITCH`, `SwitchWSI` ; `createSurface` via `vkCreateViSurfaceNN` ; rendre DXVK loaderless. |
+| WSI DXVK Switch | **critique** | `rt_win.cpp:145` force `DXVK_WSI_DRIVER=SDL2`. DXVK 3.1.1 (commit `21fda8f`) a des backends SDL2/SDL3/GLFW/win32, aucun Switch. `mesa-switch` expose `VK_NN_vi_surface` + `NWindow`, sans copie CPU. **Squelette compilé en cross** (S4.1, D-084). | S4.2 : `createSurface` réel avec un `NWindow*` ; S4.3 fenêtre sans SDL ; S4.4 smoke test. |
 | Vulkan loaderless | **critique** | `src/vulkan/vulkan_loader.cpp` fait `LoadLibraryA("libvulkan.so")`. mesa-switch est statique, sans loader. | Constructeur `LibraryLoader(PFN_vkGetInstanceProcAddr)` et injection de `vkGetInstanceProcAddr` au démarrage. |
 | Mémoire invitée | **critique** | `RT_GUEST_SIZE = 1<<32` (`rt.h:12`), `mmap` de 4 GiB (`rt_mem.c:17`), heap `0x40000000` + 960 MiB (`rt_proc.h:15-16`), accès partout via `rt_mem_base + addr`. Horizon n'a ni overcommit ni pagination à la demande ; `mmap`/`mprotect` sont absents de newlib/libnx (S1). | Pic mesuré et stabilisé à 161 Mio (D-081) ; abstraire `rt_va_reserve/commit/protect` ; dimensionner l'arène (planification 512 Mio) ; utiliser `virtmemFindAslr` + `svcMapMemory` sur devkitA64. |
 | Threads | moyen | `pthread_cancel` (`rt_thread.c:235`), TLS `__thread`, threads invités. `pthread_create`/`pthread_join` et `__thread` sont disponibles (S1), mais `pthread_cancel` reste à remplacer. | Backend thread Horizon + annulation coopérative ; tests de fin de partie et de sortie. |
@@ -161,6 +162,42 @@ Le point délicat est le passage du `HWND` abstrait au `NWindow*` : le runtime W
 (`rt_win.cpp`) crée aujourd'hui une `SDL_Window`. Sur Switch, il faut soit un backend fenêtre
 NWindow, soit un handle opaque qui transporte le `NWindow*` jusqu'au WSI. Le plus simple pour le
 bring-up est un backend fenêtre dédié, sans SDL.
+
+### Validation du squelette WSI Switch (S4.1) — 19 novembre 2026
+
+Environnement : conteneur `localhost/devkitpro-mesa-rust:latest` (Debian 12, meson 1.12.1,
+devkitA64 15.2.0, libnx, ninja), source DXVK montée **en lecture seule**, fichier cross produit par
+`/opt/devkitpro/meson-toolchain.sh switch` (`system = 'horizon'`, `cpu_family = 'aarch64'`).
+Reproduction : `tools/port/dxvk_switch_wsi_build.sh` (aucune donnée de jeu).
+
+Résultat :
+
+| Étape | Résultat |
+|---|---|
+| `meson setup --cross-file=… -Dnative_switch=true --buildtype=release` | OK ; `-DDXVK_WSI_SWITCH: YES`, `native_switch : true` |
+| Objets `switch_wsi_{platform,window,monitor}_switch.cpp.o` | 3/3 compilés ; 58 symboles `SwitchWsi` |
+| Archive `src/wsi/libwsi.a` | **non produite** : `wsi_edid.cpp` → `src/util/thread.h:375` (`::pthread_setschedparam` absent sur Horizon) — cœur DXVK, à traiter en S7 |
+| Application du patch sur DXVK 3.1.1 `21fda8f` | `git apply --check` OK ; arbre patché identique à l'octet près à l'arbre validé |
+
+Trois obstacles rencontrés et corrigés (D-084) :
+
+1. **Conflit de macro `interface`** : `include/native/windows/windows_base.h` définit
+   `#define interface struct`, que les en-têtes libnx utilisent comme nom de paramètre
+   (`services/usbds.h`, `services/hid.h`, `runtime/devices/usb_comms.h`). Le squelette n'inclut plus
+   `<switch.h>` dans ses en-têtes ; si un code ultérieur en a besoin, encadrer l'inclusion par
+   `#pragma push_macro("interface")` / `#undef interface` / `#pragma pop_macro("interface")`.
+2. **Types `VK_NN_vi_surface` absents** : DXVK 3.1.1 embarque Vulkan-Headers sans
+   `vulkan/vulkan_switch.h` et devkitA64/libnx n'en fournit pas. Ils sont déclarés localement dans
+   `src/wsi/switch/wsi_switch_vulkan_compat.h`, sous garde `#ifndef VK_NN_vi_surface`, avec
+   `VK_STRUCTURE_TYPE_VI_SURFACE_CREATE_INFO_NN` = 1000062000.
+3. **Backends de bureau activés à tort** : en cross Switch, meson trouve SDL2 dans les portlibs et
+   définissait `-DDXVK_WSI_SDL2`, dont les TU utilisent `LoadLibraryA`/`GetProcAddress` (absents sur
+   Horizon). En mode `native_switch`, le WSI Switch est désormais **exclusif** : les macros
+   SDL2/SDL3/GLFW ne sont pas définies.
+
+Reste ouvert : `kMonitor` est `static inline const` (un `reinterpret_cast` entier → pointeur n'est
+pas une expression constante en C++17 pour `aarch64-none-elf-g++`), et `createSurface` reste un
+squelette : `HWND` y est encore interprété comme `NWindow*`, convention à stabiliser en S4.2.
 
 ### Détail mémoire
 
@@ -286,6 +323,8 @@ VEC OK (0 échec(s))
 - `tools/port/aarch64_spike.sh` — reproduction du spike AArch64.
 - `tools/port/f80_crosscheck.c` — validation croisée x87 ↔ binary128 (motifs aléatoires).
 - `tools/port/devkita64_probe.sh` — sonde S1 : macros, newlib bare-metal, fonctionnalités libnx.
+- `tools/port/dxvk_switch_wsi_build.sh` — cross-build du squelette WSI Switch (S4.1) en conteneur
+  devkitPro ; mode strict `CT3_DXVK_REQUIRE_LIBWSI=1` pour exiger l'archive `libwsi.a`.
 - `tools/port/newlib_probe.c` — sonde exécutée par `qemu-system-aarch64` (format, `ldexpl`/`frexpl`).
 - `tools/port/switch_features.c` — vérification des symboles et du TLS côté Switch.
 - `docs/PACK.md` — contrat du pack de données.

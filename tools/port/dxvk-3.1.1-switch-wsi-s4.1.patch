@@ -1,8 +1,8 @@
 diff --git a/meson.build b/meson.build
-index d10f07d..b08f40a 100644
+index d10f07d..134dad5 100644
 --- a/meson.build
 +++ b/meson.build
-@@ -158,6 +158,8 @@ else
+@@ -158,20 +158,27 @@ else
      './include/native/directx'
    ]
  
@@ -11,8 +11,18 @@ index d10f07d..b08f40a 100644
    lib_sdl3 = dependency('sdl3', required: get_option('native_sdl3'))
    lib_sdl2 = dependency('sdl2', required: get_option('native_sdl2'))
    lib_glfw = dependency('glfw3', required: get_option('native_glfw'))
-@@ -170,8 +172,11 @@ else
-   if lib_glfw.found()
+-  if lib_sdl3.found()
++  # WSI Switch exclusif : le backend VK_NN_vi_surface remplace les backends de
++  # bureau, qui ne sont pas compilés pour Horizon même si les portlibs les exposent.
++  if lib_sdl3.found() and not enable_switch
+     compiler_args += ['-DDXVK_WSI_SDL3']
+   endif
+-  if lib_sdl2.found()
++  if lib_sdl2.found() and not enable_switch
+     compiler_args += ['-DDXVK_WSI_SDL2']
+   endif
+-  if lib_glfw.found()
++  if lib_glfw.found() and not enable_switch
      compiler_args += ['-DDXVK_WSI_GLFW']
    endif
 -  if (not lib_sdl3.found() and not lib_sdl2.found() and not lib_glfw.found())
@@ -53,6 +63,222 @@ index 1d88e2c..56703d1 100644
  wsi_deps = [ dep_displayinfo ]
  
  if platform == 'windows'
+diff --git a/src/wsi/switch/wsi_monitor_switch.cpp b/src/wsi/switch/wsi_monitor_switch.cpp
+new file mode 100644
+index 0000000..ac30a4e
+--- /dev/null
++++ b/src/wsi/switch/wsi_monitor_switch.cpp
+@@ -0,0 +1,38 @@
++#if defined(DXVK_WSI_SWITCH)
++
++#include "wsi_platform_switch.h"
++
++namespace dxvk::wsi {
++
++  HMONITOR SwitchWsiDriver::getDefaultMonitor() { return kMonitor; }
++  HMONITOR SwitchWsiDriver::enumMonitors(uint32_t index) { return index == 0 ? kMonitor : nullptr; }
++  HMONITOR SwitchWsiDriver::enumMonitors(const LUID *[], uint32_t, uint32_t index) { return enumMonitors(index); }
++
++  bool SwitchWsiDriver::getDisplayName(HMONITOR hMonitor, WCHAR (&Name)[32]) {
++    if (hMonitor != kMonitor) return false;
++    const char* name = "Nintendo Switch";
++    for (uint32_t i = 0; i < 31 && name[i]; i++) Name[i] = name[i];
++    Name[31] = 0;
++    return true;
++  }
++
++  bool SwitchWsiDriver::getDesktopCoordinates(HMONITOR hMonitor, RECT* pRect) {
++    if (hMonitor != kMonitor || !pRect) return false;
++    pRect->left = 0; pRect->top = 0; pRect->right = 1280; pRect->bottom = 720;
++    return true;
++  }
++
++  bool SwitchWsiDriver::getDisplayMode(HMONITOR hMonitor, uint32_t modeNumber, WsiMode* pMode) {
++    if (hMonitor != kMonitor || !pMode) return false;
++    if (modeNumber == 0) { pMode->width = 1280; pMode->height = 720; pMode->refreshRate = {60,1}; pMode->bitsPerPixel = 32; pMode->interlaced = false; return true; }
++    if (modeNumber == 1) { pMode->width = 1920; pMode->height = 1080; pMode->refreshRate = {60,1}; pMode->bitsPerPixel = 32; pMode->interlaced = false; return true; }
++    return false;
++  }
++
++  bool SwitchWsiDriver::getCurrentDisplayMode(HMONITOR hMonitor, WsiMode* pMode) { return getDisplayMode(hMonitor, 0, pMode); }
++  bool SwitchWsiDriver::getDesktopDisplayMode(HMONITOR hMonitor, WsiMode* pMode) { return getDisplayMode(hMonitor, 0, pMode); }
++  WsiEdidData SwitchWsiDriver::getMonitorEdid(HMONITOR) { return {}; }
++
++}
++
++#endif
+diff --git a/src/wsi/switch/wsi_platform_switch.cpp b/src/wsi/switch/wsi_platform_switch.cpp
+new file mode 100644
+index 0000000..1172ea2
+--- /dev/null
++++ b/src/wsi/switch/wsi_platform_switch.cpp
+@@ -0,0 +1,32 @@
++#if defined(DXVK_WSI_SWITCH)
++
++#include "wsi_platform_switch.h"
++
++#include "../../util/util_error.h"
++
++namespace dxvk::wsi {
++
++  SwitchWsiDriver::SwitchWsiDriver() = default;
++  SwitchWsiDriver::~SwitchWsiDriver() = default;
++
++  std::vector<const char *> SwitchWsiDriver::getInstanceExtensions() {
++    return { "VK_KHR_surface", "VK_NN_vi_surface" };
++  }
++
++  static bool createSwitchWsiDriver(WsiDriver **driver) {
++    try {
++      *driver = new SwitchWsiDriver();
++    } catch (const DxvkError&) {
++      return false;
++    }
++    return true;
++  }
++
++  WsiBootstrap SwitchWSI = {
++    "Switch",
++    createSwitchWsiDriver
++  };
++
++}
++
++#endif
+diff --git a/src/wsi/switch/wsi_platform_switch.h b/src/wsi/switch/wsi_platform_switch.h
+new file mode 100644
+index 0000000..8e3d010
+--- /dev/null
++++ b/src/wsi/switch/wsi_platform_switch.h
+@@ -0,0 +1,48 @@
++#pragma once
++
++#if defined(DXVK_WSI_SWITCH)
++
++#include "../wsi_platform.h"
++
++namespace dxvk::wsi {
++
++  class SwitchWsiDriver : public WsiDriver {
++  public:
++    SwitchWsiDriver();
++    ~SwitchWsiDriver();
++
++    std::vector<const char *> getInstanceExtensions() override;
++
++    HMONITOR getDefaultMonitor() override;
++    HMONITOR enumMonitors(uint32_t index) override;
++    HMONITOR enumMonitors(const LUID *adapterLUID[], uint32_t numLUIDs, uint32_t index) override;
++    bool getDisplayName(HMONITOR hMonitor, WCHAR (&Name)[32]) override;
++    bool getDesktopCoordinates(HMONITOR hMonitor, RECT* pRect) override;
++    bool getDisplayMode(HMONITOR hMonitor, uint32_t modeNumber, WsiMode* pMode) override;
++    bool getCurrentDisplayMode(HMONITOR hMonitor, WsiMode* pMode) override;
++    bool getDesktopDisplayMode(HMONITOR hMonitor, WsiMode* pMode) override;
++    WsiEdidData getMonitorEdid(HMONITOR hMonitor) override;
++
++    void getWindowSize(HWND hWindow, uint32_t* pWidth, uint32_t* pHeight) override;
++    void resizeWindow(HWND hWindow, DxvkWindowState* pState, uint32_t width, uint32_t height) override;
++    void saveWindowState(HWND hWindow, DxvkWindowState* pState, bool saveStyle) override;
++    void restoreWindowState(HWND hWindow, DxvkWindowState* pState, bool restoreCoordinates) override;
++    bool setWindowMode(HMONITOR hMonitor, HWND hWindow, DxvkWindowState* pState, const WsiMode& mode) override;
++    bool enterFullscreenMode(HMONITOR hMonitor, HWND hWindow, DxvkWindowState* pState, bool modeSwitch) override;
++    bool leaveFullscreenMode(HWND hWindow, DxvkWindowState* pState) override;
++    bool restoreDisplayMode() override;
++    HMONITOR getWindowMonitor(HWND hWindow) override;
++    bool isWindow(HWND hWindow) override;
++    bool isMinimized(HWND hWindow) override;
++    bool isOccluded(HWND hWindow) override;
++    void updateFullscreenWindow(HMONITOR hMonitor, HWND hWindow, bool forceTopmost) override;
++    VkResult createSurface(HWND hWindow, PFN_vkGetInstanceProcAddr pfnVkGetInstanceProcAddr,
++      VkInstance instance, VkSurfaceKHR* pSurface) override;
++
++  private:
++    static inline const HMONITOR kMonitor = reinterpret_cast<HMONITOR>(1);
++  };
++
++}
++
++#endif
+diff --git a/src/wsi/switch/wsi_switch_vulkan_compat.h b/src/wsi/switch/wsi_switch_vulkan_compat.h
+new file mode 100644
+index 0000000..5645ae9
+--- /dev/null
++++ b/src/wsi/switch/wsi_switch_vulkan_compat.h
+@@ -0,0 +1,26 @@
++#pragma once
++
++#include <vulkan/vulkan.h>
++
++#ifndef VK_NN_vi_surface
++#define VK_NN_vi_surface 1
++#define VK_NN_VI_SURFACE_SPEC_VERSION 1
++#define VK_NN_VI_SURFACE_EXTENSION_NAME "VK_NN_vi_surface"
++
++typedef VkFlags VkViSurfaceCreateFlagsNN;
++
++typedef struct VkViSurfaceCreateInfoNN {
++  VkStructureType             sType;
++  const void*                 pNext;
++  VkViSurfaceCreateFlagsNN    flags;
++  void*                       window;
++} VkViSurfaceCreateInfoNN;
++
++typedef VkResult (VKAPI_PTR *PFN_vkCreateViSurfaceNN)(
++  VkInstance                                  instance,
++  const VkViSurfaceCreateInfoNN*              pCreateInfo,
++  const VkAllocationCallbacks*                pAllocator,
++  VkSurfaceKHR*                               pSurface);
++
++#define VK_STRUCTURE_TYPE_VI_SURFACE_CREATE_INFO_NN ((VkStructureType)1000062000)
++#endif
+diff --git a/src/wsi/switch/wsi_window_switch.cpp b/src/wsi/switch/wsi_window_switch.cpp
+new file mode 100644
+index 0000000..11b4473
+--- /dev/null
++++ b/src/wsi/switch/wsi_window_switch.cpp
+@@ -0,0 +1,42 @@
++#if defined(DXVK_WSI_SWITCH)
++
++#include "wsi_platform_switch.h"
++#include "wsi_switch_vulkan_compat.h"
++
++namespace dxvk::wsi {
++
++  void SwitchWsiDriver::getWindowSize(HWND, uint32_t* pWidth, uint32_t* pHeight) {
++    if (pWidth) *pWidth = 1280;
++    if (pHeight) *pHeight = 720;
++  }
++
++  void SwitchWsiDriver::resizeWindow(HWND, DxvkWindowState*, uint32_t, uint32_t) { }
++  void SwitchWsiDriver::saveWindowState(HWND, DxvkWindowState*, bool) { }
++  void SwitchWsiDriver::restoreWindowState(HWND, DxvkWindowState*, bool) { }
++  bool SwitchWsiDriver::setWindowMode(HMONITOR, HWND, DxvkWindowState*, const WsiMode&) { return true; }
++  bool SwitchWsiDriver::enterFullscreenMode(HMONITOR, HWND, DxvkWindowState*, bool) { return true; }
++  bool SwitchWsiDriver::leaveFullscreenMode(HWND, DxvkWindowState*) { return true; }
++  bool SwitchWsiDriver::restoreDisplayMode() { return true; }
++  HMONITOR SwitchWsiDriver::getWindowMonitor(HWND) { return kMonitor; }
++  bool SwitchWsiDriver::isWindow(HWND) { return true; }
++  bool SwitchWsiDriver::isMinimized(HWND) { return false; }
++  bool SwitchWsiDriver::isOccluded(HWND) { return false; }
++  void SwitchWsiDriver::updateFullscreenWindow(HMONITOR, HWND, bool) { }
++
++  VkResult SwitchWsiDriver::createSurface(HWND hWindow, PFN_vkGetInstanceProcAddr pfnVkGetInstanceProcAddr,
++      VkInstance instance, VkSurfaceKHR* pSurface) {
++    auto pfnCreate = reinterpret_cast<PFN_vkCreateViSurfaceNN>(
++      pfnVkGetInstanceProcAddr(instance, "vkCreateViSurfaceNN"));
++    if (!pfnCreate)
++      return VK_ERROR_EXTENSION_NOT_PRESENT;
++
++    /* Squelette S4.1/S4.2 : HWND portera le NWindow* (convention à stabiliser avec le backend fenêtre). */
++    VkViSurfaceCreateInfoNN info = {};
++    info.sType = VK_STRUCTURE_TYPE_VI_SURFACE_CREATE_INFO_NN;
++    info.window = reinterpret_cast<void*>(hWindow);
++    return pfnCreate(instance, &info, nullptr, pSurface);
++  }
++
++}
++
++#endif
 diff --git a/src/wsi/wsi_platform.cpp b/src/wsi/wsi_platform.cpp
 index 08f456e..b2d42ad 100644
 --- a/src/wsi/wsi_platform.cpp

@@ -4,6 +4,8 @@
 **Branche :** `master` = `origin/master`\
 **Base figée :** tag `v0.1.1-linux` (`7149afb`)\
 **Derniers commits :**
+- `c6f2d32` — Outillage : architecture orchestrateur/codeur OpenCode
+- `a078842` — Docs : roadmap et point de situation au 19 nov. 2026
 - `5684648` — Docs : code de sortie = `wParam` du dernier message (D-083)
 - `7149afb` — Licence : notice GPL complète dans le README
 - `2f211b7` — Publication : GPL-3.0-or-later, notices et build sans données de jeu
@@ -34,10 +36,12 @@ Références : [`docs/ROADMAP.md`](ROADMAP.md), [`docs/SWITCH_PORT.md`](SWITCH_P
 - **D-083 (L2.2)** : le code de sortie du jeu est le `wParam` du dernier message dépilé (`WinMain` 0x004079E0 → boucle 0x00428070 → `MOV EAX,[ESP+0xC]` à 0x00428212), pas un statut : 13 = `VK_RETURN`, 88 = `VK_X` (bouton A mappé sur `x`). Critère de propreté = `atexit`, fichiers fermés, aucune faute. L2/L2.2 closes.
 
 ### Port Switch (préparation)
-- **S4.1 (squelette, en cours)** : option Meson `native_switch` + `-DDXVK_WSI_SWITCH`, bootstrap WSI Switch, `src/wsi/switch/*` (surface `VK_NN_vi_surface` via `vkCreateViSurfaceNN`, modes 720p/1080p, stubs fenêtre/moniteur, convention `NWindow*` à stabiliser).
-  - Patch reproductible dans le dépôt : `tools/port/dxvk-3.1.1-switch-wsi-s4.1.patch` (source de vérité, à appliquer sur DXVK 3.1.1 local).
-  - Arbre DXVK local modifié : `~/.local/ct3-deps/src/dxvk` (non commité dans ce dépôt externe).
-  - **Build cross devkitA64/libnx non validé sur l’hôte actuel**.
+- **S4.1 (close, D-084)** : option Meson `native_switch` + `-DDXVK_WSI_SWITCH`, bootstrap WSI Switch, `src/wsi/switch/*` (surface `VK_NN_vi_surface` via `vkCreateViSurfaceNN`, modes 720p/1080p, stubs fenêtre/moniteur, convention `NWindow*` à stabiliser).
+  - **Cross-build validé** (19 nov. 2026) en conteneur `localhost/devkitpro-mesa-rust:latest` (Debian 12, meson 1.12.1, devkitA64 15.2.0, libnx) : `native_switch : true`, `-DDXVK_WSI_SWITCH: YES`, 3/3 objets `switch_wsi_*` compilés (58 symboles `SwitchWsi`).
+  - Correctifs apportés : conflit de macro `interface` (en-têtes libnx contre `windows_base.h`), types `VK_NN_vi_surface` déclarés localement (`wsi_switch_vulkan_compat.h`, garde `#ifndef`), `kMonitor` en `static inline const`, et **WSI Switch exclusif** (SDL2/SDL3/GLFW désactivés en mode Switch).
+  - Patch reproductible dans le dépôt : `tools/port/dxvk-3.1.1-switch-wsi-s4.1.patch` (11 fichiers, source de vérité, appliqué sur DXVK 3.1.1 `21fda8f`, `git apply --check` OK).
+  - Reproduction : `tools/port/dxvk_switch_wsi_build.sh` (`RESULT=PASS`).
+  - **Reste bloqué (hors S4.1, prérequis S7)** : l'archive `src/wsi/libwsi.a` échoue sur `wsi_edid.cpp` → `src/util/thread.h:375` (`::pthread_setschedparam` absent sur Horizon/newlib) ; mode strict `CT3_DXVK_REQUIRE_LIBWSI=1` pour l'exiger après S7.
 
 ### Documentation
 - `docs/ROADMAP.md` : objectif de complétude, chantier `V1`–`V4` hors chemin critique, diagramme et Gantt mis à jour, mesures L1.3/S2.1, matrice et risques.
@@ -87,17 +91,17 @@ l'absence de faute.
 - **Contournement L1.3/S2** (maintenu) : arène Switch planifiée à **512 Mio** + alertes `CT3_HEAP_WARN_*` tant que le soak 60 min n’est pas clos ; non bloquant pour S2.
 
 ## 5. État de la roadmap (synthèse)
-- ✅ **Fait** : M0, M1, S1/G1, L1.1, L1.2, L1.3 (correctif), L2.1, L2.2, S2.1 (pic stabilisé).
-- 🔄 **En cours** : L1.3 (soak 60 min = clôture), L3 (cinématiques), S4.1 (squelette/patch, build cross à valider).
-- ⬜ **À venir (priorités)** : L1.3 clôture, S4.1 build devkitA64/libnx puis S4.2/S4.3, S2.2 abstraction mémoire invitée, S3+ selon chemin critique `S1→S2→S4→S5→S8→S9→S10`.
+- ✅ **Fait** : M0, M1, S1/G1, L1.1, L1.2, L1.3 (correctif), L2.1, L2.2, S2.1 (pic stabilisé), S4.1 (squelette WSI Switch compilé en cross, D-084).
+- 🔄 **En cours** : L1.3 (soak 60 min = clôture), L3 (cinématiques).
+- ⬜ **À venir (priorités)** : L1.3 clôture, S4.2/S4.3 (surface `NWindow*`, fenêtre sans SDL) puis S4.4, S2.2 abstraction mémoire invitée, S3+ selon chemin critique `S1→S2→S4→S5→S8→S9→S10`.
 - ⬜ **Vérification sémantique `V1`–`V4`** : en parallèle, hors chemin critique ; aucune porte `G*` ne l’attend.
 
 ## 6. Prochaines actions recommandées
 1. **L1.3 — clôture** : soak de 60 min avec le correctif (`CT3_HEAPSTATS=1`, `CT3_ALLOCSTATS=1`) lors d’une **session de jeu réelle** (plusieurs courses, si possible changement de ville) ; consigner plateau, pic et `ExitProcess`. Reporté à une session de jeu réelle : l’automatisation actuelle ne boucle pas les menus de façon déterministe. Non bloquant pour S2.
 2. **Changement de ville** : rendre la séquence déterministe (`Down` + `Enter` sur GLITTER OASIS) ou acter l’A/B comme preuve de récupération.
 3. **L2.2 — close (D-083)** : le code de sortie reflète le dernier message (13 clavier, 88 manette) ; le teardown est propre dans les deux chemins.
-4. **S4.1** : valider la compilation `-Dnative_switch=true` du patch DXVK en cross devkitA64/libnx ; corriger includes/dépendances.
-5. **S4.2/S4.3** : stabiliser le transport `NWindow*` et `createSurface`/fenêtre plein écran.
+4. **S4.1 — close (D-084)** : cross-build validé en conteneur (`tools/port/dxvk_switch_wsi_build.sh`, `RESULT=PASS`) ; reste `libwsi.a` bloquée par `src/util/thread.h` (`pthread_setschedparam`), prérequis S7.
+5. **S4.2/S4.3** : stabiliser le transport `NWindow*` et `createSurface` réel (`vkCreateViSurfaceNN`), fenêtre plein écran sans SDL, puis viser le smoke test S4.4 (porte G3).
 6. **S2.2** : introduire `rt_va_reserve/commit/protect` (Linux inchangé) en préparation de l’arène Horizon (512 Mio de cible de planification).
 7. **V1** : démarrer le harnais différentiel en parallèle (`diff_func` sur 10 fonctions témoins, replay des imports), puis `V2`.
 
@@ -106,10 +110,11 @@ l'absence de faute.
 - **Écarts sémantiques silencieux** : la traduction n’est pas une preuve ; le chantier `V*` les couvre, sans bloquer les exécutables.
 - **Sortie CRT** : `_flushall`/`_fcloseall` no-op — revoir si une sauvegarde/écriture se révèle tronquée.
 - **SEH non implémenté** : seules les exceptions FP ciblées sont contournées ; C++ (`0xE06D7363`) et violations d’accès restent fatales.
-- **Validation matérielle Switch absente** ; devkitA64/libnx non disponibles sur l’hôte (build cross S4.1 à faire ailleurs/conteneur dédié).
+- **Validation matérielle Switch absente** ; devkitA64/libnx ne sont pas installés sur l’hôte : le cross-build S4.1 passe par le conteneur `localhost/devkitpro-mesa-rust:latest` (meson + devkitA64 + libnx), source montée en lecture seule.
 - **Perf/présentation** : Xvfb+lavapipe inadapté aux runs longs ; `xdotool` inefficace sous XWayland (utiliser `CT3_KEY_*`/`CT3_PAD_*`).
 
 ## 8. Artefacts et logs utiles
 - Logs : `/tmp/opencode/ct3_city_fix2.log`, `/tmp/opencode/ct3_city_fix2_noop.log`, `/tmp/opencode/ct3_l1_3b.log`, `/tmp/opencode/ct3_l1_3.log`, `/tmp/opencode/ct3_menu_exit.log`, `/tmp/opencode/ct3_exit4.log`.
 - Patch DXVK S4.1 : `tools/port/dxvk-3.1.1-switch-wsi-s4.1.patch`.
-- DXVK local modifié : `~/.local/ct3-deps/src/dxvk`.
+- Cross-build WSI Switch : `tools/port/dxvk_switch_wsi_build.sh` ; journaux sous `/tmp/opencode/ct3-dxvk-switch-build-*` (`container.log`).
+- DXVK local modifié : `~/.local/ct3-deps/src/dxvk` (l’arbre de validation vit dans `/tmp/opencode/s41/dxvk-src`, non versionné).

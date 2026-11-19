@@ -1045,6 +1045,47 @@ Outils ajoutés (build de traçage) : `CT3_MEMWATCH=lo-hi` (écritures dans une 
 - **Conséquences** : L2.2 est close ; la documentation ne présente plus 13 comme « le » code du
   menu EXIT ; les prochains tests de sortie relèvent le dernier message en plus du code.
 
+## D-084 : WSI Switch exclusif et périmètre borné de S4.1 (19 nov. 2026)
+
+- **Contexte** : validation du cross-build du squelette WSI Switch de DXVK 3.1.1
+  (`-Dnative_switch=true`) en conteneur devkitPro (`localhost/devkitpro-mesa-rust:latest` :
+  Debian 12, meson 1.12.1, devkitA64 15.2.0, libnx, ninja), source montée en lecture seule.
+  Trois obstacles de build ont été rencontrés et tranchés :
+  1. `<switch.h>` inclus après les en-têtes Windows natifs de DXVK : `include/native/windows/windows_base.h`
+     fait `#define interface struct`, alors que les en-têtes libnx utilisent `interface` comme nom de
+     paramètre (`switch/services/usbds.h`, `switch/services/hid.h`,
+     `switch/runtime/devices/usb_comms.h`) → les trois TU du WSI Switch ne compilaient pas ;
+  2. `VkViSurfaceCreateInfoNN` et `PFN_vkCreateViSurfaceNN` introuvables : DXVK 3.1.1 embarque
+     Vulkan-Headers **sans** `vulkan/vulkan_switch.h`, et devkitA64/libnx n'en fournit pas ;
+  3. en cross Switch, meson détecte SDL2 dans les portlibs devkitPro et définissait
+     `-DDXVK_WSI_SDL2` ; les TU SDL2 utilisent `LoadLibraryA`/`GetProcAddress`/`FreeLibrary`,
+     absents sur Horizon.
+- **Décisions** :
+  - en mode `native_switch`, le **WSI Switch est exclusif** : `-DDXVK_WSI_SDL2`,
+    `-DDXVK_WSI_SDL3` et `-DDXVK_WSI_GLFW` ne sont pas définis, même si les portlibs exposent ces
+    bibliothèques ; les TU des backends de bureau deviennent des unités vides. Les `dependency()`
+    et les chemins d'inclusion restent inchangés ;
+  - les en-têtes du squelette n'incluent pas `<switch.h>` ; les types `VK_NN_vi_surface` sont
+    déclarés localement dans `src/wsi/switch/wsi_switch_vulkan_compat.h`, sous garde
+    `#ifndef VK_NN_vi_surface`, avec les valeurs Khronos exactes
+    (`VK_STRUCTURE_TYPE_VI_SURFACE_CREATE_INFO_NN` = 1000062000). Si un futur code exige des types
+    libnx dans un en-tête, utiliser `#pragma push_macro("interface")` / `#undef interface` /
+    `#include <switch.h>` / `#pragma pop_macro("interface")` ;
+  - `kMonitor` est `static inline const` et non `constexpr` : un `reinterpret_cast` entier → pointeur
+    n'est pas une expression constante valide en C++17 pour `aarch64-none-elf-g++` ;
+  - **S4.1 reste borné au WSI** : la production de l'archive `src/wsi/libwsi.a` n'est pas un critère
+    de S4.1. Elle échoue sur `src/wsi/wsi_edid.cpp` → `src/util/thread.h:375`
+    (`::pthread_setschedparam` absent sur Horizon/newlib), problème de portabilité du **cœur** DXVK
+    rattaché à S7.
+- **Validation** (19 nov. 2026) : `meson setup --cross-file=… -Dnative_switch=true
+  --buildtype=release` réussit (`-DDXVK_WSI_SWITCH: YES`, `native_switch : true`) ; les trois objets
+  `switch_wsi_{platform,window,monitor}_switch.cpp.o` compilent (58 symboles `SwitchWsi`) ; le patch
+  de 11 fichiers s'applique sur DXVK 3.1.1 (`21fda8f`) et reproduit l'arbre validé à l'octet près.
+- **Conséquences** : S4.1 est close et S4.2 peut démarrer ; S7 doit porter `src/util/thread.h` (et
+  le reste du cœur DXVK) avant de produire `libwsi.a` puis un binaire Switch ; la reproduction est
+  automatisée par `tools/port/dxvk_switch_wsi_build.sh` (mode strict
+  `CT3_DXVK_REQUIRE_LIBWSI=1` pour exiger l'archive une fois S7 débloqué).
+
 ## Environnement (31 oct. 2026)
 
 - KWin (session Plasma/Wayland) ne mappe plus les fenêtres X11 nouvelles : constaté sur G1, glxgears et CT3. Une commande de rechargement de KWin (`org.kde.KWin.reconfigure`) a été lancée par erreur, sans effet visible. Non traité : redémarrer la session graphique (déconnexion/reconnexion) devrait suffire, à confirmer par l'utilisateur.

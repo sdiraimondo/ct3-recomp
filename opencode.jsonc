@@ -1,0 +1,112 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+
+  // Architecture orchestrateur / codeur du projet ct3-linux.
+  // Référence : docs/ORCHESTRATION.md et AGENTS.md.
+  "model": "opencode/deepseek-v4.1-flash-free",
+  "default_agent": "orchestrator",
+
+  // Garde-fous globaux : aucune suppression ni réécriture destructrice
+  // sans validation. Les sauvegardes restent obligatoires avant édition.
+  // Les motifs `*` et `**` sont doublés car le moteur de correspondance peut
+  // ne pas faire traverser les `/` par `*`.
+  "permissions": [
+    // Suppressions et écrasements destructeurs.
+    { "action": "shell", "resource": "rm *", "effect": "deny" },
+    { "action": "shell", "resource": "rm **", "effect": "deny" },
+    { "action": "shell", "resource": "sudo rm *", "effect": "deny" },
+    { "action": "shell", "resource": "sudo rm **", "effect": "deny" },
+    { "action": "shell", "resource": "/bin/rm *", "effect": "deny" },
+    { "action": "shell", "resource": "/bin/rm **", "effect": "deny" },
+    { "action": "shell", "resource": "/usr/bin/rm *", "effect": "deny" },
+    { "action": "shell", "resource": "/usr/bin/rm **", "effect": "deny" },
+    { "action": "shell", "resource": "** && rm **", "effect": "deny" },
+    { "action": "shell", "resource": "**; rm **", "effect": "deny" },
+    { "action": "shell", "resource": "**| rm **", "effect": "deny" },
+    { "action": "shell", "resource": "unlink *", "effect": "deny" },
+    { "action": "shell", "resource": "unlink **", "effect": "deny" },
+    { "action": "shell", "resource": "rmdir *", "effect": "deny" },
+    { "action": "shell", "resource": "rmdir **", "effect": "deny" },
+    { "action": "shell", "resource": "mv *", "effect": "deny" },
+    { "action": "shell", "resource": "mv **", "effect": "deny" },
+    { "action": "shell", "resource": "truncate *", "effect": "deny" },
+    { "action": "shell", "resource": "truncate **", "effect": "deny" },
+    { "action": "shell", "resource": "dd *", "effect": "deny" },
+    { "action": "shell", "resource": "dd **", "effect": "deny" },
+    { "action": "shell", "resource": "shred *", "effect": "deny" },
+    { "action": "shell", "resource": "shred **", "effect": "deny" },
+    { "action": "shell", "resource": "sed -i*", "effect": "deny" },
+    { "action": "shell", "resource": "sed -i**", "effect": "deny" },
+    { "action": "shell", "resource": "sed --in-place*", "effect": "deny" },
+    { "action": "shell", "resource": "perl -i*", "effect": "deny" },
+    { "action": "shell", "resource": "perl -i**", "effect": "deny" },
+    { "action": "shell", "resource": "perl -pi*", "effect": "deny" },
+    { "action": "shell", "resource": "find * -delete*", "effect": "deny" },
+    { "action": "shell", "resource": "find ** -delete**", "effect": "deny" },
+
+    // Git : pas de réécriture d'historique, de nettoyage ni de suppression.
+    { "action": "shell", "resource": "git reset --hard*", "effect": "deny" },
+    { "action": "shell", "resource": "git reset --hard**", "effect": "deny" },
+    { "action": "shell", "resource": "git clean *", "effect": "deny" },
+    { "action": "shell", "resource": "git clean **", "effect": "deny" },
+    { "action": "shell", "resource": "git checkout -- *", "effect": "deny" },
+    { "action": "shell", "resource": "git checkout -- **", "effect": "deny" },
+    { "action": "shell", "resource": "git restore *", "effect": "deny" },
+    { "action": "shell", "resource": "git restore **", "effect": "deny" },
+    { "action": "shell", "resource": "git branch -D*", "effect": "deny" },
+    { "action": "shell", "resource": "git branch -D**", "effect": "deny" },
+    { "action": "shell", "resource": "git tag -d*", "effect": "deny" },
+    { "action": "shell", "resource": "git tag -d**", "effect": "deny" },
+
+    // Push : confirmation, puis refus explicite des variantes destructrices.
+    // L'ordre compte : la dernière règle qui correspond gagne.
+    { "action": "shell", "resource": "git push *", "effect": "ask" },
+    { "action": "shell", "resource": "git push **", "effect": "ask" },
+    { "action": "shell", "resource": "git push --force*", "effect": "deny" },
+    { "action": "shell", "resource": "git push --force**", "effect": "deny" },
+    { "action": "shell", "resource": "git push -f*", "effect": "deny" },
+    { "action": "shell", "resource": "git push -f**", "effect": "deny" },
+    { "action": "shell", "resource": "git push ** --force**", "effect": "deny" },
+    { "action": "shell", "resource": "git push ** -f**", "effect": "deny" },
+    { "action": "shell", "resource": "git push --delete*", "effect": "deny" },
+    { "action": "shell", "resource": "git push --delete**", "effect": "deny" },
+    { "action": "shell", "resource": "git push ** --delete**", "effect": "deny" },
+    { "action": "shell", "resource": "git push --mirror*", "effect": "deny" },
+    { "action": "shell", "resource": "git push --mirror**", "effect": "deny" },
+    { "action": "shell", "resource": "git push ** --mirror**", "effect": "deny" },
+
+    // Lecture hors dépôt : le dossier du jeu et les sauvegardes sont autorisés.
+    { "action": "external_directory", "resource": "*", "effect": "ask" },
+    { "action": "external_directory", "resource": "/tmp/opencode/*", "effect": "allow" },
+    { "action": "external_directory", "resource": "/tmp/opencode/**", "effect": "allow" },
+    { "action": "external_directory", "resource": "/run/media/stephane/BC250_USB/Games/Crazy Taxi 3/*", "effect": "allow" },
+    { "action": "external_directory", "resource": "/run/media/stephane/BC250_USB/Games/Crazy Taxi 3/**", "effect": "allow" },
+
+    // Écritures interdites : métadonnées Git, artefacts locaux, assets du jeu,
+    // exécutables.
+    { "action": "edit", "resource": ".git/**", "effect": "deny" },
+    { "action": "edit", "resource": "dist/**", "effect": "deny" },
+    { "action": "edit", "resource": "captures/**", "effect": "deny" },
+    { "action": "edit", "resource": "/run/media/stephane/BC250_USB/Games/Crazy Taxi 3/**", "effect": "deny" },
+    { "action": "edit", "resource": "*CT3.exe", "effect": "deny" },
+    { "action": "edit", "resource": "**/CT3.exe", "effect": "deny" },
+    { "action": "edit", "resource": "*CT3.original.exe", "effect": "deny" },
+    { "action": "edit", "resource": "**/CT3.original.exe", "effect": "deny" }
+  ],
+
+  // Suivi de tâches pour l'orchestrateur ; les codeurs ne peuvent pas
+  // lancer d'autres sous-agents.
+  "experimental": {
+    "todo": true,
+    "subagent_depth": 1
+  },
+
+  // Filets de sécurité : snapshots OpenCode pour l'annulation, sans
+  // remplacer les sauvegardes explicites de .opencode/scripts/backup.sh.
+  "snapshots": true,
+
+  // Évite de suivre les gros répertoires de build et les artefacts locaux.
+  "watcher": {
+    "ignore": ["build/**", "build-*/**", "dist/**", "captures/**", "*.log"]
+  }
+}

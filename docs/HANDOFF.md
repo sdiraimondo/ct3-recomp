@@ -23,6 +23,10 @@ décisions est dans `DECISIONS.md` (D-001 à D-050 et notes datées). Ce documen
 > - **Licence et publication** : code original sous GPL-3.0-or-later (D-082) ; publication
 >   **source seule**. Le bundle `dist/` reste local-only car il lie le code traduit du jeu.
 >   Voir `LEGAL.md`, `PUBLISHING.md`, `THIRD_PARTY.md` et `tools/check_no_game_data.sh`.
+> - **Outillage** : architecture orchestrateur/codeur OpenCode (`opencode.jsonc`,
+>   `.opencode/agents/`, `.opencode/commands/`, `.opencode/scripts/backup.sh`,
+>   `AGENTS.md`, [`ORCHESTRATION.md`](ORCHESTRATION.md)) ; sauvegarde obligatoire
+>   avant toute réécriture, codeurs sans commit/push.
 
 ## 1. Objectif et contraintes
 

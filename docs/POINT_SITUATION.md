@@ -1,13 +1,13 @@
 # Point de situation — ct3-linux
 
-**Date :** 18 novembre 2026  
-**Branche :** `master` = `origin/master`  
-**Base figée :** tag `v0.1.0-linux` (`0d5dff7`)  
+**Date :** 19 novembre 2026\
+**Branche :** `master` = `origin/master`\
+**Base figée :** tag `v0.1.1-linux` (`7149afb`)\
 **Derniers commits :**
+- `5684648` — Docs : code de sortie = `wParam` du dernier message (D-083)
+- `7149afb` — Licence : notice GPL complète dans le README
+- `2f211b7` — Publication : GPL-3.0-or-later, notices et build sans données de jeu
 - `46116c9` — Runtime : récupération des arènes `VirtualAlloc`, cache de transit borné (L1.3, D-081)
-- `dbe6137` — Docs : point de situation (18 nov. 2026)
-- `5946d9a` — Runtime/docs : alertes de pic de tas et contournement L1.3/S2 (marge 512 Mio)
-- `61df87e` — Docs : résultats L1.3 (pic 448 Mio, croissance tardive) et priorités
 
 Références : [`docs/ROADMAP.md`](ROADMAP.md), [`docs/SWITCH_PORT.md`](SWITCH_PORT.md), [`docs/HANDOFF.md`](HANDOFF.md), [`DECISIONS.md`](../DECISIONS.md), [`README.md`](../README.md).
 
@@ -31,6 +31,7 @@ Références : [`docs/ROADMAP.md`](ROADMAP.md), [`docs/SWITCH_PORT.md`](SWITCH_P
 - **D-077 (L1.2)** : exceptions FP du CRT `0xC000008D`–`0xC0000093` ignorées (retour au CRT qui remet les drapeaux FP), les autres restent fatales.
 - **D-078 (L2.1)** : sortie CRT sans SEH — `atexit` natif `0x51549F/0x5154B5`, nettoyages `0x514919`/`0x5164E5`/`0x5206C7`, `rt_unresolved_ret` dépile l’adresse de retour.
 - **D-079** : `IDirectSoundBuffer::Release` retire le tampon du mixeur SDL sous `ds_mutex`, bornage du stockage au tas invité, `ds_audio_stop()` avant `exit()`.
+- **D-083 (L2.2)** : le code de sortie du jeu est le `wParam` du dernier message dépilé (`WinMain` 0x004079E0 → boucle 0x00428070 → `MOV EAX,[ESP+0xC]` à 0x00428212), pas un statut : 13 = `VK_RETURN`, 88 = `VK_X` (bouton A mappé sur `x`). Critère de propreté = `atexit`, fichiers fermés, aucune faute. L2/L2.2 closes.
 
 ### Port Switch (préparation)
 - **S4.1 (squelette, en cours)** : option Meson `native_switch` + `-DDXVK_WSI_SWITCH`, bootstrap WSI Switch, `src/wsi/switch/*` (surface `VK_NN_vi_surface` via `vkCreateViSurfaceNN`, modes 720p/1080p, stubs fenêtre/moniteur, convention `NWindow*` à stabiliser).
@@ -92,7 +93,7 @@ l'absence de faute.
 - ⬜ **Vérification sémantique `V1`–`V4`** : en parallèle, hors chemin critique ; aucune porte `G*` ne l’attend.
 
 ## 6. Prochaines actions recommandées
-1. **L1.3 — clôture** : soak de 60 min avec le correctif (`CT3_HEAPSTATS=1`, `CT3_ALLOCSTATS=1`) ; consigner plateau, pic et `ExitProcess`. Non bloquant pour S2.
+1. **L1.3 — clôture** : soak de 60 min avec le correctif (`CT3_HEAPSTATS=1`, `CT3_ALLOCSTATS=1`) lors d’une **session de jeu réelle** (plusieurs courses, si possible changement de ville) ; consigner plateau, pic et `ExitProcess`. Reporté à une session de jeu réelle : l’automatisation actuelle ne boucle pas les menus de façon déterministe. Non bloquant pour S2.
 2. **Changement de ville** : rendre la séquence déterministe (`Down` + `Enter` sur GLITTER OASIS) ou acter l’A/B comme preuve de récupération.
 3. **L2.2 — close (D-083)** : le code de sortie reflète le dernier message (13 clavier, 88 manette) ; le teardown est propre dans les deux chemins.
 4. **S4.1** : valider la compilation `-Dnative_switch=true` du patch DXVK en cross devkitA64/libnx ; corriger includes/dépendances.

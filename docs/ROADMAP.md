@@ -1,6 +1,6 @@
 # Feuille de route — Crazy Taxi 3 sous Linux et sur Switch
 
-> Statut : 18 novembre 2026, base `v0.1.0-linux` (`0d5dff7`).
+> Statut : 19 novembre 2026, base `v0.1.1-linux` (`7149afb`).
 > Ce document est le plan consolidé et traçable. Le détail technique du port Switch est dans
 > [`SWITCH_PORT.md`](SWITCH_PORT.md) ; les décisions dans [`../DECISIONS.md`](../DECISIONS.md) ;
 > les manques Linux dans [`TODO.md`](TODO.md).
@@ -120,9 +120,9 @@ flowchart TB
   classDef done fill:#1f6f43,stroke:#39ff88,color:#fff
   classDef next fill:#1f4f8f,stroke:#66aaff,color:#fff
   classDef todo fill:#3a3a3a,stroke:#888,color:#ddd
-  class B0,S1,L11 done
+  class B0,S1,L2,L11 done
   class L1,S2,V1 next
-  class L2,L3,L4,L5,L6,L7,L8,L9,L10,L12,V2,V3,V4,S3,S4,S5,S6,S7,S8,S9,S10 todo
+  class L3,L4,L5,L6,L7,L8,L9,L10,L12,V2,V3,V4,S3,S4,S5,S6,S7,S8,S9,S10 todo
 ```
 
 **Chemin critique Switch** : `S1 → S2 → S4 → S5 → S8 → S9 → S10` (`S1` faite le 17 nov. 2026).
@@ -176,7 +176,7 @@ chantiers Linux, mais `L1` (pic de heap) et `L3`/`L9` (cinématiques, imports) r
 
 | ID | Tâche | Critère d'acceptation | Dépend de | Est. | État | Réf. |
 |---|---|---|---|---|---|---|
-| **L1** | Crash après 20–30 min et « tas invité épuisé » | Session de 60 min sans faute ni épuisement du heap | — | 2 sem. | ⬜ | D-069, TODO |
+| **L1** | Crash après 20–30 min et « tas invité épuisé » | Session de 60 min sans faute ni épuisement du heap | — | 2 sem. | 🔄 | D-069, D-081, TODO |
 | L1.1 | Instrumenter le pic de heap (`rt_proc.c`, `CT3_ALLOCLOG`, `CT3_HEAPCHK`) | Pic mesuré et consigné (octets, scénario) | — | 2 j | ✅ | D-076, SWITCH_PORT §3 |
 | L1.2 | Reproduire et localiser la fuite ou la corruption | Cause identifiée (fuite, écriture hors bornes, objet non libéré) | L1.1 | 1 sem. | ✅ | D-077, D-078, D-079 |
 | L1.3 | Corriger et vérifier | 60 min de course, aucun message « tas invité épuisé » | L1.2 | 3 j | 🔄 | correctif 18 nov. : `VirtualFree(MEM_RELEASE)` honoré et cache de transit D3D9 borné à 64 Mio ; A/B 143,9 Mio utilisés / pic 161 Mio contre 240,4 Mio / 243 Mio avec `CT3_VIRTUALFREE_NOOP=1` (79,7 Mio d'arènes libérées sur 84,7 Mio allouées) ; soak 60 min = clôture finale, non bloquant pour S2 (D-081) |
@@ -390,7 +390,7 @@ parallèle ; la trace donne l'ordre qui réduit le plus les risques.
 - [ ] **S9** · performance
 - [ ] **G6** · seuil de cadence tenu
 - [ ] **S10** · release
-- [ ] **L2** · crash à la sortie
+- [x] **L2** · crash à la sortie (D-078, D-083) — *clos le 19 nov. 2026*
 - [ ] **L3** · cinématiques
 - [ ] **L4** · ralentissements
 - [ ] **L5** · démarrage
@@ -424,9 +424,9 @@ parallèle ; la trace donne l'ordre qui réduit le plus les risques.
 
 ## 12. Prochaines actions (deux semaines)
 
-**S1/G1 franchies ; L1.1, L1.2, L1.3 (correctif), L2.1, S2.1 (pic stabilisé), S4.1 (squelette) avancés** (18 nov. 2026). Prochaines actions :
+**S1/G1 franchies ; L1.1, L1.2, L1.3 (correctif), L2.1, L2.2, S2.1 (pic stabilisé), S4.1 (squelette) avancés** (19 nov. 2026). Prochaines actions :
 
-1. **L1.3 — clôture** : soak de 60 min avec le correctif (`VirtualFree` honoré, cache de transit D3D9 borné à 64 Mio), `CT3_HEAPSTATS=1`, `CT3_ALLOCSTATS=1` ; consigner plateau, pic et `ExitProcess`. Non bloquant pour S2 (marge 512 Mio).
+1. **L1.3 — clôture** : soak de 60 min avec le correctif (`VirtualFree` honoré, cache de transit D3D9 borné à 64 Mio), `CT3_HEAPSTATS=1`, `CT3_ALLOCSTATS=1` ; consigner plateau, pic et `ExitProcess`. **Reporté à une session de jeu réelle** (le soak automatisé ne recharge pas les menus de façon déterministe) ; non bloquant pour S2 (marge 512 Mio).
 2. **L2/L2.2** — closes (D-083) : le code de sortie est le `wParam` du dernier message (13 au clavier, 88 à la manette) ; le critère retenu est le teardown propre, vérifié dans les deux chemins.
 3. **S4.1** — Valider la compilation du squelette DXVK Switch avec `-Dnative_switch=true` en cross devkitA64/libnx (`tools/port/dxvk-3.1.1-switch-wsi-s4.1.patch`) ; corriger les points de build.
 4. **S2.2** — Abstraire `rt_va_reserve/commit/protect` (interface commune, comportement Linux inchangé) en préparation de l'arène Horizon, en planifiant 512 Mio de marge.

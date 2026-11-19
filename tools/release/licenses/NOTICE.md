@@ -21,6 +21,7 @@ dossier du jeu.
 | SDL2 | 2.32.10 | zlib | `SDL2.txt` |
 | DXVK (dxvk-native, D3D9) | 3.1.1 | zlib | `DXVK.txt` |
 | FFmpeg (avformat, avcodec, swscale, avutil) | n9.0.2, build LGPL | LGPL 2.1 ou ultérieure | `FFmpeg-LGPL-2.1.txt` |
+| stb_truetype (polices) | v1.26 | domaine public ou MIT | `stb_truetype.txt` |
 
 FFmpeg est lié dynamiquement (`lib/libav*.so.63`) et compilé sans composant GPL
 (`tools/deps/build_ffmpeg.sh` du dépôt). La licence LGPL 2.1 exige de pouvoir
@@ -28,10 +29,15 @@ remplacer ces bibliothèques : elles sont dans `lib/`, et le lanceur place ce
 dossier en tête de `LD_LIBRARY_PATH`. Les sources de FFmpeg sont disponibles
 aux mêmes conditions que le projet amont (tag `n9.0.2`).
 
+`stb_truetype` est compilé dans le binaire pour le rendu des polices ; sa
+licence (domaine public ou MIT) est incluse dans `stb_truetype.txt`.
+
 Le reste des dépendances (glibc, libstdc++, libgcc_s, zlib, pilote Vulkan) est
 fourni par le système et n'est pas redistribué.
 
 ## Projet ct3-linux
 
-La licence du dépôt ct3-linux n'est pas encore tranchée (jalon L11 de la
-roadmap). Ce bundle ne constitue pas une décision de licence.
+Le code original du dépôt ct3-linux est sous GPL-3.0-or-later (D-082). Ce
+bundle ne le relicencie pas : il contient en outre le code traduit du jeu,
+dérivé de votre copie de `CT3.exe`, et reste donc destiné à un usage local.
+Il ne doit pas être publié.

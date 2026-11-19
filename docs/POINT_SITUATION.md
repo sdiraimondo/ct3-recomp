@@ -43,6 +43,7 @@ Références : [`docs/ROADMAP.md`](ROADMAP.md), [`docs/SWITCH_PORT.md`](SWITCH_P
 - `docs/SWITCH_PORT.md` : verdict corrigé (le port réutilise le code décompilé et ne clôt pas la décompilation), mesures A/B.
 - `DECISIONS.md` : D-011 corrigée, D-080 (complétude), D-081 (tas).
 - `docs/HANDOFF.md`, `README.md` : variables `CT3_ALLOCSTATS`, `CT3_VIRTUALFREE_NOOP`, état courant.
+- **Licence et publication (D-082)** : code original sous GPL-3.0-or-later ; publication **source seule** ; `LICENSE`, `THIRD_PARTY.md`, `LICENSES/`, `LEGAL.md`, `CONTRIBUTING.md`, `PUBLISHING.md`, garde-fou `tools/check_no_game_data.sh` et CI. Le bundle `dist/` reste `local-only` car il lie le code traduit du jeu.
 
 ## 3. Mesures et validations
 

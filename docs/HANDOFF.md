@@ -19,6 +19,9 @@ décisions est dans `DECISIONS.md` (D-001 à D-050 et notes datées). Ce documen
 >   (D-079) ; fermeture de fenêtre/SIGTERM → code 0, menu EXIT → code 13 (à confirmer comme nominal).
 > - **Switch** : `S1/G1` franchies (newlib binary128 LE) ; WSI DXVK Switch en cours (S4.1),
 >   build cross devkitA64/libnx non validé sur l'hôte.
+> - **Licence et publication** : code original sous GPL-3.0-or-later (D-082) ; publication
+>   **source seule**. Le bundle `dist/` reste local-only car il lie le code traduit du jeu.
+>   Voir `LEGAL.md`, `PUBLISHING.md`, `THIRD_PARTY.md` et `tools/check_no_game_data.sh`.
 
 ## 1. Objectif et contraintes
 

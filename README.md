@@ -101,6 +101,9 @@ directory, `pack/`, `../pack`, `../../pack`, next to the binary, or via
 `CT3_PACK`.
 
 The first build runs the whole translation of `CT3.exe` and takes several minutes.
+Without `CT3_EXE`, the configuration still succeeds: the game-dependent targets
+(`ct3gen`, `ct3pack`, `ct3_run`, `test_g2`, `test_x87`) are skipped, and only the
+runtime and the independent tests are built.
 
 ### Local release bundle
 
@@ -147,12 +150,14 @@ Tests (each one is a program, run from `build/tests`):
 - `cpu/test_cpu`, `vec/test_vec`, `x87/test_x87` and `g2/test_g2` need no argument.
   The last two load the data pack (`CT3_PACK` overrides its location).
 - `g1_d3d9_triangle/g1_d3d9_triangle` draws a triangle through dxvk-native. Use a virtual display (Xvfb) if you have no desktop session.
+- `tools/check_no_game_data.sh` checks that no game-derived file is tracked and that the publication documents and licenses are present. Run it before publishing or opening a pull request.
 
 ## Legal
 
 - Crazy Taxi is a trademark of SEGA Corporation. This project is **not affiliated with, endorsed by or sponsored by SEGA**.
 - The repository only contains original code, build scripts and documentation. It contains **no** copyrighted game code, recompiled output, assets or keys.
 - Do **not** open issues or pull requests containing game files, recompiled output, or links to where to download the game. Such content will be removed.
+- Reverse engineering, the EULA and the limits of the interoperability exception are covered in [LEGAL.md](LEGAL.md). What can be published is listed in [PUBLISHING.md](PUBLISHING.md).
 - Please support the official release: buy the game.
 
 ## Credits
@@ -165,4 +170,15 @@ No code from these projects is reused. Thanks to their author.
 
 ## License
 
-No license has been chosen yet. Until one is added, the code is not licensed for reuse.
+The original code of this repository is licensed under the **GNU General
+Public License, version 3 or later** (GPL-3.0-or-later). See [LICENSE](LICENSE).
+
+This license covers the project's code only. It does not grant any rights to
+*Crazy Taxi 3*, its assets or SEGA's trademarks. The translated code, the data
+pack and any binary linking them are derivative works of your copy of the
+game: generate and use them locally, and never publish them. See
+[LEGAL.md](LEGAL.md) and [PUBLISHING.md](PUBLISHING.md).
+
+Third-party components keep their own licenses: SDL2 and DXVK (zlib), FFmpeg
+(LGPL-2.1-or-later), stb_truetype (public domain/MIT). See
+[THIRD_PARTY.md](THIRD_PARTY.md) and [LICENSES/](LICENSES/).

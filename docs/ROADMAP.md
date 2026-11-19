@@ -120,9 +120,9 @@ flowchart TB
   classDef done fill:#1f6f43,stroke:#39ff88,color:#fff
   classDef next fill:#1f4f8f,stroke:#66aaff,color:#fff
   classDef todo fill:#3a3a3a,stroke:#888,color:#ddd
-  class B0,S1 done
+  class B0,S1,L11 done
   class L1,S2,V1 next
-  class L2,L3,L4,L5,L6,L7,L8,L9,L10,L11,L12,V2,V3,V4,S3,S4,S5,S6,S7,S8,S9,S10 todo
+  class L2,L3,L4,L5,L6,L7,L8,L9,L10,L12,V2,V3,V4,S3,S4,S5,S6,S7,S8,S9,S10 todo
 ```
 
 **Chemin critique Switch** : `S1 → S2 → S4 → S5 → S8 → S9 → S10` (`S1` faite le 17 nov. 2026).
@@ -216,7 +216,7 @@ chantiers Linux, mais `L1` (pic de heap) et `L3`/`L9` (cinématiques, imports) r
 | L10.1 | Script local `build-check` unique | `test_x87`, `test_g2`, `test_cpu`, `test_vec`, `g1` en une commande | — | 1 j | ⬜ | — |
 | L10.2 | CI sans données de jeu | Compilation + `test_cpu` + `test_vec` verts sur GitHub Actions | L10.1 | 3 j | ⬜ | — |
 | L10.3 | Spike AArch64 reproductible en CI | `tools/port/aarch64_spike.sh` exécuté par qemu (hors données de jeu) | L10.2 | 2 j | ⬜ | SWITCH_PORT §5 |
-| **L11** | Licence du dépôt | Fichier `LICENSE` choisi ; aucun code Wine avant décision | — | 1 j | ⬜ | TODO |
+| **L11** | Licence du dépôt | `LICENSE` GPL-3.0-or-later ; notices tierces ; publication source seule documentée | — | 1 j | ✅ | D-082 |
 | **L12** | Stabilité DXVK/Vulkan | 60 min sans `VK_ERROR_DEVICE_LOST` ; écran noir et fin de manche traités | — | 2 sem. | ⬜ | TODO |
 | L12.1 | Reproduire `VK_ERROR_DEVICE_LOST` (BC-250/RADV) | Scénario et options DXVK identifiés | — | 3 j | ⬜ | TODO |
 | L12.2 | Crash de fin de manche | Trace gdb et cause identifiées | — | 3 j | ⬜ | TODO |
@@ -399,7 +399,7 @@ parallèle ; la trace donne l'ordre qui réduit le plus les risques.
 - [ ] **L8** · son
 - [ ] **L9** · Win32 restants
 - [ ] **L10** · tests et CI
-- [ ] **L11** · licence
+- [x] **L11** · licence (GPL-3.0-or-later, D-082)
 - [ ] **L12** · stabilité DXVK
 - [ ] **V1** · harnais différentiel (parallèle, hors chemin critique)
 - [ ] **V2** · triage et couverture des ~5 747 fonctions

@@ -53,7 +53,10 @@ if(CT3_FFMPEG_FOUND)
 endif()
 
 # Chargeur du pack de données (lot 2). Séparé de ct3_rt pour que les tests
-# CPU/vecteurs restent indépendants du pack et de CT3.exe.
-add_library(ct3_pack STATIC "${CMAKE_CURRENT_SOURCE_DIR}/src/rt_pe.c")
-target_include_directories(ct3_pack PUBLIC "${CT3_PACK_DIR}")
-target_link_libraries(ct3_pack PUBLIC ct3_rt)
+# CPU/vecteurs restent indépendants du pack et de CT3.exe. Sans CT3.exe, le
+# pack (et donc ct3_image.h) n'existe pas : la bibliothèque n'est pas définie.
+if(CT3_EXE)
+  add_library(ct3_pack STATIC "${CMAKE_CURRENT_SOURCE_DIR}/src/rt_pe.c")
+  target_include_directories(ct3_pack PUBLIC "${CT3_PACK_DIR}")
+  target_link_libraries(ct3_pack PUBLIC ct3_rt)
+endif()

@@ -999,6 +999,31 @@ Outils ajoutés (build de traçage) : `CT3_MEMWATCH=lo-hi` (écritures dans une 
 - **Portée** : le soak de 60 min reste la clôture de L1.3 ; il n'est pas bloquant pour S2, l'arène
   Switch étant planifiée à 512 Mio avec alertes `CT3_HEAP_WARN_*`.
 
+## D-082 : licence GPL-3.0-or-later et publication source seule (18 nov. 2026)
+
+- **Contexte** : le bundle local `0.1.1-linux` contient `libct3gen.a`, la traduction du code de
+  `CT3.exe` liée dans `ct3_run`. C'est une œuvre dérivée du jeu : elle ne peut pas être publiée
+  sans autorisation des ayants droit. Le dépôt n'avait aucune licence, ce qui bloquait aussi la
+  publication de son code original.
+- **Décision** :
+  - le code original du dépôt passe sous **GPL-3.0-or-later** (`LICENSE`) ;
+  - la publication est **source seule** : runtime, recompilateur, outils, docs et scripts ; les
+    utilisateurs génèrent localement le C traduit et le pack depuis leur propre copie ;
+  - les artefacts dérivés (`gen_funcs*.c`, `libct3gen.a`, `ct3_data.bin`, `ct3_image.*`, binaire
+    lié, assets, captures) restent **locaux** et ne sont jamais versionnés ni publiés ;
+  - les composants tiers gardent leur licence (SDL2/DXVK zlib, FFmpeg LGPL-2.1+, stb
+    domaine public/MIT) ; notices dans `THIRD_PARTY.md` et `LICENSES/` ;
+  - contributions sous GPL-3.0-or-later avec DCO (`CONTRIBUTING.md`) ; garde-fou
+    `tools/check_no_game_data.sh` et CI dédiée.
+- **Pourquoi GPL-3.0-or-later** : compatible avec zlib (SDL2, DXVK), LGPL-2.1-or-later (FFmpeg),
+  domaine public/MIT (stb), GPL-3.0 (taxipatch) et Apache-2.0 (CT3Tweaks, via GPL-3.0). Une
+  GPL-2.0-only aurait été incompatible avec Apache-2.0 et moins simple avec la LGPL-2.1.
+- **Conséquences** : L11 est close ; L10.2 (CI de build sans données de jeu) reste ouverte ; le
+  bundle `dist/` reste `local-only` et n'est pas joint aux releases ; la publication d'un binaire
+  du runtime sans code traduit reste une option future, après découplage et revue juridique
+  (`PUBLISHING.md`).
+- Source : choix de l'utilisateur (« GPL », 18 nov. 2026).
+
 ## Environnement (31 oct. 2026)
 
 - KWin (session Plasma/Wayland) ne mappe plus les fenêtres X11 nouvelles : constaté sur G1, glxgears et CT3. Une commande de rechargement de KWin (`org.kde.KWin.reconfigure`) a été lancée par erreur, sans effet visible. Non traité : redémarrer la session graphique (déconnexion/reconnexion) devrait suffire, à confirmer par l'utilisateur.

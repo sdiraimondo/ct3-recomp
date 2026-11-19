@@ -86,5 +86,7 @@ correspondante.
 
 ## Mentions
 
-Voir `LICENSES/NOTICE.md`. Le projet ct3-linux n'a pas encore de licence
-choisie (jalon L11) ; ce bundle est destiné à un usage personnel.
+Voir `LICENSES/NOTICE.md`. Le code original du projet est sous
+GPL-3.0-or-later (D-082) ; ce bundle reste destiné à un usage local car il
+lie le code traduit du jeu, qui est un dérivé de votre copie de `CT3.exe`.
+Il ne doit pas être publié.

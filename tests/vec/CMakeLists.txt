@@ -1,5 +1,11 @@
 # Vecteurs : Unicorn produit les entrées/sorties de référence (tests/vec/vectors.h dans build/).
 set(CT3_UNICORN_PYTHON "$ENV{HOME}/.venvs/unicorn-ref/bin/python" CACHE FILEPATH "Python avec Unicorn (référence)")
+if(NOT EXISTS "${CT3_UNICORN_PYTHON}")
+  message(WARNING
+    "Python Unicorn introuvable (${CT3_UNICORN_PYTHON}) : test_vec non construit. "
+    "Installez Unicorn ou passez -DCT3_UNICORN_PYTHON=/chemin/vers/python.")
+  return()
+endif()
 set(VEC_H "${CMAKE_BINARY_DIR}/vec/vectors.h")
 
 add_custom_command(

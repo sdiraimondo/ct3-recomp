@@ -1,0 +1,24 @@
+name: ci
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  no-game-data:
+    name: Données de jeu et documents de publication
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Vérifier l'absence de données de jeu
+        run: ./tools/check_no_game_data.sh
+
+      - name: Vérifier la syntaxe Python des outils
+        run: |
+          git ls-files -z '*.py' | xargs -0 python3 -m py_compile

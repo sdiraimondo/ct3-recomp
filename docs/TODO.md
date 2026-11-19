@@ -66,8 +66,9 @@ Linux `L1`–`L12`, vérification sémantique `V1`–`V4` (hors chemin critique)
   vraie gestion des exceptions ou laisser l'import absent.
 - Implémentations partielles : `GetStringType` (type 1 seulement), `LCMapString` (indicateurs 0x100 et 0x200
   seulement).
-- Licence : le dépôt n'a pas encore de licence. Tant que ce n'est pas tranché, aucun code de Wine ne peut être copié.
-  Une réimplémentation à partir de la documentation et des tests de Wine reste possible.
+- Licence : GPL-3.0-or-later (D-082). Le code Wine (LGPL-2.1-or-later) est compatible avec la GPL-3.0,
+  mais toute copie doit rester sous LGPL-2.1-or-later, conserver sa notice et être signalée dans
+  `THIRD_PARTY.md`. Une réimplémentation à partir de la documentation et des tests de Wine reste préférée.
 
 ## 6. Cinématiques
 

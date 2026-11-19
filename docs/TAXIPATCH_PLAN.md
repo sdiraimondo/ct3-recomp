@@ -62,17 +62,19 @@ Conséquences :
 
 ## 5. Licence
 
-- taxipatch : **GPL-3.0**. Copier son code impose une licence compatible GPL-3.0 pour le projet.
+- Le dépôt est sous **GPL-3.0-or-later** (D-082). Le code de taxipatch (GPL-3.0) est compatible, mais toute copie
+  doit rester sous sa licence d'origine, conserver sa notice et être signalée dans `THIRD_PARTY.md` ; une réécriture
+  à partir des faits ci-dessus (clean-room) reste préférée.
 - ct3tweaks : **Apache-2.0**, en fin de vie, et il **modifie le fichier `CT3.exe`** : exclu.
-- Le dépôt n'a toujours pas de licence. Une réécriture à partir des faits ci-dessus (clean-room) reste possible sans
-  licence préalable, mais doit rester fidèle au comportement, pas au code.
+- Une réécriture à partir des faits ci-dessus (clean-room) reste possible, mais doit rester fidèle au comportement,
+  pas au code.
 
 ## 6. Plan proposé
 
 **Phase 0 : décisions (utilisateur)**
 - Base de travail : `CT3.original.exe` (recommandé) plutôt que le `CT3.exe` modifié par CT3Tweaks. Les réglages
   sont alors reproduits par le runtime et `Config.ini`, sans modifier de fichier du jeu.
-- Licence du projet (GPL-3.0 si on réutilise du code taxipatch).
+- Licence du projet : GPL-3.0-or-later (D-082) ; compatibilité taxipatch documentée.
 
 **Phase 1 : configuration** : `Config.ini` (`[game]` résolution, mode d'affichage, FOV, MSAA ; `[distance]` ; `[patches]`
 saut des logos, 60 FPS ; `[general]`). Valeurs par défaut identiques à taxipatch.

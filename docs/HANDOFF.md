@@ -16,7 +16,8 @@ décisions est dans `DECISIONS.md` (D-001 à D-050 et notes datées). Ce documen
 >   A/B : 143,9 Mio utilisés / pic 161 Mio contre 240,4 Mio / 243 Mio (témoin `CT3_VIRTUALFREE_NOOP=1`).
 >   Le soak de 60 min reste la clôture de L1.3, non bloquant pour S2.
 > - **Sortie** : `atexit` natif et nettoyages CRT (D-078), tampons DirectSound libérés avant `exit()`
->   (D-079) ; fermeture de fenêtre/SIGTERM → code 0, menu EXIT → code 13 (à confirmer comme nominal).
+>   (D-079) ; fermeture de fenêtre/SIGTERM → code 0, menu EXIT → code du dernier message (13 au
+>   clavier, 88 à la manette : `VK_X`, D-083), teardown propre dans les deux cas.
 > - **Switch** : `S1/G1` franchies (newlib binary128 LE) ; WSI DXVK Switch en cours (S4.1),
 >   build cross devkitA64/libnx non validé sur l'hôte.
 > - **Licence et publication** : code original sous GPL-3.0-or-later (D-082) ; publication

@@ -1024,6 +1024,27 @@ Outils ajoutés (build de traçage) : `CT3_MEMWATCH=lo-hi` (écritures dans une 
   (`PUBLISHING.md`).
 - Source : choix de l'utilisateur (« GPL », 18 nov. 2026).
 
+## D-083 : le code de sortie du jeu est le `wParam` du dernier message (19 nov. 2026)
+
+- **Contexte** : deux sorties par le menu EXIT donnent des codes différents : 13 avec une séquence
+  clavier automatisée (`CT3_KEY_SEQ`), 88 avec une validation à la manette. Le code 88 avait été
+  signalé comme inattendu lors d'une session de jeu du 19 nov. 2026.
+- **Cause** : `WinMain` (0x004079E0) appelle la boucle de l'objet application (0x00428070). Celle-ci
+  sort quand le drapeau `[0x714E4C]` est posé par le menu EXIT, puis retourne `msg.wParam` du
+  dernier message dépilé (`MOV EAX,[ESP+0xC]` à 0x00428212). Ce n'est donc pas un statut du jeu :
+  c'est la valeur du dernier message (code de touche virtuelle ou `wParam` de `WM_COMMAND`).
+  - `VK_RETURN` = 13 : séquence clavier ;
+  - `VK_X` = 0x58 = 88 : bouton A de la manette, mappé sur `x` par le défaut `[Controller] a=x`
+    (`runtime/src/rt_win.cpp`), ou touche `x` au clavier.
+- **Décision** : ne pas interpréter le code de sortie comme un statut. Le critère de propreté est
+  l'exécution des `atexit`, la fermeture des fichiers et l'absence de faute. Les comptes rendus
+  notent le code observé **et** le dernier message (touche ou manette) qui l'explique.
+- **Validation** : 19 nov. 2026, bundle `0.1.1-linux`, sortie par le menu EXIT après ~5 min 30 :
+  fichier `game` écrit, `atexit` exécuté (trampoline 0x0053AEFB → 0x00401350), `ExitProcess(88)`,
+  aucune erreur DXVK. Sortie en course par SIGTERM : `ExitProcess(0)`.
+- **Conséquences** : L2.2 est close ; la documentation ne présente plus 13 comme « le » code du
+  menu EXIT ; les prochains tests de sortie relèvent le dernier message en plus du code.
+
 ## Environnement (31 oct. 2026)
 
 - KWin (session Plasma/Wayland) ne mappe plus les fenêtres X11 nouvelles : constaté sur G1, glxgears et CT3. Une commande de rechargement de KWin (`org.kde.KWin.reconfigure`) a été lancée par erreur, sans effet visible. Non traité : redémarrer la session graphique (déconnexion/reconnexion) devrait suffire, à confirmer par l'utilisateur.

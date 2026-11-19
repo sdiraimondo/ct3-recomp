@@ -70,7 +70,12 @@ Références : [`docs/ROADMAP.md`](ROADMAP.md), [`docs/SWITCH_PORT.md`](SWITCH_P
 | Chemin | Résultat |
 |---|---|
 | Fermeture fenêtre / SDL_QUIT / SIGTERM (dont en course) | `atexit` 8→`0x514A27`, 9→`0x5149AA`, `ExitProcess(0)`, code 0 |
-| Menu EXIT (séquence automatisée `CT3_KEY_SEQ`) | `atexit` OK, `ExitProcess(13)`, code 13, teardown propre (`/tmp/opencode/ct3_menu_exit.log`) |
+| Menu EXIT (séquence automatisée `CT3_KEY_SEQ`) | `atexit` OK, `ExitProcess(13)`, code 13, teardown propre (`/tmp/opencode/ct3_menu_exit.log`) ; 13 = `VK_RETURN` du dernier message |
+| Menu EXIT (session utilisateur, 19 nov. 2026) | `atexit` OK, `ExitProcess(88)`, code 88, teardown propre (`/tmp/opencode/ct3-play.log`) ; 88 = `VK_X` (bouton A de la manette ou touche `x`) |
+
+Le code de sortie n'est pas un statut du jeu : `WinMain` retourne le `wParam` du dernier message
+dépilé (D-083). Le critère de propreté est l'exécution des `atexit`, la fermeture des fichiers et
+l'absence de faute.
 
 ### Vérification sémantique (V)
 - Aucune mesure à ce jour : chantier non commencé, volontairement hors chemin critique.
@@ -81,15 +86,15 @@ Références : [`docs/ROADMAP.md`](ROADMAP.md), [`docs/SWITCH_PORT.md`](SWITCH_P
 - **Contournement L1.3/S2** (maintenu) : arène Switch planifiée à **512 Mio** + alertes `CT3_HEAP_WARN_*` tant que le soak 60 min n’est pas clos ; non bloquant pour S2.
 
 ## 5. État de la roadmap (synthèse)
-- ✅ **Fait** : M0, M1, S1/G1, L1.1, L1.2, L1.3 (correctif), L2.1, S2.1 (pic stabilisé).
-- 🔄 **En cours** : L1.3 (soak 60 min = clôture), L2/L2.2 (teardown propre, code 13 menu EXIT à confirmer), L3 (cinématiques), S4.1 (squelette/patch, build cross à valider).
-- ⬜ **À venir (priorités)** : L1.3 clôture, L2.2, S4.1 build devkitA64/libnx puis S4.2/S4.3, S2.2 abstraction mémoire invitée, S3+ selon chemin critique `S1→S2→S4→S5→S8→S9→S10`.
+- ✅ **Fait** : M0, M1, S1/G1, L1.1, L1.2, L1.3 (correctif), L2.1, L2.2, S2.1 (pic stabilisé).
+- 🔄 **En cours** : L1.3 (soak 60 min = clôture), L3 (cinématiques), S4.1 (squelette/patch, build cross à valider).
+- ⬜ **À venir (priorités)** : L1.3 clôture, S4.1 build devkitA64/libnx puis S4.2/S4.3, S2.2 abstraction mémoire invitée, S3+ selon chemin critique `S1→S2→S4→S5→S8→S9→S10`.
 - ⬜ **Vérification sémantique `V1`–`V4`** : en parallèle, hors chemin critique ; aucune porte `G*` ne l’attend.
 
 ## 6. Prochaines actions recommandées
 1. **L1.3 — clôture** : soak de 60 min avec le correctif (`CT3_HEAPSTATS=1`, `CT3_ALLOCSTATS=1`) ; consigner plateau, pic et `ExitProcess`. Non bloquant pour S2.
 2. **Changement de ville** : rendre la séquence déterministe (`Down` + `Enter` sur GLITTER OASIS) ou acter l’A/B comme preuve de récupération.
-3. **L2.2** : confirmer si `ExitProcess(13)` est le code nominal du menu EXIT ; ajuster la séquence si besoin ; clore L2 si les chemins jeu sont propres.
+3. **L2.2 — close (D-083)** : le code de sortie reflète le dernier message (13 clavier, 88 manette) ; le teardown est propre dans les deux chemins.
 4. **S4.1** : valider la compilation `-Dnative_switch=true` du patch DXVK en cross devkitA64/libnx ; corriger includes/dépendances.
 5. **S4.2/S4.3** : stabiliser le transport `NWindow*` et `createSurface`/fenêtre plein écran.
 6. **S2.2** : introduire `rt_va_reserve/commit/protect` (Linux inchangé) en préparation de l’arène Horizon (512 Mio de cible de planification).

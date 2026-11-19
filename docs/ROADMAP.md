@@ -180,9 +180,9 @@ chantiers Linux, mais `L1` (pic de heap) et `L3`/`L9` (cinématiques, imports) r
 | L1.1 | Instrumenter le pic de heap (`rt_proc.c`, `CT3_ALLOCLOG`, `CT3_HEAPCHK`) | Pic mesuré et consigné (octets, scénario) | — | 2 j | ✅ | D-076, SWITCH_PORT §3 |
 | L1.2 | Reproduire et localiser la fuite ou la corruption | Cause identifiée (fuite, écriture hors bornes, objet non libéré) | L1.1 | 1 sem. | ✅ | D-077, D-078, D-079 |
 | L1.3 | Corriger et vérifier | 60 min de course, aucun message « tas invité épuisé » | L1.2 | 3 j | 🔄 | correctif 18 nov. : `VirtualFree(MEM_RELEASE)` honoré et cache de transit D3D9 borné à 64 Mio ; A/B 143,9 Mio utilisés / pic 161 Mio contre 240,4 Mio / 243 Mio avec `CT3_VIRTUALFREE_NOOP=1` (79,7 Mio d'arènes libérées sur 84,7 Mio allouées) ; soak 60 min = clôture finale, non bloquant pour S2 (D-081) |
-| **L2** | Crash à la sortie (`0x5154b5`, table `atexit`) | Sortie propre depuis le menu et depuis une course, code 0 | — | 1 sem. | 🔄 | D-078 |
+| **L2** | Crash à la sortie (`0x5154b5`, table `atexit`) | Teardown propre depuis le menu et depuis une course (`atexit`, fichiers fermés, aucune faute) | — | 1 sem. | ✅ | D-078, D-083 |
 | L2.1 | Lanceur `atexit` et nettoyages CRT (`0x514919`, `0x5164E5`, `0x5206C7`) | Fermeture de fenêtre : handlers exécutés, `ExitProcess(0)`, code 0 | — | 2 j | ✅ | D-078 |
-| L2.2 | Sortie par le menu EXIT et depuis une course | Même résultat que L2.1 par les deux chemins | L2.1 | 3 j | 🔄 | menu EXIT: `atexit` OK, `ExitProcess(13)`, code 13 ; SIGTERM en course: `ExitProcess(0)`, code 0 |
+| L2.2 | Sortie par le menu EXIT et depuis une course | Même résultat que L2.1 par les deux chemins | L2.1 | 3 j | ✅ | menu EXIT : `atexit` OK, `ExitProcess(88)` (dernier message `VK_X` = bouton A, D-083) ; SIGTERM en course : `ExitProcess(0)` ; teardown propre dans les deux cas |
 | **L3** | Cinématiques | Intro, sélection de voiture et replay sans défaut visuel majeur | — | 3 sem. | 🔄 | D-061, TODO |
 | L3.1 | Relever le défaut exact (capture `CT3_SHOT`) | Capture horodatée du bug, fichier et moment identifiés | — | 2 j | ⬜ | TODO |
 | L3.2 | Graphe DirectShow factice : formats, `EC_COMPLETE`, boucle | cinepak 640×480 et rawvideo 128×128 lus sans figer la scène | L3.1 | 1 sem. | 🔄 | D-061 |
@@ -427,7 +427,7 @@ parallèle ; la trace donne l'ordre qui réduit le plus les risques.
 **S1/G1 franchies ; L1.1, L1.2, L1.3 (correctif), L2.1, S2.1 (pic stabilisé), S4.1 (squelette) avancés** (18 nov. 2026). Prochaines actions :
 
 1. **L1.3 — clôture** : soak de 60 min avec le correctif (`VirtualFree` honoré, cache de transit D3D9 borné à 64 Mio), `CT3_HEAPSTATS=1`, `CT3_ALLOCSTATS=1` ; consigner plateau, pic et `ExitProcess`. Non bloquant pour S2 (marge 512 Mio).
-2. **L2/L2.2** — Confirmer le code de sortie nominal du menu EXIT (13 observé, teardown propre) ou ajuster la séquence pour atteindre l'item EXIT exact ; clôturer L2 si les chemins jeu sont propres.
+2. **L2/L2.2** — closes (D-083) : le code de sortie est le `wParam` du dernier message (13 au clavier, 88 à la manette) ; le critère retenu est le teardown propre, vérifié dans les deux chemins.
 3. **S4.1** — Valider la compilation du squelette DXVK Switch avec `-Dnative_switch=true` en cross devkitA64/libnx (`tools/port/dxvk-3.1.1-switch-wsi-s4.1.patch`) ; corriger les points de build.
 4. **S2.2** — Abstraire `rt_va_reserve/commit/protect` (interface commune, comportement Linux inchangé) en préparation de l'arène Horizon, en planifiant 512 Mio de marge.
 5. **V1** — Démarrer le harnais différentiel **en parallèle** (hors chemin critique) : `diff_func` sur 10 fonctions témoins, replay des imports, puis V2. Aucune attente entre `V*` et `L*`/`S*`.

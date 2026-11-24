@@ -147,9 +147,8 @@ Useful runtime settings:
 - `CT3_VIRTUALFREE_NOOP=1` restores the old no-op `VirtualFree` (A/B analysis of the `VirtualAlloc` arena recovery, L1.3).
 
 Tests (each one is a program, run from `build/tests`):
-- `cpu/test_cpu`, `vec/test_vec`, `x87/test_x87` and `g2/test_g2` need no argument.
-  The last two load the data pack (`CT3_PACK` overrides its location).
-- `g1_d3d9_triangle/g1_d3d9_triangle` draws a triangle through dxvk-native. Use a virtual display (Xvfb) if you have no desktop session.
+- `tools/build-check.sh` configures a dedicated `build-check/` without `CT3.exe`, builds and runs `test_cpu`, `test_vec` and G1 (`g1_d3d9_triangle`) under Xvfb/llvmpipe, then checks the repository for game-derived files. It requires SDL2, dxvk-native, `xvfb-run`, and a Python interpreter with Unicorn (`CT3_UNICORN_PYTHON` overrides its default).
+- To also build and run `test_g2` and `test_x87`, set `CT3_EXE` to your own local executable; its pack is generated under the ignored build directory and is never added to the repository. These tests are skipped by default.
 - `tools/check_no_game_data.sh` checks that no game-derived file is tracked and that the publication documents and licenses are present. Run it before publishing or opening a pull request.
 
 ## Legal

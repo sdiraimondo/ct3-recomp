@@ -22,3 +22,66 @@ jobs:
       - name: Vérifier la syntaxe Python des outils
         run: |
           git ls-files -z '*.py' | xargs -0 python3 -m py_compile
+
+  build-check:
+    name: Build et tests sans données de jeu
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/checkout@v4
+        with:
+          repository: doitsujin/dxvk
+          ref: 21fda8fe3253bb727c01885e96f4f2d879c20b1d
+          path: _deps/dxvk
+          submodules: recursive
+
+      - uses: actions/setup-python@v5
+        id: setup-python
+        with:
+          python-version: "3.12"
+
+      - name: Installer les dépendances système
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential \
+            cmake \
+            glslang-tools \
+            libvulkan-dev \
+            libsdl2-dev \
+            mesa-vulkan-drivers \
+            meson \
+            ninja-build \
+            xvfb
+
+      - name: Installer Unicorn pour les vecteurs de référence
+        run: python -m pip install unicorn==2.1.4
+
+      - name: Construire dxvk-native D3D9/SDL2
+        run: |
+          meson setup \
+            --buildtype=release \
+            --prefix="$RUNNER_TEMP/ct3-deps/prefix" \
+            --libdir=lib64 \
+            -Denable_d3d8=false \
+            -Denable_d3d10=false \
+            -Denable_d3d11=false \
+            -Denable_dxgi=false \
+            -Dnative_sdl2=enabled \
+            -Dnative_sdl3=disabled \
+            -Dnative_glfw=disabled \
+            "$RUNNER_TEMP/dxvk-build" \
+            "$GITHUB_WORKSPACE/_deps/dxvk"
+          meson compile -C "$RUNNER_TEMP/dxvk-build"
+          meson install -C "$RUNNER_TEMP/dxvk-build"
+
+      - name: Compiler et exécuter les tests sans jeu
+        env:
+          CT3_EXE: ""
+          CT3_BUILD_DIR: ${{ runner.temp }}/ct3-build
+          CT3_DEPS_PREFIX: ${{ runner.temp }}/ct3-deps/prefix
+          CT3_UNICORN_PYTHON: ${{ steps.setup-python.outputs.python-path }}
+        run: tools/build-check.sh

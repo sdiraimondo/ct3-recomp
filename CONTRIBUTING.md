@@ -79,12 +79,13 @@ La CI publique vérifie :
 - l'absence de données de jeu dans l'arbre suivi et l'historique ;
 - la présence de `LICENSE`, `THIRD_PARTY.md`, `LICENSES/` et des documents
   légaux ;
-- la syntaxe Python des outils.
+- la syntaxe Python des outils ;
+- le build sans jeu et les tests `test_cpu`, `test_vec` et G1 sous Xvfb/llvmpipe.
 
-La compilation sans données de jeu sur un runner public (L10.2) reste un
-objectif : elle nécessite SDL2 et dxvk-native. La CI ne télécharge jamais le
-jeu et ne doit jamais avoir besoin de `CT3.exe`. Si un test nécessite le jeu,
-il doit être conditionnel.
+Le workflow construit dxvk-native depuis le commit documenté dans
+`DECISIONS.md` et ne télécharge jamais le jeu. La CI ne doit jamais avoir
+besoin de `CT3.exe`. Les tests qui dépendent du pack du jeu restent
+conditionnels.
 
 ## Signaler un problème
 

@@ -1969,6 +1969,7 @@ void movie_video_size(int *w, int *h)
 
 extern "C" void rt_movie_tick(cpu_t *c)
 {
+#if CT3_HAVE_FFMPEG
     movie_state &m = g_movie;
     if (!m.running || m.paused || m.nofile) return;
     if (!m.renderer) return;
@@ -2046,6 +2047,9 @@ extern "C" void rt_movie_tick(cpu_t *c)
         ds_ec_pending = true;
         movie_logf("[movie] fin après %.2f s\n", elapsed);
     }
+#else
+    (void)c;
+#endif
 }
 
 void ds_graph_init()
